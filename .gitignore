@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.DS_Store
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Local SQLite databases (do not commit)
+server/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Claude Code per-project local settings — can include shell-history-derived
+# allowlist patterns containing credentials. Never commit.
+.claude/
