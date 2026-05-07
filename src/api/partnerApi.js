@@ -24,21 +24,22 @@ export function configurePartner(config) {
 }
 const useMocks = () => runtimeConfig.mode !== 'live';
 
-const PARTNER_BASE = 'https://api123.backblazeb2.com/b2api/v3';
-
 async function callPartner(endpoint, body) {
   // accountId for Partner API calls is the master-key holder's accountId,
   // which b2_authorize_account already returns. No separate "Partner Account ID"
   // input is required.
   const auth = await authorizeAccount();
-  const base = runtimeConfig.proxyUrl || PARTNER_BASE;
+  // Default to same-origin /b2-partner proxy so the request goes server-side.
+  // nginx strips /b2-partner/ and forwards to api123.backblazeb2.com.
+  const base = runtimeConfig.proxyUrl ||
+    `${window.location.origin}/b2-partner/b2api/v3`;
   const res = await fetch(`${base}/${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: auth.authorizationToken,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ accountId: auth.accountId, ...body }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.text();
