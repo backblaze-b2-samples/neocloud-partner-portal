@@ -11,6 +11,7 @@ import * as b2 from '../api/b2Adapter.js';
 import * as partner from '../api/partnerApi.js';
 import { useNav } from '../lib/nav.js';
 import { bytes, compactNumber, currency, percent } from '../lib/format.js';
+import { useApp } from '../lib/AppContext.jsx';
 
 const SERIES_STORAGE = [{ key: 'storageBytes', name: 'Storage under management', color: '#E61F18', format: bytes }];
 const SERIES_EGRESS = [
@@ -20,6 +21,7 @@ const SERIES_EGRESS = [
 
 export default function ExecutiveOverview() {
   const { navigate } = useNav();
+  const { canSeeRevenue } = useApp();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [usageSource, setUsageSource] = useState(null);
@@ -74,6 +76,7 @@ export default function ExecutiveOverview() {
   const grossMargin = totals.revenue30d > 0 ? (totals.revenue30d - totals.cogs30d) / totals.revenue30d : 0;
   const sparkStorage = usage.map((d) => ({ value: d.storageBytes }));
   const sparkEgress  = usage.map((d) => ({ value: d.egressBytes }));
+  const sparkTxn     = usage.map((d) => ({ value: (d.txnA || 0) + (d.txnB || 0) + (d.txnC || 0) }));
   const sparkRevenue = usage.map((d) => ({ value: d.egressBytes * 2.1 * 0.01 })); // rough MRR proxy from egress
 
   // Period-over-period deltas — only meaningful when we have ≥ 2 days of data.
@@ -172,18 +175,22 @@ export default function ExecutiveOverview() {
           source="csv"
           icon={<Activity size={14} />}
           accent="violet"
-        />
-        <MetricCard
-          label="Estimated MRR"
-          value={currency(totals.revenue30d, { compact: true })}
-          delta={deltaRevenue}
-          deltaLabel="vs prev 30d"
-          source="derived"
-          icon={<DollarSign size={14} />}
-          accent="green"
         >
-          <Sparkline data={sparkRevenue} color="#2BD68A" />
+          <Sparkline data={sparkTxn} color="#A78BFA" />
         </MetricCard>
+        {canSeeRevenue && (
+          <MetricCard
+            label="Estimated MRR"
+            value={currency(totals.revenue30d, { compact: true })}
+            delta={deltaRevenue}
+            deltaLabel="vs prev 30d"
+            source="derived"
+            icon={<DollarSign size={14} />}
+            accent="green"
+          >
+            <Sparkline data={sparkRevenue} color="#2BD68A" />
+          </MetricCard>
+        )}
       </div>
 
       {/* Secondary metrics row
@@ -208,20 +215,24 @@ export default function ExecutiveOverview() {
           icon={<Globe size={14} />}
           accent="violet"
         />
-        <MetricCard
-          label="Gross margin (30d)"
-          value={percent(grossMargin, 1)}
-          source="derived"
-          icon={<TrendingUp size={14} />}
-          accent="green"
-        />
-        <MetricCard
-          label="COGS (30d)"
-          value={currency(totals.cogs30d, { compact: true })}
-          source="derived"
-          icon={<DollarSign size={14} />}
-          accent="red"
-        />
+        {canSeeRevenue && (
+          <MetricCard
+            label="Gross margin (30d)"
+            value={percent(grossMargin, 1)}
+            source="derived"
+            icon={<TrendingUp size={14} />}
+            accent="green"
+          />
+        )}
+        {canSeeRevenue && (
+          <MetricCard
+            label="COGS (30d)"
+            value={currency(totals.cogs30d, { compact: true })}
+            source="derived"
+            icon={<DollarSign size={14} />}
+            accent="red"
+          />
+        )}
       </div>
 
       {/* Trend charts */}
@@ -281,8 +292,8 @@ export default function ExecutiveOverview() {
               <TH>Industry</TH>
               <TH className="text-right">Storage</TH>
               <TH className="text-right">Egress (30d)</TH>
-              <TH className="text-right">Revenue (30d)</TH>
-              <TH className="text-right">Margin</TH>
+              {canSeeRevenue && <TH className="text-right">Revenue (30d)</TH>}
+              {canSeeRevenue && <TH className="text-right">Margin</TH>}
               <TH>Health</TH>
             </TR>
           </THead>
@@ -298,8 +309,8 @@ export default function ExecutiveOverview() {
                   <TD className="text-ink-300">{c.industry}</TD>
                   <TD className="text-right font-mono text-ink-100">{bytes(c.storageBytes)}</TD>
                   <TD className="text-right font-mono text-ink-100">{bytes(c.egressBytes30d)}</TD>
-                  <TD className="text-right font-mono text-ink-100">{currency(c.revenue30d, { compact: true })}</TD>
-                  <TD className="text-right font-mono text-accent-green">{percent(margin, 0)}</TD>
+                  {canSeeRevenue && <TD className="text-right font-mono text-ink-100">{currency(c.revenue30d, { compact: true })}</TD>}
+                  {canSeeRevenue && <TD className="text-right font-mono text-accent-green">{percent(margin, 0)}</TD>}
                   <TD><HealthPill status={c.health} /></TD>
                 </TR>
               );
