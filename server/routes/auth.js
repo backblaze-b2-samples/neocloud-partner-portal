@@ -70,6 +70,9 @@ router.get('/me', requireAuth, (req, res) => {
 });
 
 router.post('/change-password', requireAuth, requireCsrf, async (req, res) => {
+  if (req.session.user.email?.endsWith('@demo.com')) {
+    return res.status(403).json({ error: 'Password changes are not allowed for demo accounts.' });
+  }
   const { currentPassword, newPassword } = req.body || {};
   if (typeof currentPassword !== 'string' || !isStrongPassword(newPassword)) {
     return res.status(400).json({ error: 'Invalid password' });

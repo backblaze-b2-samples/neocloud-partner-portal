@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, ShieldAlert, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Lock, ShieldAlert, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
 import { Card, CardHeader } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { api, ApiError } from '../lib/apiClient.js';
@@ -7,6 +7,7 @@ import { cx } from '../lib/format.js';
 
 export default function AccountView() {
   const { user, refreshUser } = useApp();
+  const isDemo = user?.email?.endsWith('@demo.com');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -63,33 +64,40 @@ export default function AccountView() {
 
       <Card>
         <CardHeader title="Change password" icon={<Lock size={16} />} />
-        <form onSubmit={onSubmit} className="space-y-3" noValidate>
-          <PasswordField label="Current password" autoComplete="current-password" value={current} onChange={setCurrent} />
-          <PasswordField label="New password" autoComplete="new-password" value={next} onChange={setNext} />
-          <PasswordField label="Confirm new password" autoComplete="new-password" value={confirm} onChange={setConfirm} />
+        {isDemo ? (
+          <div className="flex items-start gap-2 rounded-md border border-ink-700 bg-ink-800/50 px-3 py-2 text-xs text-ink-300">
+            <Info size={14} className="mt-0.5 shrink-0" />
+            <span>Password changes are not available for demo accounts.</span>
+          </div>
+        ) : (
+          <form onSubmit={onSubmit} className="space-y-3" noValidate>
+            <PasswordField label="Current password" autoComplete="current-password" value={current} onChange={setCurrent} />
+            <PasswordField label="New password" autoComplete="new-password" value={next} onChange={setNext} />
+            <PasswordField label="Confirm new password" autoComplete="new-password" value={confirm} onChange={setConfirm} />
 
-          {error && (
-            <div role="alert" className="flex items-start gap-2 rounded-md border border-bb-red/30 bg-bb-red/10 px-3 py-2 text-xs text-bb-red">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0" /> <span>{error}</span>
-            </div>
-          )}
-          {success && (
-            <div className="flex items-start gap-2 rounded-md border border-accent-green/30 bg-accent-green/10 px-3 py-2 text-xs text-accent-green">
-              <CheckCircle2 size={14} className="mt-0.5 shrink-0" /> <span>Password updated.</span>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className={cx(
-              'inline-flex h-9 items-center justify-center gap-2 rounded-md bg-bb-red px-4 text-sm font-medium text-white',
-              submitting ? 'opacity-70' : 'hover:bg-bb-red/90'
+            {error && (
+              <div role="alert" className="flex items-start gap-2 rounded-md border border-bb-red/30 bg-bb-red/10 px-3 py-2 text-xs text-bb-red">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" /> <span>{error}</span>
+              </div>
             )}
-          >
-            {submitting ? 'Updating…' : 'Update password'}
-          </button>
-        </form>
+            {success && (
+              <div className="flex items-start gap-2 rounded-md border border-accent-green/30 bg-accent-green/10 px-3 py-2 text-xs text-accent-green">
+                <CheckCircle2 size={14} className="mt-0.5 shrink-0" /> <span>Password updated.</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className={cx(
+                'inline-flex h-9 items-center justify-center gap-2 rounded-md bg-bb-red px-4 text-sm font-medium text-white',
+                submitting ? 'opacity-70' : 'hover:bg-bb-red/90'
+              )}
+            >
+              {submitting ? 'Updating…' : 'Update password'}
+            </button>
+          </form>
+        )}
       </Card>
     </div>
   );

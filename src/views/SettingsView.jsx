@@ -5,7 +5,8 @@ import { useApp } from '../lib/AppContext.jsx';
 import { testConnection } from '../api/b2Adapter.js';
 
 export default function SettingsView() {
-  const { config, isLive, hasCreds, setMode, setCredentials, reset } = useApp();
+  const { config, isLive, hasCreds, setMode, setCredentials, reset, user } = useApp();
+  const isDemo = user?.email?.endsWith('@demo.com');
   const [draft, setDraft] = useState({
     masterKeyId: config.masterKeyId,
     masterApplicationKey: config.masterApplicationKey,
@@ -74,10 +75,10 @@ export default function SettingsView() {
           icon={<Zap size={18} />}
           title="Live mode"
           desc="The dashboard issues real calls to api.backblazeb2.com using your master application key. Requires credentials below. Calls are proxied through the same-origin /b2-proxy path — no manual CORS proxy URL needed when deployed behind nginx."
-          onClick={() => hasCreds ? setMode('live') : null}
-          disabled={!hasCreds}
+          onClick={() => !isDemo && hasCreds ? setMode('live') : null}
+          disabled={isDemo || !hasCreds}
           tone="green"
-          disabledHint="Add Master Key ID + Application Key below first"
+          disabledHint={isDemo ? 'Live mode is not available for demo accounts' : 'Add Master Key ID + Application Key below first'}
         />
       </div>
 

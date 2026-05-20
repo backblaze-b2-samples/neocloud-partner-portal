@@ -69,8 +69,9 @@ export function AppProvider({ children }) {
   }, []);
 
   const setMode = useCallback((mode) => {
+    if (mode === 'live' && user?.email?.endsWith('@demo.com')) return;
     setConfig((c) => ({ ...c, mode }));
-  }, []);
+  }, [user]);
 
   const setCredentials = useCallback((creds) => {
     setConfig((c) => ({ ...c, ...creds }));
@@ -111,6 +112,13 @@ export function AppProvider({ children }) {
   const hasCreds = !!(config.masterKeyId && config.masterApplicationKey);
   const canGoLive = hasCreds;
 
+  const isSupport = user?.role === 'support';
+  const isCustomerAdmin = user?.role === 'customer_admin';
+  const isCustomerReadonly = user?.role === 'customer_readonly';
+  const isCustomer = isCustomerAdmin || isCustomerReadonly;
+  const canSeeRevenue = ['admin', 'manager', 'user'].includes(user?.role);
+  const customerAccountId = isCustomer ? (user?.accountId || null) : null;
+
   const value = {
     config,
     isLive,
@@ -123,6 +131,12 @@ export function AppProvider({ children }) {
     isAuthenticated: !!user,
     isAdmin: user?.role === 'admin',
     isManagerOrAdmin: user?.role === 'admin' || user?.role === 'manager',
+    isSupport,
+    isCustomerAdmin,
+    isCustomerReadonly,
+    isCustomer,
+    canSeeRevenue,
+    customerAccountId,
     authReady,
     login,
     logout,
