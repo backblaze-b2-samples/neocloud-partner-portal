@@ -3,11 +3,11 @@ import { Lock, ShieldAlert, CheckCircle2, AlertTriangle, Info } from 'lucide-rea
 import { Card, CardHeader } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { api, ApiError } from '../lib/apiClient.js';
-import { cx } from '../lib/format.js';
+import { cx, isDemoEmail } from '../lib/format.js';
 
 export default function AccountView() {
   const { user, refreshUser } = useApp();
-  const isDemo = user?.email?.endsWith('@demo.com');
+  const isDemo = isDemoEmail(user?.email);
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');

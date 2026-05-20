@@ -10,6 +10,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, ApiError } from './apiClient.js';
+import { isDemoEmail } from './format.js';
 
 const STORAGE_KEY = 'bb-neocloud-config';
 
@@ -69,7 +70,7 @@ export function AppProvider({ children }) {
   }, []);
 
   const setMode = useCallback((mode) => {
-    if (mode === 'live' && user?.email?.endsWith('@demo.com')) return;
+    if (mode === 'live' && isDemoEmail(user?.email)) return;
     setConfig((c) => ({ ...c, mode }));
   }, [user]);
 

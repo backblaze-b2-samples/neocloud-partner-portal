@@ -1,5 +1,9 @@
 // Number, byte, currency formatters used across the dashboard.
 
+const DEMO_EMAILS = new Set(['demo@backblaze.com']);
+export const isDemoEmail = (email) =>
+  typeof email === 'string' && (email.endsWith('@demo.com') || DEMO_EMAILS.has(email));
+
 export function bytes(n, opts = {}) {
   if (n == null || isNaN(n)) return '—';
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB'];

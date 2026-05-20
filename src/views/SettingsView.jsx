@@ -3,10 +3,11 @@ import { Settings as SettingsIcon, KeyRound, ShieldAlert, FlaskConical, Zap, Eye
 import { PageHeader, Card, CardHeader, Tag, SourceBadge } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { testConnection } from '../api/b2Adapter.js';
+import { isDemoEmail } from '../lib/format.js';
 
 export default function SettingsView() {
   const { config, isLive, hasCreds, setMode, setCredentials, reset, user } = useApp();
-  const isDemo = user?.email?.endsWith('@demo.com');
+  const isDemo = isDemoEmail(user?.email);
   const [draft, setDraft] = useState({
     masterKeyId: config.masterKeyId,
     masterApplicationKey: config.masterApplicationKey,
