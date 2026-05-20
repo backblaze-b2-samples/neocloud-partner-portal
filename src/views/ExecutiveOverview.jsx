@@ -76,7 +76,7 @@ export default function ExecutiveOverview() {
   const grossMargin = totals.revenue30d > 0 ? (totals.revenue30d - totals.cogs30d) / totals.revenue30d : 0;
   const sparkStorage = usage.map((d) => ({ value: d.storageBytes }));
   const sparkEgress  = usage.map((d) => ({ value: d.egressBytes }));
-  const sparkTxn     = usage.map((d) => ({ value: (d.txnA || 0) + (d.txnB || 0) + (d.txnC || 0) }));
+  const sparkTxn     = usage.map((d) => ({ value: (d.classATxn || 0) + (d.classBTxn || 0) + (d.classCTxn || 0) }));
   const sparkRevenue = usage.map((d) => ({ value: d.egressBytes * 2.1 * 0.01 })); // rough MRR proxy from egress
 
   // Period-over-period deltas — only meaningful when we have ≥ 2 days of data.
