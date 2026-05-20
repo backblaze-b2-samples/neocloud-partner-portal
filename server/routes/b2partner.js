@@ -20,8 +20,10 @@
 // =============================================================================
 
 import express from 'express';
+import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
 
 const router = express.Router();
+router.use(requireAuth, requireNotDemo);
 
 // Allowlist of Partner API v3 endpoints this proxy will forward. Keeps the
 // proxy from becoming a general-purpose B2 relay.

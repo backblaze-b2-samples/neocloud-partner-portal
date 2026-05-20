@@ -28,6 +28,13 @@ export function requireRole(...roles) {
   };
 }
 
+export function requireNotDemo(req, res, next) {
+  if (req.session?.user?.email?.endsWith('@demo.com')) {
+    return res.status(403).json({ error: 'Not available for demo accounts.' });
+  }
+  next();
+}
+
 export function requireCsrf(req, res, next) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   const cookieToken = req.cookies?.[CSRF_COOKIE];

@@ -18,7 +18,7 @@
 
 import express from 'express';
 import { createHmac, createHash } from 'crypto';
-import { requireAuth } from '../middleware/requireAuth.js';
+import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
 import { getCredential, getDecryptedApplicationKey } from '../credentials.js';
 
 // =============================================================================
@@ -103,6 +103,7 @@ function buildLoggingXml(enabled, targetBucket, targetPrefix = '') {
 }
 
 const router = express.Router();
+router.use(requireAuth, requireNotDemo);
 
 const ALLOWED_ENDPOINTS = new Set([
   'b2_list_buckets',

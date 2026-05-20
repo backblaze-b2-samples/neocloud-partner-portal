@@ -29,7 +29,7 @@ import { Router } from 'express';
 import fs   from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requireAuth } from '../middleware/requireAuth.js';
+import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
 import { db } from '../db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ARCHIVE_DIR = path.join(__dirname, '..', 'data', 'reports');
 
 const router = Router();
+router.use(requireAuth, requireNotDemo);
 
 // ---------------------------------------------------------------------------
 // Server-side cache — shared across all browser sessions on this server.
