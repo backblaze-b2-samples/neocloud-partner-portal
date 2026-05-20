@@ -8,18 +8,18 @@
 
 export const GROUPS = [
   {
-    groupId: 'kevinco-resellers',
-    groupName: 'KevinCo Reseller Tier',
-    description: 'Primary reseller group — Tier 1/2/3 customer plans',
+    groupId: 'neocloud-internal',
+    groupName: 'Internal / IT',
+    description: 'Internal and IT-managed accounts',
     createdTimestamp: 1718323200000,
     memberCount: 6,
     plan: 'Reseller',
     accent: '#E61F18',
   },
   {
-    groupId: 'kevinco-strategic',
-    groupName: 'KevinCo Strategic Partners',
-    description: 'Custom-priced partner accounts (multi-year, volume-discounted)',
+    groupId: 'neocloud-external',
+    groupName: 'External',
+    description: 'External customer accounts',
     createdTimestamp: 1709251200000,
     memberCount: 2,
     plan: 'Partner — Custom',

@@ -1,5 +1,5 @@
 // SQLite-backed persistence (better-sqlite3, synchronous).
-// One file, three tables: users, sessions, audit_log.
+// Tables: users, sessions, audit_log, account_credentials.
 
 import Database from 'better-sqlite3';
 import path from 'node:path';
@@ -54,6 +54,72 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id);
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+  CREATE TABLE IF NOT EXISTS account_credentials (
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- B2 identifiers (non-secret, stored plaintext)
+    account_id                TEXT NOT NULL UNIQUE,
+    email                     TEXT NOT NULL,
+    group_id                  TEXT NOT NULL,
+    region                    TEXT NOT NULL,
+    application_key_id        TEXT NOT NULL,
+    -- applicationKey encrypted with AES-256-GCM; never stored or returned in plaintext
+    encrypted_application_key TEXT NOT NULL,
+    key_iv                    TEXT NOT NULL,
+    key_tag                   TEXT NOT NULL,
+    created_at                TEXT NOT NULL,
+    updated_at                TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_creds_group ON account_credentials(group_id);
+  CREATE INDEX IF NOT EXISTS idx_creds_email ON account_credentials(email);
+
+  -- Customer metadata: local-only fields (plan, pricing overrides, display name, etc.).
+  -- Separate from account_credentials so accounts without B2 keys can still have metadata.
+  CREATE TABLE IF NOT EXISTS customer_metadata (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id            TEXT NOT NULL UNIQUE,
+    display_name          TEXT,
+    industry              TEXT,
+    plan                  TEXT,
+    price_per_gb_storage  REAL,   -- $/GB/month override (null = use standard)
+    price_per_gb_download REAL,   -- $/GB egress override (null = use standard)
+    notes                 TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_meta_account ON customer_metadata(account_id);
+
+  -- Object counts: cached per-bucket file counts from b2_list_file_names.
+  -- Written by the 24-hour background job (server/jobs/objectCountJob.js).
+  -- Page loads read this table directly — no B2 API call needed at request time.
+  CREATE TABLE IF NOT EXISTS object_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bucket_id    TEXT NOT NULL UNIQUE,
+    account_id   TEXT NOT NULL,
+    bucket_name  TEXT,
+    object_count INTEGER NOT NULL DEFAULT 0,
+    counted_at   TEXT NOT NULL,   -- ISO timestamp of when this count was taken
+    updated_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_objcnt_account ON object_counts(account_id);
+
+  -- File index: per-file metadata written by the 24-hour background job.
+  -- Allows instant, sort-by-anything queries without hitting the B2 API at request time.
+  -- PRIMARY KEY is (bucket_id, file_name) — upserts are idempotent; stale files are
+  -- deleted after each full bucket walk by comparing indexed_at < job run timestamp.
+  CREATE TABLE IF NOT EXISTS file_index (
+    bucket_id    TEXT NOT NULL,
+    file_name    TEXT NOT NULL,
+    file_id      TEXT NOT NULL,
+    size         INTEGER NOT NULL DEFAULT 0,
+    uploaded_at  TEXT,           -- ISO timestamp of uploadTimestamp from B2
+    content_type TEXT,
+    indexed_at   TEXT NOT NULL,  -- ISO timestamp of when this row was written
+    PRIMARY KEY (bucket_id, file_name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_fidx_bucket   ON file_index(bucket_id);
+  CREATE INDEX IF NOT EXISTS idx_fidx_uploaded ON file_index(bucket_id, uploaded_at);
+  CREATE INDEX IF NOT EXISTS idx_fidx_size     ON file_index(bucket_id, size);
 `);
 
 // Best-effort sweep of expired sessions on every boot.

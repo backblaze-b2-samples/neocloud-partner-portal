@@ -73,7 +73,7 @@ export default function SettingsView() {
           active={isLive}
           icon={<Zap size={18} />}
           title="Live mode"
-          desc="The dashboard issues real calls to api.backblazeb2.com using your master application key. Requires credentials below and (in most browsers) a small CORS proxy — Backblaze's Native API does not allow direct browser calls."
+          desc="The dashboard issues real calls to api.backblazeb2.com using your master application key. Requires credentials below. Calls are proxied through the same-origin /b2-proxy path — no manual CORS proxy URL needed when deployed behind nginx."
           onClick={() => hasCreds ? setMode('live') : null}
           disabled={!hasCreds}
           tone="green"
@@ -117,7 +117,7 @@ export default function SettingsView() {
             placeholder="https://your-proxy.example.com"
             value={draft.proxyUrl}
             onChange={(v) => setDraft({ ...draft, proxyUrl: v })}
-            help="Browsers cannot call api.backblazeb2.com directly because Backblaze does not send CORS headers. Point this at a small reverse-proxy you control. Leave blank in demo mode."
+            help="Overrides the auto-detected proxy. By default, calls go through /b2-proxy on the current origin (handled by nginx or the Vite dev proxy). Only set this if your proxy runs at a different URL."
           />
 
           <div className="flex flex-wrap items-center gap-3 pt-2">
@@ -189,7 +189,7 @@ export default function SettingsView() {
         <ul className="space-y-2 text-xs text-ink-300">
           <SourceRow source="api" desc="Bucket metadata (b2_list_buckets), application keys (b2_list_keys / b2_create_key), file ops" />
           <SourceRow source="partner" desc="Group + sub-account hierarchy (b2_list_groups, b2_list_group_members), partner billing rollups" />
-          <SourceRow source="csv" desc="Storage bytes, egress, Class A/B/C transactions — pulled from the Daily Usage CSV in b2-reports-$ACCOUNTID/YYYY-MM-DD/Usage.csv" />
+          <SourceRow source="csv" desc="Storage bytes, egress, Class A/B/C/D transactions — pulled from the Daily Usage CSV in b2-reports-$ACCOUNTID/YYYY-MM-DD/Usage.csv" />
           <SourceRow source="derived" desc="Cost models, growth percentages, margin — computed client-side from API + CSV data" />
           <SourceRow source="demo" desc="Region p99 latency, demo activity timestamps — placeholders that Backblaze does not expose as a metric" />
         </ul>

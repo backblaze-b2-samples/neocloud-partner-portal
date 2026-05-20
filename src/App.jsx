@@ -50,18 +50,21 @@ function Shell() {
   const [active, setActive] = useState('overview');
   const [params, setParams] = useState({});
 
-  useEffect(() => {
-    configureAdapter({
-      mode: config.mode,
-      masterKeyId: config.masterKeyId,
-      masterApplicationKey: config.masterApplicationKey,
-      proxyUrl: config.proxyUrl,
-    });
-    configurePartner({
-      mode: config.mode,
-      proxyUrl: config.proxyUrl,
-    });
-  }, [config]);
+  // Configure adapters synchronously during render — NOT in a useEffect.
+  // If this were a useEffect, child effects (view data fetches) would fire
+  // before the adapter is updated to the new mode, causing stale data on
+  // demo↔live switches.
+  configureAdapter({
+    mode: config.mode,
+    masterKeyId: config.masterKeyId,
+    masterApplicationKey: config.masterApplicationKey,
+    proxyUrl: config.proxyUrl,
+    reportsBucketName: config.reportsBucketName || '',
+  });
+  configurePartner({
+    mode: config.mode,
+    proxyUrl: config.proxyUrl,
+  });
 
   const navigate = useCallback((view, p = {}) => {
     setActive(view);
@@ -106,7 +109,9 @@ function Shell() {
           <TopBar active={active} onOpenSettings={() => navigate('settings')} />
           <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
             <Suspense fallback={<LoadingState label="Loading view" />}>
-              <View {...params} />
+              {/* key includes mode so switching demo↔live fully remounts the
+                  view and re-fires all useEffect data fetches. */}
+              <View key={`${active}-${config.mode}`} {...params} />
             </Suspense>
           </main>
         </div>

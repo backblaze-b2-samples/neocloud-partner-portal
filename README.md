@@ -210,16 +210,3 @@ function Logo() {
 Drop the file in `public/` so Vite serves it from the root.
 
 ---
-
-## Demo talk track suggestions
-
-When walking through this with neocloud executives:
-
-1. **Start on Executive Overview.** "Here's our reseller footprint at a glance — 8 customers, 60+ buckets, $786K/mo aggregate revenue. Notice how every number tells you whether it came from the API live, the daily CSV, or our cost model."
-2. **Move to Customers.** "Each row is a separate B2 sub-account under our partner Group. We scope keys per tenant, isolate billing per customer, and roll usage up via the daily CSV report."
-3. **Open Storage & buckets.** "Bucket metadata — encryption mode, lifecycle, file lock, replication — comes back from `b2_list_buckets` in real time. The size and object count come from CSV because the API doesn't expose them."
-4. **Show Usage & billing.** "Slide the resale multiplier and you can see margin in real time against Backblaze's list pricing. Class A is free, B and C transactions accrue after the free daily allotment, and B2's 3× free egress matters a lot for AI workloads."
-5. **Hit AI / Neocloud.** "This is where the value crystallizes — at the same workload, B2 is roughly 75% cheaper than S3 Standard for storage and 90% cheaper for egress, and the Bandwidth Alliance partners (Cloudflare, Fastly, CoreWeave, etc.) make egress effectively free if your CDN is in the alliance."
-6. **End on API console.** "Engineers — here's the API you'd integrate against. Native API for buckets and keys, Partner API for sub-accounts and reports, daily CSV for the usage and billing rollups."
-
-Good selling.

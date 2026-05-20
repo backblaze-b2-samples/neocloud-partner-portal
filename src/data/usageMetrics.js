@@ -30,6 +30,7 @@ function generateDailyUsage(days = 30) {
       classATxn: Math.round(140_000_000 + Math.sin(i / 4) * 22_000_000),
       classBTxn: Math.round(110_000_000 + Math.sin(i / 3) * 28_000_000),
       classCTxn: Math.round(4_800_000 + Math.cos(i / 5) * 900_000),
+      classDTxn: Math.round(3_200_000 + Math.sin(i / 6) * 600_000),
     });
   }
   return out;
@@ -50,9 +51,10 @@ export const REGION_USAGE = REGIONS.map((r, i) => {
       acc.classA += d.classATxn;
       acc.classB += d.classBTxn;
       acc.classC += d.classCTxn;
+      acc.classD += d.classDTxn || 0;
       return acc;
     },
-    { storage: 0, egress: 0, upload: 0, classA: 0, classB: 0, classC: 0 }
+    { storage: 0, egress: 0, upload: 0, classA: 0, classB: 0, classC: 0, classD: 0 }
   );
   return {
     regionId: r.id,
@@ -63,6 +65,7 @@ export const REGION_USAGE = REGIONS.map((r, i) => {
     classATxn30d: total.classA * w,
     classBTxn30d: total.classB * w,
     classCTxn30d: total.classC * w,
+    classDTxn30d: total.classD * w,
     bucketCount: [89, 64, 23, 14][i],
     growth30d: [0.124, 0.082, 0.041, 0.156][i],
     // p99 latency and availability are NOT exposed by any Backblaze API.

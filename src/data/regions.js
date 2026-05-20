@@ -21,10 +21,14 @@ export const REGIONS = [
     city: 'Sacramento + Phoenix',
     country: 'United States',
     flag: '🇺🇸',
-    s3Endpoint: 's3.us-west-002.backblazeb2.com',
+    // US West has two active S3 endpoints — 002 (Sacramento) and 004 (Phoenix).
+    s3Endpoint: 's3.us-west-004.backblazeb2.com',
+    s3EndpointAlt: 's3.us-west-002.backblazeb2.com',
     apiHost: 'api004.backblazeb2.com',
     downloadHost: 'f004.backblazeb2.com',
     color: '#9B7CFF',
+    // reporting_location alias used in Daily Usage CSV
+    reportingAlias: 'us-west-004',
   },
   {
     id: 'eu-central-003',
@@ -49,6 +53,26 @@ export const REGIONS = [
     color: '#2BD68A',
   },
 ];
+
+/**
+ * Resolve a reporting_location string (from the Daily Usage CSV) to the
+ * canonical REGION entry. Checks in order:
+ *   1. Direct match on `id`            (e.g. 'us-west-002' → us-west-002)
+ *   2. Match on `reportingAlias`        (e.g. 'us-west-004' → us-west-002)
+ *   3. Case-insensitive match on `code` (e.g. 'US West'     → us-west-002)
+ *
+ * Returns the matching region object, or null if nothing matches.
+ */
+export function resolveRegion(reportingLocation) {
+  if (!reportingLocation) return null;
+  const loc = String(reportingLocation).trim();
+  return (
+    REGIONS.find((r) => r.id === loc) ||
+    REGIONS.find((r) => r.reportingAlias === loc) ||
+    REGIONS.find((r) => r.code.toLowerCase() === loc.toLowerCase()) ||
+    null
+  );
+}
 
 // Helper for the API console: rewrite a URL/body so the api###, f### and
 // s3 endpoint hosts match the selected region. Leaves the auth bootstrap

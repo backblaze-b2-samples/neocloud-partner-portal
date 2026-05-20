@@ -58,6 +58,81 @@ export function parseDailyUsageCsv(csv) {
   return rows;
 }
 
+// =============================================================================
+// Standard B2 Account Usage CSV parser
+// =============================================================================
+// Parses YYYY-MM-DD/Usage.csv from the b2-reports-<accountId> bucket.
+// This is the standard (non-partner) format delivered for regular B2 accounts.
+//
+// Columns (as of 2026 — Backblaze may add more; unknown columns are ignored):
+//   date, bucket_id, bucket_name, bucket_type, account_id,
+//   storage_bytes_avg, upload_bytes, download_bytes,
+//   class_a_txn, class_b_txn, class_c_txn
+//
+// Reference: https://www.backblaze.com/docs/cloud-storage-usage-reports
+// =============================================================================
+
+const STANDARD_NUMERIC = new Set([
+  'storage_bytes_avg',
+  'upload_bytes',
+  'download_bytes',
+  'class_a_txn',
+  'class_b_txn',
+  'class_c_txn',
+]);
+
+/**
+ * Parse a standard B2 account Usage.csv into the same shape as
+ * parseBackblazeGroupUsageCsv so both can feed fetchUsageFromReportsBucket.
+ *
+ * @param {string} csv - raw CSV text
+ * @returns {Array} rows with { date, region, storageBytes, egressBytes,
+ *                              uploadBytes, classATxn, classBTxn, classCTxn,
+ *                              accountId, bucketId, bucketName }
+ */
+export function parseStandardUsageCsv(csv) {
+  if (!csv || typeof csv !== 'string') return [];
+  const lines = csv.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  const headers = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cells = splitCsvLine(lines[i]);
+    const raw = {};
+    headers.forEach((h, idx) => {
+      const v = cells[idx];
+      if (v === undefined || v === '') {
+        raw[h] = null;
+      } else if (STANDARD_NUMERIC.has(h)) {
+        const n = Number(v);
+        raw[h] = Number.isFinite(n) ? n : null;
+      } else {
+        raw[h] = v;
+      }
+    });
+
+    rows.push({
+      date:        raw.date                           || null,
+      // Standard account CSVs may use either 'region' or 'reporting_location'
+      region:      raw.region || raw.reporting_location || null,
+      groupId:     null,
+      accountId:   raw.account_id   || null,
+      bucketId:    raw.bucket_id    || null,
+      bucketName:  raw.bucket_name  || null,
+      storageBytes: raw.storage_bytes_avg != null ? Math.round(raw.storage_bytes_avg) : null,
+      egressBytes:  raw.download_bytes    != null ? Math.round(raw.download_bytes)    : null,
+      uploadBytes:  raw.upload_bytes      != null ? Math.round(raw.upload_bytes)      : null,
+      classATxn:   raw.class_a_txn != null ? Math.round(raw.class_a_txn) : null,
+      classBTxn:   raw.class_b_txn != null ? Math.round(raw.class_b_txn) : null,
+      classCTxn:   raw.class_c_txn != null ? Math.round(raw.class_c_txn) : null,
+    });
+  }
+  return rows;
+}
+
 // Minimal CSV splitter — handles quoted fields with embedded commas.
 function splitCsvLine(line) {
   const out = [];
@@ -124,37 +199,39 @@ export function rollupBy(rows, keyCol) {
 
 /**
  * Convert raw CSV bytes into pricing-ready cost figures using current
- * Backblaze public pricing (April 2026).
+ * Backblaze public pricing (2026).
  *
  * Pricing reference: https://www.backblaze.com/cloud-storage/pricing
- *   - Storage:  $0.005 / GB-month
+ *   - Storage:  $6.95 / TB-month  ($0.00695 / GB-month)
  *   - Egress:   first 3x stored = free, then $0.01 / GB
- *   - Class B:  first 2,500 / day free, then $0.004 / 10,000
- *   - Class C:  first 2,500 / day free, then $0.004 / 1,000
- *   - Class A:  always free
+ *   - Class A (uploads):       always free
+ *   - Class B (downloads):     always free
+ *   - Class C (list/metadata): always free
+ *   - Class D (notifications): first 2,500/day free, then $0.004 / 10,000
  *
  * NOTE: Resellers typically negotiate volume pricing — these are list prices.
  */
 export const PRICING = {
-  storagePerGbMonth: 0.005,
+  storagePerGbMonth: 0.00695,   // $6.95 / TB-month
   egressFreeMultiplier: 3,
   egressPerGb: 0.01,
-  classBPer10k: 0.004,
-  classCPer1k: 0.004,
+  classDFreePerDay: 2500,
+  classDPer10k: 0.004,          // first 2,500/day free, then $0.004 / 10,000
 };
 
-export function estimateCost({ storageBytesAvg, downloadBytes, classBTxn, classCTxn }) {
+export function estimateCost({ storageBytesAvg, downloadBytes, classDTxn, days = 30 }) {
   const storageGb = (storageBytesAvg || 0) / 1e9;
   const downloadGb = (downloadBytes || 0) / 1e9;
   const freeEgressGb = storageGb * PRICING.egressFreeMultiplier;
   const billableEgressGb = Math.max(0, downloadGb - freeEgressGb);
+  const freeD = PRICING.classDFreePerDay * days;
+  const billableD = Math.max(0, (classDTxn || 0) - freeD);
   return {
     storageCost: storageGb * PRICING.storagePerGbMonth,
     egressCost: billableEgressGb * PRICING.egressPerGb,
-    classBCost: ((classBTxn || 0) / 10000) * PRICING.classBPer10k,
-    classCCost: ((classCTxn || 0) / 1000) * PRICING.classCPer1k,
+    classDCost: (billableD / 10000) * PRICING.classDPer10k,
     get total() {
-      return this.storageCost + this.egressCost + this.classBCost + this.classCCost;
+      return this.storageCost + this.egressCost + this.classDCost;
     },
   };
 }
@@ -164,6 +241,79 @@ export async function loadSampleCsv() {
   // Imported as raw string at build time:
   const mod = await import('../data/sampleDailyUsage.csv?raw');
   return mod.default;
+}
+
+// =============================================================================
+// Real Backblaze Group Usage CSV Parser
+// =============================================================================
+// Parses the actual CSV files that Backblaze writes to b2-reports-<accountId>.
+// File pattern: YYYY-MM-DD/usage.group-<groupId>.<region>.csv
+//
+// Real column set (as of April 2026 — per Backblaze Partner API docs):
+//   date, group_id, account_id, bucket_id, bucket_name, reporting_location,
+//   stored_gb, storage_byte_hours, uploaded_gb, downloaded_gb,
+//   api_txn_class_a, api_txn_class_b, api_txn_class_c
+//
+// Reference: https://www.backblaze.com/docs/cloud-storage-use-partner-api-reports
+//
+// Returns rows shaped consistently with what the UI expects:
+//   { date, region, storageBytes, egressBytes, uploadBytes,
+//     classATxn, classBTxn, classCTxn, groupId, accountId, bucketId, bucketName }
+
+const REAL_NUMERIC = new Set([
+  'stored_gb',
+  'storage_byte_hours',
+  'uploaded_gb',
+  'downloaded_gb',
+  'api_txn_class_a',
+  'api_txn_class_b',
+  'api_txn_class_c',
+]);
+
+const GB_TO_BYTES = 1e9;
+
+export function parseBackblazeGroupUsageCsv(csv) {
+  if (!csv || typeof csv !== 'string') return [];
+  const lines = csv.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  const headers = splitCsvLine(lines[0]);
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cells = splitCsvLine(lines[i]);
+    const raw = {};
+    headers.forEach((h, idx) => {
+      const v = cells[idx];
+      if (v === undefined || v === '') {
+        raw[h] = null;
+      } else if (REAL_NUMERIC.has(h)) {
+        const n = Number(v);
+        raw[h] = Number.isFinite(n) ? n : null;
+      } else {
+        raw[h] = v;
+      }
+    });
+
+    // Map to the shape the UI uses
+    rows.push({
+      date: raw.date || null,
+      region: raw.reporting_location || null,
+      groupId: raw.group_id || null,
+      accountId: raw.account_id || null,
+      bucketId: raw.bucket_id || null,
+      bucketName: raw.bucket_name || null,
+      // stored_gb × 1e9 → bytes; use storage_byte_hours for a daily average if present
+      storageBytes: raw.stored_gb != null ? Math.round(raw.stored_gb * GB_TO_BYTES) : null,
+      egressBytes: raw.downloaded_gb != null ? Math.round(raw.downloaded_gb * GB_TO_BYTES) : null,
+      uploadBytes: raw.uploaded_gb != null ? Math.round(raw.uploaded_gb * GB_TO_BYTES) : null,
+      classATxn: raw.api_txn_class_a != null ? Math.round(raw.api_txn_class_a) : null,
+      classBTxn: raw.api_txn_class_b != null ? Math.round(raw.api_txn_class_b) : null,
+      classCTxn: raw.api_txn_class_c != null ? Math.round(raw.api_txn_class_c) : null,
+    });
+  }
+  return rows;
 }
 
 // =============================================================================

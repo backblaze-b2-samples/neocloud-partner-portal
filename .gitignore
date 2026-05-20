@@ -1,19 +1,64 @@
+# Dependencies
 node_modules/
+
+# Build outputs
+.next/
 dist/
-.DS_Store
+build/
+out/
+coverage/
 
-# Secrets
+# Local environment files and secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.template
 
-# Local SQLite databases (do not commit)
+# Private keys and certificates
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Private key local copies
+*.pem
+*.pem.*
+*.pem.local
+*.key
+*.key.*
+*.p8
+*.p12
+*.pfx
+
+# Private key local copies
+*.pem
+*.pem.*
+*.pem.local
+*.key
+*.key.*
+*.p8
+*.p12
+*.pfx
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Runtime database/data files
 server/data/
 *.db
-*.db-journal
 *.db-wal
 *.db-shm
+.fuse_hidden*
 
-# Claude Code per-project local settings — can include shell-history-derived
-# allowlist patterns containing credentials. Never commit.
-.claude/
+# Local repair/debug scripts
+*.local
+*.mjs.local
+fix-missing-credentials.mjs
