@@ -29,7 +29,7 @@ import { Router } from 'express';
 import fs   from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
+import { requireAuth, requireNotDemo, requireCsrf } from '../middleware/requireAuth.js';
 import { db } from '../db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -130,7 +130,7 @@ const REAL_NUMERIC = new Set([
 ]);
 const STD_NUMERIC = new Set([
   'storage_bytes_avg', 'upload_bytes', 'download_bytes',
-  'class_a_txn', 'class_b_txn', 'class_c_txn',
+  'class_a_txn', 'class_b_txn', 'class_c_txn', 'class_d_txn',
 ]);
 const GB = 1e9;
 
@@ -192,6 +192,7 @@ function parseCsv(text) {
         classATxn:    raw.api_txn_class_a != null ? Math.round(raw.api_txn_class_a) : null,
         classBTxn:    raw.api_txn_class_b != null ? Math.round(raw.api_txn_class_b) : null,
         classCTxn:    raw.api_txn_class_c != null ? Math.round(raw.api_txn_class_c) : null,
+        classDTxn:    raw.api_txn_class_d != null ? Math.round(raw.api_txn_class_d) : null,
       });
     } else {
       rows.push({
@@ -207,6 +208,7 @@ function parseCsv(text) {
         classATxn:    raw.class_a_txn != null ? Math.round(raw.class_a_txn) : null,
         classBTxn:    raw.class_b_txn != null ? Math.round(raw.class_b_txn) : null,
         classCTxn:    raw.class_c_txn != null ? Math.round(raw.class_c_txn) : null,
+        classDTxn:    raw.class_d_txn != null ? Math.round(raw.class_d_txn) : null,
       });
     }
   }
@@ -430,7 +432,7 @@ router.post('/reports-csv', async (req, res) => {
 // Response: { counts: [{ bucketId, accountId, bucketName, objectCount, countedAt }], jobRanAt: ISO|null }
 // ---------------------------------------------------------------------------
 
-const stmtAllCounts  = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, counted_at FROM object_counts`);
+const stmtAllCounts  = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at FROM object_counts`);
 const stmtLatestRun  = db.prepare(`SELECT MAX(counted_at) AS latest FROM object_counts`);
 
 router.get('/object-counts', requireAuth, (_req, res) => {
@@ -441,9 +443,41 @@ router.get('/object-counts', requireAuth, (_req, res) => {
     accountId:   r.account_id,
     bucketName:  r.bucket_name,
     objectCount: r.object_count,
+    totalBytes:  r.total_bytes || 0,
     countedAt:   r.counted_at,
   }));
   res.json({ counts, jobRanAt: latest || null });
+});
+
+// POST /api/master-b2/sync-account/:accountId
+// Run the object-count job for a single sub-account on demand. Used by the
+// "Refresh" button on the customer detail view to update counts + bytes
+// without waiting for the next 24-hour scheduled run.
+router.post('/sync-account/:accountId', requireAuth, requireCsrf, async (req, res) => {
+  const { accountId } = req.params;
+  try {
+    const { runForAccount } = await import('../jobs/objectCountJob.js');
+    const result = await runForAccount(accountId);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.warn(`[masterB2] sync-account ${accountId} failed:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/master-b2/sync-all
+// Run the object-count job for every sub-account. Used by the dashboard
+// "Sync" button. Synchronous — the response waits for the walk to complete
+// across all accounts (with the job's internal batch-of-3 concurrency).
+router.post('/sync-all', requireAuth, requireCsrf, async (_req, res) => {
+  try {
+    const { runObjectCountJob } = await import('../jobs/objectCountJob.js');
+    await runObjectCountJob();
+    res.json({ ok: true });
+  } catch (e) {
+    console.warn('[masterB2] sync-all failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ---------------------------------------------------------------------------

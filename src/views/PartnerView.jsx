@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Users, ChevronRight, Plus, Info } from 'lucide-react';
+import { Users, ChevronRight, Plus, Info, UserMinus } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, SourceBadge, HealthPill, Tabs, Tag,
   Table, THead, TBody, TR, TH, TD, LoadingState, MetricCard, EmptyState,
@@ -8,14 +8,17 @@ import { CreateCustomerDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import * as partner from '../api/partnerApi.js';
 import { useNav } from '../lib/nav.js';
-import { bytes, currency, percent } from '../lib/format.js';
+import { bytes, currency, percent, shortDate } from '../lib/format.js';
 
 const TABS = [
   { id: 'all', label: 'All customers' },
   { id: 'healthy', label: 'Healthy' },
   { id: 'attention', label: 'Watch list' },
   { id: 'risk', label: 'At risk' },
+  { id: 'inactive', label: 'Inactive' },
 ];
+
+const isActive = (c) => c.active !== false;
 
 const HEALTH_DEFINITIONS = {
   healthy:   'Growing usage, current keys, paying invoices on time.',
@@ -42,8 +45,13 @@ export default function PartnerView() {
 
   if (loading) return <LoadingState label="Listing group members via Partner API v3" />;
 
-  const filtered = tab === 'all' ? customers : customers.filter((c) => c.health === tab);
-  const counts = customers.reduce((acc, c) => {
+  const activeCustomers = customers.filter(isActive);
+  const inactiveCustomers = customers.filter((c) => !isActive(c));
+  const filtered =
+    tab === 'all'      ? activeCustomers :
+    tab === 'inactive' ? inactiveCustomers :
+                         activeCustomers.filter((c) => c.health === tab);
+  const counts = activeCustomers.reduce((acc, c) => {
     acc.healthy += c.health === 'healthy' ? 1 : 0;
     acc.attention += c.health === 'attention' ? 1 : 0;
     acc.risk += c.health === 'risk' ? 1 : 0;
@@ -51,10 +59,11 @@ export default function PartnerView() {
   }, { healthy: 0, attention: 0, risk: 0 });
 
   const tabsWithCounts = [
-    { ...TABS[0], count: customers.length },
+    { ...TABS[0], count: activeCustomers.length },
     { ...TABS[1], count: counts.healthy },
     { ...TABS[2], count: counts.attention },
     { ...TABS[3], count: counts.risk },
+    { ...TABS[4], count: inactiveCustomers.length },
   ];
 
   return (
@@ -65,7 +74,7 @@ export default function PartnerView() {
         subtitle="Each row is a B2 sub-account that rolls up under one of your partner Groups. Click into a customer to see their buckets, application keys, lifecycle rules, recent activity, and billing."
         actions={
           <div className="flex items-center gap-2">
-            <Tag variant="info">{customers.length} members</Tag>
+            <Tag variant="info">{activeCustomers.length} members</Tag>
             <button
               onClick={() => setShowCreate(true)}
               className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
@@ -77,23 +86,23 @@ export default function PartnerView() {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Customers" value={customers.length} source="partner" icon={<Users size={14} />} accent="violet" />
+        <MetricCard label="Customers" value={activeCustomers.length} source="partner" icon={<Users size={14} />} accent="violet" />
         <MetricCard
           label="Aggregate storage"
-          value={bytes(customers.reduce((a, c) => a + c.storageBytes, 0))}
+          value={bytes(activeCustomers.reduce((a, c) => a + c.storageBytes, 0))}
           source="csv"
           accent="red"
         />
         <MetricCard
           label="Aggregate revenue (30d)"
-          value={currency(customers.reduce((a, c) => a + c.revenue30d, 0), { compact: true })}
+          value={currency(activeCustomers.reduce((a, c) => a + c.revenue30d, 0), { compact: true })}
           source="derived"
           accent="green"
         />
         <MetricCard
           label="Avg margin"
-          value={percent(
-            customers.reduce((a, c) => a + (c.revenue30d - c.cogs30d) / c.revenue30d, 0) / customers.length,
+          value={activeCustomers.length === 0 ? '—' : percent(
+            activeCustomers.reduce((a, c) => a + (c.revenue30d > 0 ? (c.revenue30d - c.cogs30d) / c.revenue30d : 0), 0) / activeCustomers.length,
             1
           )}
           source="derived"
@@ -161,14 +170,25 @@ export default function PartnerView() {
                   <TD className={"text-right font-mono " + (c.growth >= 0 ? "text-accent-green" : "text-bb-red")}>
                     {c.growth >= 0 ? '+' : ''}{percent(c.growth, 1)}
                   </TD>
-                  <TD title={HEALTH_DEFINITIONS[c.health]}><HealthPill status={c.health} /></TD>
+                  <TD title={isActive(c) ? HEALTH_DEFINITIONS[c.health] : `Ejected ${shortDate(c.ejectedAt)}`}>
+                    {isActive(c)
+                      ? <HealthPill status={c.health} />
+                      : <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-ink-700 text-ink-300 ring-1 ring-inset ring-ink-600">
+                          <UserMinus size={9} /> Ejected {c.ejectedAt ? shortDate(c.ejectedAt) : ''}
+                        </span>}
+                  </TD>
                   <TD className="text-right text-ink-400"><ChevronRight size={14} /></TD>
                 </TR>
               );
             })}
             {filtered.length === 0 && (
               <TR hover={false}><TD className="py-8 text-center text-ink-400" colSpan={10}>
-                <EmptyState title="No customers in this segment" message="Try a different filter." />
+                <EmptyState
+                  title={tab === 'inactive' ? 'No ejected sub-accounts' : 'No customers in this segment'}
+                  message={tab === 'inactive'
+                    ? 'Members removed via b2_eject_group_member will appear here.'
+                    : 'Try a different filter.'}
+                />
               </TD></TR>
             )}
           </TBody>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
-  Database, Download, Activity, Users, Boxes, Globe, DollarSign, TrendingUp, FolderTree, ChevronDown, AlertTriangle,
+  Database, Download, Activity, Users, Boxes, Globe, DollarSign, TrendingUp, FolderTree, ChevronDown, AlertTriangle, RefreshCcw,
 } from 'lucide-react';
 import {
   PageHeader, MetricCard, Card, CardHeader, SourceBadge, HealthPill,
@@ -10,7 +10,7 @@ import { TrendAreaChart, DonutChart, Sparkline, CHART_COLORS } from '../componen
 import * as b2 from '../api/b2Adapter.js';
 import * as partner from '../api/partnerApi.js';
 import { useNav } from '../lib/nav.js';
-import { bytes, compactNumber, currency, percent } from '../lib/format.js';
+import { bytes, compactNumber, currency, percent, relativeTime } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
 
 const SERIES_STORAGE = [{ key: 'storageBytes', name: 'Storage under management', color: '#E61F18', format: bytes }];
@@ -27,29 +27,55 @@ export default function ExecutiveOverview() {
   const [usageSource, setUsageSource] = useState(null);
   const [reportsBucket, setReportsBucket] = useState(null);
   const [groupId, setGroupId] = useState('all');
+  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [, forceTick] = useState(0);
 
+  const loadAll = () => Promise.all([
+    partner.getCustomers(),
+    partner.listGroups(),
+    b2.listBuckets(),
+    b2.getDailyUsage({ days: 30 }),
+    b2.getRegionUsage(),
+    b2.getObjectSyncStatus(),
+  ]).then(([{ customers }, { groups }, { buckets }, { usage, source, reportsBucketName }, { regions }, { jobRanAt }]) => {
+    setData({ allCustomers: customers, groups, buckets, usage, regions });
+    setUsageSource(source);
+    if (reportsBucketName) setReportsBucket(reportsBucketName);
+    setLastSyncAt(jobRanAt);
+    setLoading(false);
+  });
+
+  useEffect(() => { loadAll(); }, []);
+
+  // Bump every 30s so "Last sync Xm ago" stays current.
   useEffect(() => {
-    Promise.all([
-      partner.getCustomers(),
-      partner.listGroups(),
-      b2.listBuckets(),
-      b2.getDailyUsage({ days: 30 }),
-      b2.getRegionUsage(),
-    ]).then(([{ customers }, { groups }, { buckets }, { usage, source, reportsBucketName }, { regions }]) => {
-      setData({ allCustomers: customers, groups, buckets, usage, regions });
-      setUsageSource(source);
-      if (reportsBucketName) setReportsBucket(reportsBucketName);
-      setLoading(false);
-    });
+    const id = setInterval(() => forceTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
   }, []);
+
+  const onSync = async () => {
+    setSyncing(true);
+    try {
+      await b2.syncAllAccounts();
+    } catch (e) {
+      console.warn('[ExecutiveOverview] sync-all failed:', e?.message || e);
+    } finally {
+      await loadAll();
+      setSyncing(false);
+    }
+  };
 
   // Filter all metrics by selected group (or 'all' = unfiltered).
   // useMemo so we don't recompute on every render — only when group / data changes.
   const view = useMemo(() => {
     if (!data) return null;
+    // Exclude ejected (active=false) sub-accounts from every Overview metric —
+    // they appear only on the dedicated "Inactive" tab in PartnerView.
+    const activeOnly = data.allCustomers.filter((c) => c.active !== false);
     const filteredCustomers = groupId === 'all'
-      ? data.allCustomers
-      : data.allCustomers.filter((c) => c.groupId === groupId);
+      ? activeOnly
+      : activeOnly.filter((c) => c.groupId === groupId);
     const customerIds = new Set(filteredCustomers.map((c) => c.id));
     const filteredBuckets = groupId === 'all'
       ? data.buckets
@@ -60,10 +86,11 @@ export default function ExecutiveOverview() {
       acc.txnA30d += c.txnA30d;
       acc.txnB30d += c.txnB30d;
       acc.txnC30d += c.txnC30d;
+      acc.txnD30d += c.txnD30d || 0;
       acc.cogs30d += c.cogs30d;
       acc.revenue30d += c.revenue30d;
       return acc;
-    }, { storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, cogs30d: 0, revenue30d: 0 });
+    }, { storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, txnD30d: 0, cogs30d: 0, revenue30d: 0 });
     return { customers: filteredCustomers, buckets: filteredBuckets, totals };
   }, [data, groupId]);
 
@@ -76,7 +103,7 @@ export default function ExecutiveOverview() {
   const grossMargin = totals.revenue30d > 0 ? (totals.revenue30d - totals.cogs30d) / totals.revenue30d : 0;
   const sparkStorage = usage.map((d) => ({ value: d.storageBytes }));
   const sparkEgress  = usage.map((d) => ({ value: d.egressBytes }));
-  const sparkTxn     = usage.map((d) => ({ value: (d.classATxn || 0) + (d.classBTxn || 0) + (d.classCTxn || 0) }));
+  const sparkTxn     = usage.map((d) => ({ value: (d.classATxn || 0) + (d.classBTxn || 0) + (d.classCTxn || 0) + (d.classDTxn || 0) }));
   const sparkRevenue = usage.map((d) => ({ value: d.egressBytes * 2.1 * 0.01 })); // rough MRR proxy from egress
 
   // Period-over-period deltas — only meaningful when we have ≥ 2 days of data.
@@ -114,7 +141,24 @@ export default function ExecutiveOverview() {
         actions={
           <div className="flex items-center gap-2">
             <GroupFilter groups={groups} value={groupId} onChange={setGroupId} />
-            <Tag>Last sync: 12 min ago</Tag>
+            {syncing
+              ? <span className="text-[10.5px] text-accent-teal animate-pulse">
+                  Syncing all accounts from B2…
+                </span>
+              : lastSyncAt && (
+                  <span className="text-[10.5px] text-ink-400" title={new Date(lastSyncAt).toLocaleString()}>
+                    Last sync {relativeTime(lastSyncAt)}
+                  </span>
+                )}
+            <button
+              onClick={onSync}
+              disabled={syncing}
+              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800 disabled:opacity-60"
+              title="Re-walk every sub-account's buckets on B2 to refresh object counts and storage size. Takes ~1 minute for 47 accounts."
+            >
+              <RefreshCcw size={12} className={syncing ? 'animate-spin' : undefined} />
+              {syncing ? 'Syncing…' : 'Sync'}
+            </button>
           </div>
         }
       />
@@ -169,7 +213,7 @@ export default function ExecutiveOverview() {
         </MetricCard>
         <MetricCard
           label="API transactions (30d)"
-          value={compactNumber(totals.txnA30d + totals.txnB30d + totals.txnC30d)}
+          value={compactNumber(totals.txnA30d + totals.txnB30d + totals.txnC30d + totals.txnD30d)}
           unit="A + B + C"
           delta={deltaTxn}
           source="csv"

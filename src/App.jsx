@@ -1,10 +1,11 @@
-import React, { useState, useEffect, Suspense, lazy, useCallback } from 'react';
-import { Sidebar, TopBar } from './components/Layout.jsx';
+import React, { useState, useEffect, Suspense, lazy, useCallback, useMemo } from 'react';
+import { Sidebar, TopBar, CustomerSidebar, CustomerTopBar } from './components/Layout.jsx';
 import { LoadingState } from './components/ui.jsx';
 import { AppProvider, useApp } from './lib/AppContext.jsx';
 import { NavContext } from './lib/nav.js';
 import { configureAdapter } from './api/b2Adapter.js';
 import { configurePartner } from './api/partnerApi.js';
+import { CUSTOMERS } from './data/customers.js';
 
 // Re-export for backward compat — older views may still import useNav from here.
 export { useNav } from './lib/nav.js';
@@ -21,9 +22,11 @@ const Keys = lazy(() => import('./views/ApplicationKeysView.jsx'));
 const KeyDetail = lazy(() => import('./views/KeyDetailView.jsx'));
 const Console = lazy(() => import('./views/ApiConsoleView.jsx'));
 const Settings = lazy(() => import('./views/SettingsView.jsx'));
+const ResellerPlans = lazy(() => import('./views/ResellerPlansView.jsx'));
 const Login = lazy(() => import('./views/LoginView.jsx'));
 const Account = lazy(() => import('./views/AccountView.jsx'));
 const UserManagement = lazy(() => import('./views/UserManagementView.jsx'));
+const CustomerUsers = lazy(() => import('./views/CustomerUsersView.jsx'));
 
 const VIEWS = {
   overview: Overview,
@@ -38,15 +41,88 @@ const VIEWS = {
   'key-detail': KeyDetail,
   console: Console,
   settings: Settings,
+  plans: ResellerPlans,
   account: Account,
   users: UserManagement,
+  'customer-users': CustomerUsers,
 };
 
 // Routes only an admin may navigate to.
 const ADMIN_ONLY = new Set(['users']);
 
+function CustomerShell() {
+  const { config, user, isCustomerAdmin, customerAccountId, authReady, isAuthenticated } = useApp();
+
+  // Look up the demo customerId from accountId (demo mode only)
+  const customerId = useMemo(() =>
+    CUSTOMERS.find((c) => c.accountId === customerAccountId)?.id || null,
+    [customerAccountId]
+  );
+
+  const [active, setActive] = useState('my-overview');
+  const [params, setParams] = useState({});
+
+  configureAdapter({
+    mode: config.mode,
+    masterKeyId: config.masterKeyId,
+    masterApplicationKey: config.masterApplicationKey,
+    proxyUrl: config.proxyUrl,
+    reportsBucketName: config.reportsBucketName || '',
+  });
+  configurePartner({
+    mode: config.mode,
+    proxyUrl: config.proxyUrl,
+  });
+
+  const navigate = useCallback((view, p = {}) => {
+    setActive(view);
+    setParams(p);
+    document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const mustChangePassword = !!user?.mustChangePassword;
+  useEffect(() => {
+    if (mustChangePassword && active !== 'account') setActive('account');
+  }, [mustChangePassword, active]);
+
+  // Build view-specific locked params
+  const viewParams = useMemo(() => {
+    if (active === 'my-overview') return { ...params, customerId };
+    if (active === 'storage') return { ...params, lockedAccountId: customerAccountId };
+    if (active === 'keys') return { ...params, lockedCustomerId: customerId, lockedAccountId: customerAccountId };
+    return params;
+  }, [active, params, customerId, customerAccountId]);
+
+  const CUSTOMER_VIEWS = {
+    'my-overview': CustomerDetail,
+    storage: Storage,
+    usage: Usage,
+    keys: Keys,
+    'customer-users': CustomerUsers,
+    account: Account,
+  };
+
+  const View = CUSTOMER_VIEWS[active] || CustomerDetail;
+
+  return (
+    <NavContext.Provider value={{ active, params: viewParams, navigate }}>
+      <div className="flex h-full">
+        <CustomerSidebar active={active} onSelect={(id) => navigate(id)} isCustomerAdmin={isCustomerAdmin} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <CustomerTopBar active={active} />
+          <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
+            <Suspense fallback={<LoadingState label="Loading view" />}>
+              <View key={`${active}-${config.mode}`} {...viewParams} />
+            </Suspense>
+          </main>
+        </div>
+      </div>
+    </NavContext.Provider>
+  );
+}
+
 function Shell() {
-  const { config, isAuthenticated, authReady, isAdmin, user } = useApp();
+  const { config, isAuthenticated, authReady, isAdmin, isCustomer, user } = useApp();
   const [active, setActive] = useState('overview');
   const [params, setParams] = useState({});
 
@@ -97,6 +173,10 @@ function Shell() {
         <Login />
       </Suspense>
     );
+  }
+
+  if (isCustomer) {
+    return <CustomerShell />;
   }
 
   const View = VIEWS[active] || Overview;

@@ -18,7 +18,7 @@ const RANGES = [
 ];
 
 export default function UsageBillingView() {
-  const { isLive } = useApp();
+  const { isLive, canSeeRevenue } = useApp();
   const [loading, setLoading] = useState(true);
   const [usage, setUsage] = useState([]);
   const [usageSource, setUsageSource] = useState(null);
@@ -88,7 +88,7 @@ export default function UsageBillingView() {
       <PageHeader
         eyebrow="Operations"
         title="Usage & billing"
-        subtitle={isLive ? 'Storage, egress, and transaction data is updated daily.' : `All values on this page are derived from the Daily Usage CSV report (${bucketLabel}/YYYY-MM-DD/Usage.csv). The B2 Native API does not expose aggregate storage / egress / transaction metrics in JSON form.`}
+        subtitle={isLive ? 'Storage, egress, and transaction data is updated daily.' : `All values on this page are derived from Backblaze B2 Usage Report CSV files stored in the \`${bucketLabel}/<YYYY-MM-DD>/\` reports bucket. Filenames vary by report type, for example \`usage.account-<accountId>.csv\`. The B2 Native API does not expose these Usage Report aggregates as a JSON endpoint.`}
         actions={!isLive ? <Tag variant="warn"><FileSpreadsheet size={11} className="mr-1" /> CSV-driven</Tag> : null}
       />
 
@@ -110,6 +110,37 @@ export default function UsageBillingView() {
           </div>
         </div>
       )}
+
+      {/* Data sources explanation */}
+      <Card>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-300">Official billing data</h4>
+            <p className="text-[11.5px] leading-relaxed text-ink-300">
+              Storage, egress, upload volume, and transaction-class totals are sourced from{' '}
+              <span className="text-ink-100">Backblaze B2 Usage Reports</span>,
+              the daily usage ledger used for fee calculation. Most bucket usage values are reported by bucket and UTC day; some transaction totals may appear as account-level or region-level rows rather than bucket-level rows.
+            </p>
+          </div>
+          <div>
+            <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-300">Per-key activity attribution</h4>
+            <p className="text-[11.5px] leading-relaxed text-ink-300">
+              Per-key activity attribution requires{' '}
+              <span className="text-ink-100">Bucket Access Logs</span>{' '}
+              to be enabled on each relevant source bucket. Access log records include an{' '}
+              <code className="text-ink-200">Identity</code> field, which can identify the application key as{' '}
+              <code className="text-ink-200">identity:applicationKey:&lt;applicationKeyId&gt;</code>.
+              Buckets without access logging enabled will not provide historical per-key activity data, and unauthenticated or internal/system requests may not map cleanly to an application key.
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 rounded-md bg-accent-amber/5 px-3 py-2 text-[11px] leading-relaxed text-accent-amber ring-1 ring-inset ring-accent-amber/20">
+          <span className="font-semibold">Reconciliation note:</span>{' '}
+          Usage Reports may show official account or bucket usage even when key-level attribution is unavailable because Bucket Access Logs were disabled, delayed, incomplete, duplicated, or not configured for the relevant bucket.
+          Per-key totals derived from access logs are operational telemetry only, not authoritative billing records.
+          Access log delivery is best-effort; most logs are expected within a few hours, but delivery timing is not guaranteed.
+        </div>
+      </Card>
 
       <div className="flex items-center justify-between">
         <Tabs tabs={RANGES} value={range} onChange={setRange} />
@@ -154,111 +185,117 @@ export default function UsageBillingView() {
       </Card>
 
       {/* Cost model */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader
-            title="Cost model · projected monthly"
-            subtitle="Backblaze public list pricing applied to the windowed averages. Resellers typically negotiate volume discounts."
-            icon={<Calculator size={16} />}
-            action={<SourceBadge source="derived" />}
-          />
-          <Table>
-            <THead>
-              <TR hover={false}>
-                <TH>Component</TH>
-                <TH>Rate</TH>
-                <TH className="text-right">Quantity</TH>
-                <TH className="text-right">Cost</TH>
-              </TR>
-            </THead>
-            <TBody>
-              <TR hover={false}>
-                <TD className="text-ink-100">Storage</TD>
-                <TD className="text-ink-300">$6.95/TB·month</TD>
-                <TD className="text-right font-mono">{bytes(sum.storage)}</TD>
-                <TD className="text-right font-mono text-bb-red">{currency(cost.storageCost)}</TD>
-              </TR>
-              <TR hover={false}>
-                <TD className="text-ink-100">Egress (billable)</TD>
-                <TD className="text-ink-300">first 3× storage free, then {currency(PRICING.egressPerGb, { decimals: 4 })}/GB</TD>
-                <TD className="text-right font-mono">{bytes(monthlyAvg)}</TD>
-                <TD className="text-right font-mono text-bb-red">{currency(cost.egressCost)}</TD>
-              </TR>
-              <TR hover={false}>
-                <TD className="text-ink-100">Class A (uploads)</TD>
-                <TD className="text-accent-green">always free</TD>
-                <TD className="text-right font-mono">{compactNumber((sum.classA / days) * 30)}</TD>
-                <TD className="text-right font-mono text-accent-green">$0.00</TD>
-              </TR>
-              <TR hover={false}>
-                <TD className="text-ink-100">Class B (downloads)</TD>
-                <TD className="text-accent-green">always free</TD>
-                <TD className="text-right font-mono">{compactNumber((sum.classB / days) * 30)}</TD>
-                <TD className="text-right font-mono text-accent-green">$0.00</TD>
-              </TR>
-              <TR hover={false}>
-                <TD className="text-ink-100">Class C (list / metadata)</TD>
-                <TD className="text-accent-green">always free</TD>
-                <TD className="text-right font-mono">{compactNumber((sum.classC / days) * 30)}</TD>
-                <TD className="text-right font-mono text-accent-green">$0.00</TD>
-              </TR>
-              <TR hover={false}>
-                <TD className="text-ink-100">Class D (event notifications)</TD>
-                <TD className="text-ink-300">first 2,500/day free, then {currency(PRICING.classDPer10k, { decimals: 4 })}/10k</TD>
-                <TD className="text-right font-mono">{compactNumber((sum.classD ?? 0) * (30 / days))}</TD>
-                <TD className="text-right font-mono text-bb-red">{currency(cost.classDCost)}</TD>
-              </TR>
-            </TBody>
-            <THead>
-              <TR hover={false}>
-                <TH className="text-ink-100 text-base normal-case tracking-normal" colSpan={3}>
-                  Projected monthly COGS
-                </TH>
-                <TH className="text-right text-ink-100 text-base normal-case tracking-normal">
-                  {currency(cost.total)}
-                </TH>
-              </TR>
-            </THead>
-          </Table>
-        </Card>
+      {canSeeRevenue ? (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <Card className="xl:col-span-2">
+            <CardHeader
+              title="Cost model · projected monthly"
+              subtitle="Backblaze public list pricing applied to the windowed averages. Resellers typically negotiate volume discounts."
+              icon={<Calculator size={16} />}
+              action={<SourceBadge source="derived" />}
+            />
+            <Table>
+              <THead>
+                <TR hover={false}>
+                  <TH>Component</TH>
+                  <TH>Rate</TH>
+                  <TH className="text-right">Quantity</TH>
+                  <TH className="text-right">Cost</TH>
+                </TR>
+              </THead>
+              <TBody>
+                <TR hover={false}>
+                  <TD className="text-ink-100">Storage</TD>
+                  <TD className="text-ink-300">$6.95/TB·month</TD>
+                  <TD className="text-right font-mono">{bytes(sum.storage)}</TD>
+                  <TD className="text-right font-mono text-bb-red">{currency(cost.storageCost)}</TD>
+                </TR>
+                <TR hover={false}>
+                  <TD className="text-ink-100">Egress (billable)</TD>
+                  <TD className="text-ink-300">first 3× storage free, then {currency(PRICING.egressPerGb, { decimals: 4 })}/GB</TD>
+                  <TD className="text-right font-mono">{bytes(monthlyAvg)}</TD>
+                  <TD className="text-right font-mono text-bb-red">{currency(cost.egressCost)}</TD>
+                </TR>
+                <TR hover={false}>
+                  <TD className="text-ink-100">Class A (uploads)</TD>
+                  <TD className="text-accent-green">always free</TD>
+                  <TD className="text-right font-mono">{compactNumber((sum.classA / days) * 30)}</TD>
+                  <TD className="text-right font-mono text-accent-green">$0.00</TD>
+                </TR>
+                <TR hover={false}>
+                  <TD className="text-ink-100">Class B (downloads)</TD>
+                  <TD className="text-accent-green">always free</TD>
+                  <TD className="text-right font-mono">{compactNumber((sum.classB / days) * 30)}</TD>
+                  <TD className="text-right font-mono text-accent-green">$0.00</TD>
+                </TR>
+                <TR hover={false}>
+                  <TD className="text-ink-100">Class C (list / metadata)</TD>
+                  <TD className="text-accent-green">always free</TD>
+                  <TD className="text-right font-mono">{compactNumber((sum.classC / days) * 30)}</TD>
+                  <TD className="text-right font-mono text-accent-green">$0.00</TD>
+                </TR>
+                <TR hover={false}>
+                  <TD className="text-ink-100">Class D (event notifications)</TD>
+                  <TD className="text-ink-300">first 2,500/day free, then {currency(PRICING.classDPer10k, { decimals: 4 })}/10k</TD>
+                  <TD className="text-right font-mono">{compactNumber((sum.classD ?? 0) * (30 / days))}</TD>
+                  <TD className="text-right font-mono text-bb-red">{currency(cost.classDCost)}</TD>
+                </TR>
+              </TBody>
+              <THead>
+                <TR hover={false}>
+                  <TH className="text-ink-100 text-base normal-case tracking-normal" colSpan={3}>
+                    Projected monthly COGS
+                  </TH>
+                  <TH className="text-right text-ink-100 text-base normal-case tracking-normal">
+                    {currency(cost.total)}
+                  </TH>
+                </TR>
+              </THead>
+            </Table>
+          </Card>
 
+          <Card>
+            <CardHeader
+              title="Reseller margin model"
+              subtitle="Adjust your resale multiplier"
+              icon={<Receipt size={16} />}
+              action={<SourceBadge source="derived" />}
+            />
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="text-ink-300">Resale multiplier</span>
+                  <span className="font-mono text-ink-100">{resaleMultiplier.toFixed(2)}×</span>
+                </div>
+                <input
+                  type="range"
+                  min="1.2" max="4.0" step="0.05"
+                  value={resaleMultiplier}
+                  onChange={(e) => setResaleMultiplier(Number(e.target.value))}
+                  className="w-full accent-bb-red"
+                />
+                <div className="mt-1 flex justify-between text-[10px] text-ink-400">
+                  <span>1.2×</span><span>2.0×</span><span>3.0×</span><span>4.0×</span>
+                </div>
+              </div>
+              <div className="space-y-2 rounded-lg bg-ink-900/60 p-3 ring-1 ring-ink-700">
+                <Row label="COGS / month" value={currency(monthlyCogs)} />
+                <Row label="Sell price / month" value={currency(monthlyRevenue)} accent="text-ink-100" />
+                <hr className="border-ink-700" />
+                <Row label="Gross margin / month" value={currency(monthlyMargin)} accent="text-accent-green" />
+                <Row label="Margin %" value={percent(monthlyMargin / monthlyRevenue, 1)} accent="text-accent-green" />
+              </div>
+              <p className="text-[11px] leading-relaxed text-ink-400">
+                Margin assumes flat passthrough plus your multiplier. Real reseller models often layer custom egress allowances, support tiers, and SLAs on top.
+              </p>
+            </div>
+          </Card>
+        </div>
+      ) : (
         <Card>
-          <CardHeader
-            title="Reseller margin model"
-            subtitle="Adjust your resale multiplier"
-            icon={<Receipt size={16} />}
-            action={<SourceBadge source="derived" />}
-          />
-          <div className="space-y-4">
-            <div>
-              <div className="mb-2 flex items-center justify-between text-xs">
-                <span className="text-ink-300">Resale multiplier</span>
-                <span className="font-mono text-ink-100">{resaleMultiplier.toFixed(2)}×</span>
-              </div>
-              <input
-                type="range"
-                min="1.2" max="4.0" step="0.05"
-                value={resaleMultiplier}
-                onChange={(e) => setResaleMultiplier(Number(e.target.value))}
-                className="w-full accent-bb-red"
-              />
-              <div className="mt-1 flex justify-between text-[10px] text-ink-400">
-                <span>1.2×</span><span>2.0×</span><span>3.0×</span><span>4.0×</span>
-              </div>
-            </div>
-            <div className="space-y-2 rounded-lg bg-ink-900/60 p-3 ring-1 ring-ink-700">
-              <Row label="COGS / month" value={currency(monthlyCogs)} />
-              <Row label="Sell price / month" value={currency(monthlyRevenue)} accent="text-ink-100" />
-              <hr className="border-ink-700" />
-              <Row label="Gross margin / month" value={currency(monthlyMargin)} accent="text-accent-green" />
-              <Row label="Margin %" value={percent(monthlyMargin / monthlyRevenue, 1)} accent="text-accent-green" />
-            </div>
-            <p className="text-[11px] leading-relaxed text-ink-400">
-              Margin assumes flat passthrough plus your multiplier. Real reseller models often layer custom egress allowances, support tiers, and SLAs on top.
-            </p>
-          </div>
+          <p className="py-4 text-center text-xs text-ink-400">Cost model and margin data are available to partner administrators only.</p>
         </Card>
-      </div>
+      )}
 
       {/* CSV-derived per-customer rollup — hidden in live mode (requires CSV reports) */}
       {!isLive && <Card padding="p-0">
@@ -266,7 +303,7 @@ export default function UsageBillingView() {
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Per-customer rollup · from parsed CSV</h3>
             <p className="mt-0.5 text-xs text-ink-300">
-              Built by streaming the daily Usage.csv and grouping by sub_account_id (see <code className="text-ink-200">src/api/csvParser.js</code>)
+              Built by streaming the daily usage CSV and grouping by sub_account_id (see <code className="text-ink-200">src/api/csvParser.js</code>)
             </p>
           </div>
           <SourceBadge source="csv" />
@@ -321,7 +358,7 @@ export default function UsageBillingView() {
             <div>
               <h3 className="text-sm font-semibold text-ink-100">Raw CSV preview</h3>
               <p className="mt-0.5 text-xs text-ink-300">
-                First {Math.min(20, csvText.split('\n').length - 1)} rows from the bundled sample (replace with the file pulled from <code>{bucketLabel}/YYYY-MM-DD/Usage.csv</code>)
+                First {Math.min(20, csvText.split('\n').length - 1)} rows from the bundled sample (replace with the CSV pulled from <code>{bucketLabel}/&lt;YYYY-MM-DD&gt;/</code>)
               </p>
             </div>
             <Tag variant="info">{csvText.split('\n').length - 1} rows · {csvText.split(',').length / (csvText.split('\n').length - 1) | 0} cols/row</Tag>

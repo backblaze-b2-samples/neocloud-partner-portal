@@ -6,9 +6,10 @@
 //
 // Reference: https://www.backblaze.com/docs/cloud-storage-use-partner-api-reports
 //
-// There is no JSON usage API. Storage bytes, egress, and Class A/B/C transaction
-// counts are ONLY available through this CSV. This parser turns the CSV text
-// into structured rows suitable for charting and aggregation.
+// There is no JSON usage API. Storage bytes, egress, and Class A/B/C/D
+// transaction counts are ONLY available through this CSV. This parser turns
+// the CSV text into structured rows suitable for charting and aggregation.
+// Class D (event notification outbound calls) was added by Backblaze in 2026.
 //
 // Real-world column set may vary slightly between accounts and versions.
 // Backblaze documents that additional columns may be added over time, so this
@@ -22,6 +23,7 @@ const NUMERIC_COLUMNS = new Set([
   'class_a_txn',
   'class_b_txn',
   'class_c_txn',
+  'class_d_txn',
 ]);
 
 /**
@@ -67,7 +69,7 @@ export function parseDailyUsageCsv(csv) {
 // Columns (as of 2026 — Backblaze may add more; unknown columns are ignored):
 //   date, bucket_id, bucket_name, bucket_type, account_id,
 //   storage_bytes_avg, upload_bytes, download_bytes,
-//   class_a_txn, class_b_txn, class_c_txn
+//   class_a_txn, class_b_txn, class_c_txn, class_d_txn
 //
 // Reference: https://www.backblaze.com/docs/cloud-storage-usage-reports
 // =============================================================================
@@ -79,6 +81,7 @@ const STANDARD_NUMERIC = new Set([
   'class_a_txn',
   'class_b_txn',
   'class_c_txn',
+  'class_d_txn',
 ]);
 
 /**
@@ -128,6 +131,7 @@ export function parseStandardUsageCsv(csv) {
       classATxn:   raw.class_a_txn != null ? Math.round(raw.class_a_txn) : null,
       classBTxn:   raw.class_b_txn != null ? Math.round(raw.class_b_txn) : null,
       classCTxn:   raw.class_c_txn != null ? Math.round(raw.class_c_txn) : null,
+      classDTxn:   raw.class_d_txn != null ? Math.round(raw.class_d_txn) : null,
     });
   }
   return rows;
@@ -182,6 +186,7 @@ export function rollupBy(rows, keyCol) {
         class_a_txn: 0,
         class_b_txn: 0,
         class_c_txn: 0,
+        class_d_txn: 0,
         days: 0,
       });
     }
@@ -192,6 +197,7 @@ export function rollupBy(rows, keyCol) {
     acc.class_a_txn += row.class_a_txn || 0;
     acc.class_b_txn += row.class_b_txn || 0;
     acc.class_c_txn += row.class_c_txn || 0;
+    acc.class_d_txn += row.class_d_txn || 0;
     acc.days += 1;
   }
   return Array.from(map.values());
@@ -204,10 +210,10 @@ export function rollupBy(rows, keyCol) {
  * Pricing reference: https://www.backblaze.com/cloud-storage/pricing
  *   - Storage:  $6.95 / TB-month  ($0.00695 / GB-month)
  *   - Egress:   first 3x stored = free, then $0.01 / GB
- *   - Class A (uploads):       always free
- *   - Class B (downloads):     always free
- *   - Class C (list/metadata): always free
- *   - Class D (notifications): first 2,500/day free, then $0.004 / 10,000
+ *   - Class A (uploads):           always free
+ *   - Class B (downloads):         always free
+ *   - Class C (list/metadata):     always free
+ *   - Class D (event notifications): first 2,500/day free, then $0.004 / 10,000
  *
  * NOTE: Resellers typically negotiate volume pricing — these are list prices.
  */
@@ -249,16 +255,17 @@ export async function loadSampleCsv() {
 // Parses the actual CSV files that Backblaze writes to b2-reports-<accountId>.
 // File pattern: YYYY-MM-DD/usage.group-<groupId>.<region>.csv
 //
-// Real column set (as of April 2026 — per Backblaze Partner API docs):
+// Real column set (as of May 2026 — per Backblaze Partner API docs):
 //   date, group_id, account_id, bucket_id, bucket_name, reporting_location,
 //   stored_gb, storage_byte_hours, uploaded_gb, downloaded_gb,
-//   api_txn_class_a, api_txn_class_b, api_txn_class_c
+//   api_txn_class_a, api_txn_class_b, api_txn_class_c, api_txn_class_d
 //
 // Reference: https://www.backblaze.com/docs/cloud-storage-use-partner-api-reports
 //
 // Returns rows shaped consistently with what the UI expects:
 //   { date, region, storageBytes, egressBytes, uploadBytes,
-//     classATxn, classBTxn, classCTxn, groupId, accountId, bucketId, bucketName }
+//     classATxn, classBTxn, classCTxn, classDTxn,
+//     groupId, accountId, bucketId, bucketName }
 
 const REAL_NUMERIC = new Set([
   'stored_gb',
@@ -268,6 +275,7 @@ const REAL_NUMERIC = new Set([
   'api_txn_class_a',
   'api_txn_class_b',
   'api_txn_class_c',
+  'api_txn_class_d',
 ]);
 
 const GB_TO_BYTES = 1e9;
@@ -311,6 +319,7 @@ export function parseBackblazeGroupUsageCsv(csv) {
       classATxn: raw.api_txn_class_a != null ? Math.round(raw.api_txn_class_a) : null,
       classBTxn: raw.api_txn_class_b != null ? Math.round(raw.api_txn_class_b) : null,
       classCTxn: raw.api_txn_class_c != null ? Math.round(raw.api_txn_class_c) : null,
+      classDTxn: raw.api_txn_class_d != null ? Math.round(raw.api_txn_class_d) : null,
     });
   }
   return rows;
@@ -326,7 +335,7 @@ export function parseBackblazeGroupUsageCsv(csv) {
 const USAGE_COLUMNS = [
   'date', 'group_id', 'sub_account_id', 'bucket_id', 'bucket_name', 'region',
   'storage_bytes_avg', 'upload_bytes', 'download_bytes',
-  'class_a_txn', 'class_b_txn', 'class_c_txn',
+  'class_a_txn', 'class_b_txn', 'class_c_txn', 'class_d_txn',
 ];
 
 function csvEscape(v) {
@@ -368,10 +377,10 @@ export function downloadText(filename, content, mime = 'text/csv') {
  * IMPORTANT: Backblaze B2 does NOT publish per-request access logs. There is
  * no PutBucketLogging / GetBucketLogging on the S3-compatible API and no
  * b2_log_* endpoint on the Native API. The closest approximation is the
- * Class A / B / C transaction counts that appear per-bucket per-day in the
+ * Class A / B / C / D transaction counts that appear per-bucket per-day in the
  * daily Usage.csv. For real per-event activity (object created, deleted, etc.)
- * you must configure Backblaze Event Notifications, which fire HTTP webhooks
- * to a destination you control:
+ * you must configure Backblaze Event Notifications (which count as Class D),
+ * which fire HTTP webhooks to a destination you control:
  *   https://www.backblaze.com/docs/cloud-storage-event-notifications
  *
  * This function takes parsed CSV rows and returns a per-bucket-per-day
@@ -381,7 +390,7 @@ export function downloadText(filename, content, mime = 'text/csv') {
  * @param {Object} opts
  * @param {string} [opts.subAccountId] - filter to a single customer
  * @param {string} [opts.bucketId] - filter to a single bucket
- * @returns {Array<{date, bucketId, bucketName, classA, classB, classC, total}>}
+ * @returns {Array<{date, bucketId, bucketName, classA, classB, classC, classD, total}>}
  */
 export function activityFromCsv(rows, { subAccountId, bucketId } = {}) {
   return rows
@@ -395,7 +404,8 @@ export function activityFromCsv(rows, { subAccountId, bucketId } = {}) {
       classA: r.class_a_txn || 0,
       classB: r.class_b_txn || 0,
       classC: r.class_c_txn || 0,
-      total: (r.class_a_txn || 0) + (r.class_b_txn || 0) + (r.class_c_txn || 0),
+      classD: r.class_d_txn || 0,
+      total: (r.class_a_txn || 0) + (r.class_b_txn || 0) + (r.class_c_txn || 0) + (r.class_d_txn || 0),
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -418,6 +428,7 @@ export function buildCustomerUsageCsv(customer, buckets, days = 30) {
       const txnA = Math.round((customer.txnA30d / days) * (b.storageBytes / customer.storageBytes));
       const txnB = Math.round((customer.txnB30d / days) * (b.storageBytes / customer.storageBytes));
       const txnC = Math.round((customer.txnC30d / days) * (b.storageBytes / customer.storageBytes));
+      const txnD = Math.round(((customer.txnD30d || 0) / days) * (b.storageBytes / customer.storageBytes));
       rows.push({
         date,
         group_id: customer.groupId,
@@ -431,6 +442,7 @@ export function buildCustomerUsageCsv(customer, buckets, days = 30) {
         class_a_txn: txnA,
         class_b_txn: txnB,
         class_c_txn: txnC,
+        class_d_txn: txnD,
       });
     }
   }

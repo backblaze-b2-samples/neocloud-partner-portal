@@ -43,9 +43,10 @@ router.get('/', (_req, res) => {
 // GET /:accountId
 // ---------------------------------------------------------------------------
 router.get('/:accountId', (req, res) => {
+  // Return 200 with metadata: null when no row exists. This avoids 404 spam
+  // in browser Network tabs for the common case of customers without overrides.
   const row = getRow(req.params.accountId);
-  if (!row) return res.status(404).json({ error: 'No metadata for this account' });
-  res.json({ metadata: row });
+  res.json({ metadata: row ?? null });
 });
 
 // ---------------------------------------------------------------------------
@@ -103,6 +104,65 @@ router.put('/:accountId', (req, res) => {
     actorId: req.session.user.id,
     action: 'metadata.upserted',
     details: { accountId, plan, price_per_gb_storage, price_per_gb_download },
+    ip: req.ip,
+  });
+
+  res.json({ metadata: getRow(accountId) });
+});
+
+// ---------------------------------------------------------------------------
+// POST /:accountId/eject — mark a sub-account as ejected from its partner group.
+// Snapshots email/group/region so the row can still render after the Partner
+// API stops returning it. Upserts metadata if no row exists yet.
+// ---------------------------------------------------------------------------
+router.post('/:accountId/eject', (req, res) => {
+  const { accountId } = req.params;
+  const { email, groupId, region, ejectedAt } = req.body ?? {};
+  const at  = ejectedAt || new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+
+  const existing = db.prepare('SELECT id FROM customer_metadata WHERE account_id = ?').get(accountId);
+  if (existing) {
+    db.prepare(`
+      UPDATE customer_metadata
+      SET ejected_at=?, ejected_email=?, ejected_group_id=?, ejected_region=?, updated_at=?
+      WHERE account_id=?
+    `).run(at, email ?? null, groupId ?? null, region ?? null, now, accountId);
+  } else {
+    db.prepare(`
+      INSERT INTO customer_metadata
+        (account_id, ejected_at, ejected_email, ejected_group_id, ejected_region, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?)
+    `).run(accountId, at, email ?? null, groupId ?? null, region ?? null, now, now);
+  }
+
+  audit({
+    actorId: req.session.user.id,
+    action: 'metadata.ejected',
+    details: { accountId, groupId, ejectedAt: at },
+    ip: req.ip,
+  });
+
+  res.json({ metadata: getRow(accountId) });
+});
+
+// ---------------------------------------------------------------------------
+// POST /:accountId/restore — clear the ejected flag (re-mark account active).
+// ---------------------------------------------------------------------------
+router.post('/:accountId/restore', (req, res) => {
+  const { accountId } = req.params;
+  const now = new Date().toISOString();
+  const changes = db.prepare(`
+    UPDATE customer_metadata
+    SET ejected_at=NULL, ejected_email=NULL, ejected_group_id=NULL, ejected_region=NULL, updated_at=?
+    WHERE account_id=?
+  `).run(now, accountId).changes;
+  if (!changes) return res.status(404).json({ error: 'No metadata for this account' });
+
+  audit({
+    actorId: req.session.user.id,
+    action: 'metadata.restored',
+    details: { accountId },
     ip: req.ip,
   });
 

@@ -122,5 +122,74 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_fidx_size     ON file_index(bucket_id, size);
 `);
 
+// Migration: add account_id column and expand role CHECK on users table.
+// Uses a recreate-and-rename pattern because SQLite doesn't support ALTER COLUMN.
+{
+  const cols = db.pragma('table_info(users)');
+  const hasAccountId = cols.some(c => c.name === 'account_id');
+  if (!hasAccountId) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE users_v2 (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        email                TEXT NOT NULL UNIQUE,
+        password_hash        TEXT NOT NULL,
+        role                 TEXT NOT NULL CHECK(role IN ('admin','manager','user','support','customer_admin','customer_readonly')),
+        account_id           TEXT,
+        active               INTEGER NOT NULL DEFAULT 1,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL,
+        last_login_at        TEXT
+      );
+      INSERT INTO users_v2 (id, email, password_hash, role, account_id, active, must_change_password, created_at, updated_at, last_login_at)
+        SELECT id, email, password_hash, role, NULL, active, must_change_password, created_at, updated_at, last_login_at FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_v2 RENAME TO users;
+    `);
+    db.pragma('foreign_keys = ON');
+  }
+}
+
+// Reseller plan tiers — editable from the Reseller Plans page.
+// Seeded on first boot from the defaults in src/data/resellerPlans.js.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS reseller_plans (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    description         TEXT,
+    storage_per_tb      REAL NOT NULL DEFAULT 0,
+    egress_per_gb       REAL NOT NULL DEFAULT 0,
+    class_a_per_10k     REAL NOT NULL DEFAULT 0,
+    class_b_per_10k     REAL NOT NULL DEFAULT 0,
+    class_c_per_10k     REAL NOT NULL DEFAULT 0,
+    class_d_per_10k     REAL NOT NULL DEFAULT 0,
+    position            INTEGER NOT NULL DEFAULT 0,
+    updated_at          TEXT NOT NULL
+  );
+`);
+
+// Migration: add total_bytes column to object_counts.
+// Populated by the objectCountJob during its file walk so the UI can show
+// real-time storage size (not just object count) without hitting the B2 API.
+{
+  const cols = db.pragma('table_info(object_counts)');
+  if (!cols.some((c) => c.name === 'total_bytes')) {
+    db.exec('ALTER TABLE object_counts ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
+// Migration: add ejection snapshot columns to customer_metadata.
+// The Partner API does not return ejected sub-accounts, so we snapshot the
+// fields we need to render them on the "Inactive" tab at eject time.
+{
+  const cols = db.pragma('table_info(customer_metadata)');
+  const has = (n) => cols.some((c) => c.name === n);
+  if (!has('ejected_at'))       db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_at TEXT');
+  if (!has('ejected_email'))    db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_email TEXT');
+  if (!has('ejected_group_id')) db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_group_id TEXT');
+  if (!has('ejected_region'))   db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_region TEXT');
+}
+
 // Best-effort sweep of expired sessions on every boot.
 db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(new Date().toISOString());

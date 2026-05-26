@@ -38,9 +38,13 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
       b2.listFileVersions({ bucketId, accountId, maxFileCount: 1000 }),
       b2.getObjectCounts(),
     ]).then(([b, fileResp, objectCounts]) => {
-      // Merge the DB-cached object count into the bucket so FilesTab can display it.
-      const dbCount = objectCounts.get(bucketId);
-      setBucket(b ? { ...b, objectCount: dbCount ?? b.objectCount ?? null } : b);
+      // Merge the DB-cached object count + bytes into the bucket so FilesTab can display them.
+      const oc = objectCounts.get(bucketId);
+      setBucket(b ? {
+        ...b,
+        objectCount:  oc?.count ?? b.objectCount ?? null,
+        storageBytes: oc?.totalBytes ?? b.storageBytes ?? null,
+      } : b);
       if (fileResp?.files) {
         const pageBytes = fileResp.files.reduce((s, f) => s + (f.contentLength || 0), 0);
         setLiveStats({
@@ -92,10 +96,23 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
         <ArrowLeft size={12} /> {back.label}
       </button>
 
+      {bucket._noCredentials && (
+        <div className="flex items-start gap-3 rounded-lg border border-accent-amber/30 bg-accent-amber/5 px-4 py-3 text-xs text-accent-amber">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <span className="font-semibold">Limited view — sub-account credentials not stored.</span>{' '}
+            Live bucket metadata, file listing, and logging status are unavailable for account{' '}
+            <code className="text-ink-200">{bucket.accountId}</code>.
+            To enable full drill-through, add this customer's credentials in the{' '}
+            <strong>Customers</strong> section.
+          </div>
+        </div>
+      )}
+
       <PageHeader
-        eyebrow={`Bucket · ${customer?.name}`}
+        eyebrow={`Bucket · ${customer?.name || bucket.accountId}`}
         title={bucket.bucketName}
-        subtitle={`Bucket ID ${bucket.bucketId} · Region ${region?.flag} ${region?.code} (${region?.city}) · Last modified ${shortDate(bucket.lastModified)}`}
+        subtitle={`Bucket ID ${bucket.bucketId}${region ? ` · Region ${region.flag} ${region.code} (${region.city})` : ''}${bucket.lastModified ? ` · Last modified ${shortDate(bucket.lastModified)}` : ''}`}
         actions={
           <div className="flex items-center gap-2">
             {bucket.publicAccess
