@@ -21,9 +21,7 @@ export const REGIONS = [
     city: 'Sacramento + Phoenix',
     country: 'United States',
     flag: '🇺🇸',
-    // US West has two active S3 endpoints — 002 (Sacramento) and 004 (Phoenix).
-    s3Endpoint: 's3.us-west-004.backblazeb2.com',
-    s3EndpointAlt: 's3.us-west-002.backblazeb2.com',
+    s3Endpoint: 's3.us-west-002.backblazeb2.com',
     apiHost: 'api004.backblazeb2.com',
     downloadHost: 'f004.backblazeb2.com',
     color: '#9B7CFF',

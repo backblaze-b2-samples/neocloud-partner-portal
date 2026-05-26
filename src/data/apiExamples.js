@@ -149,7 +149,7 @@ export const API_EXAMPLES = [
     id: 'list-files',
     category: 'Files',
     name: 'List file versions',
-    description: 'Iterate file versions in a bucket. Useful for computing storage totals or building inventory — but Class C transactions add up. Prefer the daily usage CSV for aggregates.',
+    description: 'Iterate file versions in a bucket. Useful for computing storage totals or building inventory. Class C list calls are free. Prefer the daily usage CSV for storage aggregates.',
     request: {
       method: 'POST',
       url: 'https://api005.backblazeb2.com/b2api/v4/b2_list_file_versions',
@@ -204,8 +204,8 @@ export const API_EXAMPLES = [
       body: {
         groups: [
           {
-            groupId: 'kevinco-resellers',
-            groupName: 'KevinCo Reseller Tier',
+            groupId: 'neocloud-internal',
+            groupName: 'Internal / IT',
             createdTimestamp: 1718323200000,
             memberCount: 8,
           },
@@ -227,7 +227,7 @@ export const API_EXAMPLES = [
         'Content-Type': 'application/json',
       },
       body: {
-        groupId: 'kevinco-resellers',
+        groupId: 'neocloud-internal',
         maxMemberCount: 5000,
       },
     },
@@ -257,7 +257,7 @@ export const API_EXAMPLES = [
     },
     response: {
       status: 200,
-      body: '<text/csv>\ndate,group_id,sub_account_id,bucket_id,bucket_name,region,storage_bytes_avg,upload_bytes,download_bytes,class_a_txn,class_b_txn,class_c_txn\n2026-04-25,kevinco-resellers,7f3a91d2c4b8,4a8b1d3f7c2e9a0b6d4e3f51,lumora-training-checkpoints,us-east-005,1849000000000000,23900000000000,9100000000000,15100000,2310000,448000\n...',
+      body: '<text/csv>\ndate,group_id,sub_account_id,bucket_id,bucket_name,region,storage_bytes_avg,upload_bytes,download_bytes,class_a_txn,class_b_txn,class_c_txn\n2026-04-25,neocloud-internal,7f3a91d2c4b8,4a8b1d3f7c2e9a0b6d4e3f51,lumora-training-checkpoints,us-east-005,1849000000000000,23900000000000,9100000000000,15100000,2310000,448000\n...',
     },
   },
 ];

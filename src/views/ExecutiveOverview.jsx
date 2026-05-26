@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
-  Database, Download, Activity, Users, Boxes, Globe, DollarSign, TrendingUp, FolderTree, ChevronDown,
+  Database, Download, Activity, Users, Boxes, Globe, DollarSign, TrendingUp, FolderTree, ChevronDown, AlertTriangle,
 } from 'lucide-react';
 import {
   PageHeader, MetricCard, Card, CardHeader, SourceBadge, HealthPill,
@@ -22,6 +22,8 @@ export default function ExecutiveOverview() {
   const { navigate } = useNav();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [usageSource, setUsageSource] = useState(null);
+  const [reportsBucket, setReportsBucket] = useState(null);
   const [groupId, setGroupId] = useState('all');
 
   useEffect(() => {
@@ -31,8 +33,10 @@ export default function ExecutiveOverview() {
       b2.listBuckets(),
       b2.getDailyUsage({ days: 30 }),
       b2.getRegionUsage(),
-    ]).then(([{ customers }, { groups }, { buckets }, { usage }, { regions }]) => {
+    ]).then(([{ customers }, { groups }, { buckets }, { usage, source, reportsBucketName }, { regions }]) => {
       setData({ allCustomers: customers, groups, buckets, usage, regions });
+      setUsageSource(source);
+      if (reportsBucketName) setReportsBucket(reportsBucketName);
       setLoading(false);
     });
   }, []);
@@ -69,8 +73,23 @@ export default function ExecutiveOverview() {
   // Derived metrics — mark with SourceBadge "derived"
   const grossMargin = totals.revenue30d > 0 ? (totals.revenue30d - totals.cogs30d) / totals.revenue30d : 0;
   const sparkStorage = usage.map((d) => ({ value: d.storageBytes }));
-  const sparkEgress = usage.map((d) => ({ value: d.egressBytes }));
-  const sparkRevenue = usage.map((d, i) => ({ value: 4_300 + i * 410 + Math.sin(i / 3) * 1_400 }));
+  const sparkEgress  = usage.map((d) => ({ value: d.egressBytes }));
+  const sparkRevenue = usage.map((d) => ({ value: d.egressBytes * 2.1 * 0.01 })); // rough MRR proxy from egress
+
+  // Period-over-period deltas — only meaningful when we have ≥ 2 days of data.
+  // Split the usage window in half and compare the two halves.
+  const half = Math.floor(usage.length / 2);
+  function periodDelta(key) {
+    if (usage.length < 4) return null; // not enough data for a meaningful comparison
+    const prev = usage.slice(0, half).reduce((s, d) => s + (d[key] || 0), 0);
+    const curr = usage.slice(half).reduce((s, d) => s + (d[key] || 0), 0);
+    if (prev === 0) return null;
+    return (curr - prev) / prev;
+  }
+  const deltaStorage = periodDelta('storageBytes');
+  const deltaEgress  = periodDelta('egressBytes');
+  const deltaTxn     = periodDelta('classATxn'); // class A as proxy for overall activity
+  const deltaRevenue = periodDelta('egressBytes'); // revenue tracks egress
 
   const customerShare = customers
     .map((c) => ({ name: c.name, value: c.storageBytes, color: undefined }))
@@ -97,6 +116,26 @@ export default function ExecutiveOverview() {
         }
       />
 
+      {usageSource === 'no-data' && (
+        <div className="flex items-start gap-3 rounded-lg border border-accent-amber/30 bg-accent-amber/5 px-4 py-3 text-xs text-accent-amber">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <span className="font-semibold">Usage Reports not yet available.</span>{' '}
+            Storage, egress, and transaction charts require the daily CSV report stored in{' '}
+            <code className="text-ink-200">{reportsBucket || 'b2-reports-<accountId>'}</code>.
+            Reports are generated once per day — if you just enabled them, check back tomorrow.{' '}
+            <a
+              href="https://secure.backblaze.com/reports.htm"
+              target="_blank"
+              rel="noreferrer"
+              className="underline hover:text-white"
+            >
+              Enable Usage Reports at backblaze.com/reports.htm
+            </a>
+          </div>
+        </div>
+      )}
+
       {selectedGroup && (
         <div className="-mt-2 text-[11.5px] text-ink-400">
           Filtered by group <span className="font-mono text-ink-200">{selectedGroup.groupName}</span> · {customers.length} of {data.allCustomers.length} customers
@@ -108,7 +147,7 @@ export default function ExecutiveOverview() {
         <MetricCard
           label="Storage under management"
           value={bytes(totals.storageBytes)}
-          delta={0.124}
+          delta={deltaStorage}
           source="csv"
           icon={<Database size={14} />}
           accent="red"
@@ -118,7 +157,7 @@ export default function ExecutiveOverview() {
         <MetricCard
           label="30-day egress"
           value={bytes(totals.egressBytes30d)}
-          delta={0.086}
+          delta={deltaEgress}
           source="csv"
           icon={<Download size={14} />}
           accent="teal"
@@ -129,7 +168,7 @@ export default function ExecutiveOverview() {
           label="API transactions (30d)"
           value={compactNumber(totals.txnA30d + totals.txnB30d + totals.txnC30d)}
           unit="A + B + C"
-          delta={0.052}
+          delta={deltaTxn}
           source="csv"
           icon={<Activity size={14} />}
           accent="violet"
@@ -137,7 +176,7 @@ export default function ExecutiveOverview() {
         <MetricCard
           label="Estimated MRR"
           value={currency(totals.revenue30d, { compact: true })}
-          delta={0.188}
+          delta={deltaRevenue}
           deltaLabel="vs prev 30d"
           source="derived"
           icon={<DollarSign size={14} />}
@@ -147,11 +186,28 @@ export default function ExecutiveOverview() {
         </MetricCard>
       </div>
 
-      {/* Secondary metrics row */}
+      {/* Secondary metrics row
+          Bucket count: sum of b2Stats.bucketCount per member (B2 Native API data returned
+            inside b2_list_group_members). b2_list_buckets on the master account only sees
+            master-account buckets, not the sub-account buckets where customer data lives.
+          Region count: derived — unique regions across filtered customers. getRegionUsage()
+            only returns CSV-active regions and misses zero-activity regions. */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
-        <MetricCard label="Active customers" value={customers.length} source="partner" icon={<Users size={14} />} accent="amber" />
-        <MetricCard label="Active buckets"   value={buckets.length}   source="api"     icon={<Boxes size={14} />} accent="teal" />
-        <MetricCard label="Active regions"   value={regions.length}   source="api"     icon={<Globe size={14} />} accent="violet" />
+        <MetricCard label="Active customers" value={customers.length} source="api" icon={<Users size={14} />} accent="amber" />
+        <MetricCard
+          label="Active buckets"
+          value={customers.reduce((s, c) => s + (c.activeBuckets || 0), 0)}
+          source="api"
+          icon={<Boxes size={14} />}
+          accent="teal"
+        />
+        <MetricCard
+          label="Active regions"
+          value={new Set(customers.map((c) => c.region).filter(Boolean)).size}
+          source="derived"
+          icon={<Globe size={14} />}
+          accent="violet"
+        />
         <MetricCard
           label="Gross margin (30d)"
           value={percent(grossMargin, 1)}
@@ -173,7 +229,7 @@ export default function ExecutiveOverview() {
         <Card className="xl:col-span-2">
           <CardHeader
             title="Storage growth · 30 days"
-            subtitle="Aggregated across all sub-accounts and regions"
+            subtitle="Aggregated across all sub-accounts and regions · Reports reflect prior-day usage, available shortly after midnight UTC"
             icon={<Database size={16} />}
             action={<SourceBadge source="csv" />}
           />
@@ -252,16 +308,18 @@ export default function ExecutiveOverview() {
         </Table>
       </Card>
 
-      <div className="rounded-lg border border-ink-700 bg-ink-850/40 p-4 text-[11px] text-ink-400">
-        <strong className="text-ink-200">Data sources:</strong>{' '}
-        <SourceBadge source="api" /> bucket and key metadata via B2 Native API{' '}
-        ·{' '}
-        <SourceBadge source="csv" /> storage / egress / transactions from daily usage CSV{' '}
-        ·{' '}
-        <SourceBadge source="partner" /> sub-account list via Partner API v3{' '}
-        ·{' '}
-        <SourceBadge source="derived" /> revenue, margin, growth calculated from CSV + your reseller pricing
-      </div>
+      {!usageSource || usageSource === 'mock' ? (
+        <div className="rounded-lg border border-ink-700 bg-ink-850/40 p-4 text-[11px] text-ink-400">
+          <strong className="text-ink-200">Data sources:</strong>{' '}
+          <SourceBadge source="api" /> bucket and key metadata via B2 Native API{' '}
+          ·{' '}
+          <SourceBadge source="csv" /> storage / egress / transactions from daily usage CSV{' '}
+          ·{' '}
+          <SourceBadge source="partner" /> sub-account list via Partner API v3{' '}
+          ·{' '}
+          <SourceBadge source="derived" /> revenue, margin, growth calculated from CSV + your reseller pricing
+        </div>
+      ) : null}
     </div>
   );
 }

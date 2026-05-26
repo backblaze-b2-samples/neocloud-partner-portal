@@ -3,6 +3,7 @@
 import React from 'react';
 import { cx, compactNumber, currency, percent, deltaSign } from '../lib/format.js';
 import { ArrowDown, ArrowUp, Loader2, Inbox, AlertTriangle } from 'lucide-react';
+import { useApp } from '../lib/AppContext.jsx';
 
 // =============================================================================
 // Card
@@ -47,16 +48,21 @@ const SOURCE_STYLES = {
   csv:     'bg-accent-amber/10 text-accent-amber ring-accent-amber/30',
   derived: 'bg-accent-violet/10 text-accent-violet ring-accent-violet/30',
   partner: 'bg-accent-green/10 text-accent-green ring-accent-green/30',
+  db:      'bg-teal-500/10 text-teal-400 ring-teal-500/30',
   demo:    'bg-ink-700 text-ink-300 ring-ink-600',
 };
 const SOURCE_LABEL = {
-  api: 'B2 API',
-  csv: 'Daily CSV',
+  api:     'B2 API',
+  csv:     'Daily CSV',
   derived: 'Derived',
   partner: 'Partner API',
-  demo: 'Demo only',
+  db:      'Index',
+  demo:    'Demo only',
 };
 export function SourceBadge({ source = 'api', className }) {
+  const { isLive } = useApp();
+  // In live mode the labels are redundant — the data IS live, so hide them.
+  if (isLive) return null;
   return (
     <span
       className={cx(
@@ -73,6 +79,8 @@ export function SourceBadge({ source = 'api', className }) {
           ? 'Calculated from API + CSV data'
           : source === 'partner'
           ? 'From the Backblaze Partner API'
+          : source === 'db'
+          ? 'Served from the local SQLite file index (built by the 24-hour background job)'
           : 'Demo placeholder'
       }
     >

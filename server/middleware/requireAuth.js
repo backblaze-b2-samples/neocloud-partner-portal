@@ -28,6 +28,17 @@ export function requireRole(...roles) {
   };
 }
 
+const DEMO_EMAILS = new Set(['demo@backblaze.com']);
+export const isDemoEmail = (email) =>
+  typeof email === 'string' && (email.endsWith('@demo.com') || DEMO_EMAILS.has(email));
+
+export function requireNotDemo(req, res, next) {
+  if (isDemoEmail(req.session?.user?.email)) {
+    return res.status(403).json({ error: 'Not available for demo accounts.' });
+  }
+  next();
+}
+
 export function requireCsrf(req, res, next) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   const cookieToken = req.cookies?.[CSRF_COOKIE];

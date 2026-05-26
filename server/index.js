@@ -15,7 +15,14 @@ import cookieParser from 'cookie-parser';
 import { attachSession } from './middleware/requireAuth.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
-import { seedDefaultAdmin } from './seed.js';
+import credentialsRouter from './routes/credentials.js';
+import metadataRouter from './routes/customerMetadata.js';
+import b2partnerRouter from './routes/b2partner.js';
+import customerB2Router from './routes/customerB2.js';
+import masterB2Router from './routes/masterB2.js';
+import customerAdminRouter from './routes/customerAdmin.js';
+import { seedDefaultAdmin, seedDemoUsers } from './seed.js';
+import { scheduleObjectCountJob } from './jobs/objectCountJob.js';
 
 const PORT = Number(process.env.PORT || 3001);
 const app = express();
@@ -42,6 +49,12 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/admin/credentials', credentialsRouter);
+app.use('/api/admin/metadata', metadataRouter);
+app.use('/api/b2-partner', b2partnerRouter);
+app.use('/api/customer-b2', customerB2Router);
+app.use('/api/master-b2', masterB2Router);
+app.use('/api/customer-admin', customerAdminRouter);
 
 // 404 for unknown /api routes — never fall through to anything else.
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -57,10 +70,13 @@ app.use((err, req, res, _next) => {
 (async () => {
   try {
     await seedDefaultAdmin();
+    await seedDemoUsers();
   } catch (e) {
     console.error('[seed] failed:', e?.message || e);
   }
   app.listen(PORT, () => {
     console.log(`[server] listening on :${PORT} (env=${process.env.NODE_ENV || 'development'})`);
+    // Start background jobs after the server is accepting connections.
+    scheduleObjectCountJob();
   });
 })();

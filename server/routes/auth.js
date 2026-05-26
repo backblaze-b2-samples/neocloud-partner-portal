@@ -10,7 +10,7 @@ import {
 } from '../auth.js';
 import { audit } from '../audit.js';
 import { loginLimiter } from '../rateLimit.js';
-import { requireAuth, requireCsrf } from '../middleware/requireAuth.js';
+import { requireAuth, requireCsrf, isDemoEmail } from '../middleware/requireAuth.js';
 import {
   findByEmail, findById, isValidEmail, isStrongPassword,
   recordLogin, selfUser, setPasswordHash,
@@ -70,6 +70,9 @@ router.get('/me', requireAuth, (req, res) => {
 });
 
 router.post('/change-password', requireAuth, requireCsrf, async (req, res) => {
+  if (isDemoEmail(req.session.user.email)) {
+    return res.status(403).json({ error: 'Password changes are not allowed for demo accounts.' });
+  }
   const { currentPassword, newPassword } = req.body || {};
   if (typeof currentPassword !== 'string' || !isStrongPassword(newPassword)) {
     return res.status(400).json({ error: 'Invalid password' });

@@ -11,7 +11,7 @@ import { useApp } from '../lib/AppContext.jsx';
 const ALL_NAV = [
   { id: 'overview',  label: 'Executive overview',  icon: LayoutDashboard, group: 'Insights' },
   { id: 'groups',    label: 'Groups',               icon: FolderTree,      group: 'Insights' },
-  { id: 'partner',   label: 'Customers & sub-accounts', icon: Users,        group: 'Insights' },
+  { id: 'partner',   label: 'Customers',                 icon: Users,        group: 'Insights' },
   { id: 'storage',   label: 'Storage & buckets',    icon: Database,         group: 'Operations' },
   { id: 'regions',   label: 'Regions & placement',  icon: Globe,            group: 'Operations' },
   { id: 'usage',     label: 'Usage & billing',      icon: Receipt,          group: 'Operations' },

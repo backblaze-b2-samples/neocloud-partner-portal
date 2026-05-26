@@ -28,9 +28,9 @@
 import { BUCKETS } from '../data/buckets.js';
 import { APPLICATION_KEYS } from '../data/applicationKeys.js';
 import { DAILY_USAGE, REGION_USAGE, ACTIVITY_HEATMAP } from '../data/usageMetrics.js';
-import { REGIONS, resolveRegion } from '../data/regions.js';
+import { REGIONS } from '../data/regions.js';
 import { FILES_BY_BUCKET } from '../data/files.js';
-import { parseDailyUsageCsv, activityFromCsv, loadSampleCsv, parseBackblazeGroupUsageCsv, parseStandardUsageCsv } from './csvParser.js';
+import { parseDailyUsageCsv, activityFromCsv, loadSampleCsv, parseBackblazeGroupUsageCsv } from './csvParser.js';
 
 const MOCK_DELAY = 220;
 const wait = (ms = MOCK_DELAY) => new Promise((r) => setTimeout(r, ms));
@@ -43,10 +43,6 @@ export function configureAdapter(config) {
   _authCache = null;
   _usageCache = null;
   _usageCacheExpiry = 0;
-  _rawRowsCache = null;
-  _reportsBucketName = null;
-  _objectCountsCache = null;
-  _objectCountsCacheExp = 0;
 }
 
 const useMocks = () => runtimeConfig.mode !== 'live';
@@ -117,13 +113,9 @@ function rewriteHostsThroughProxy(authBody, proxyUrl) {
   };
   return {
     ...authBody,
-    apiUrl:            swap(authBody.apiUrl),
-    downloadUrl:       swap(authBody.downloadUrl),
-    s3ApiUrl:          swap(authBody.s3ApiUrl),
-    // Preserve the original (non-proxied) B2 URLs so the server-side route
-    // can make direct outbound calls without going through the nginx proxy.
-    _rawApiUrl:        authBody.apiUrl,
-    _rawDownloadUrl:   authBody.downloadUrl,
+    apiUrl: swap(authBody.apiUrl),
+    downloadUrl: swap(authBody.downloadUrl),
+    s3ApiUrl: swap(authBody.s3ApiUrl),
   };
 }
 
@@ -159,6 +151,7 @@ async function callB2(endpoint, body, { skipAccountId = false } = {}) {
 // storageBytes, versioning, customerId, cors, encryption, publicAccess,
 // replicationTo. We derive or default them here so no view crashes.
 function normalizeBucket(b) {
+  const sse = b.defaultServerSideEncryption;
   const repl = b.replicationConfiguration;
   // Attempt to pull a destination region/bucket from replication config.
   const replDest =
@@ -169,28 +162,14 @@ function normalizeBucket(b) {
   const region = b._apiHost
     ? (REGIONS.find((r) => r.apiHost === b._apiHost)?.id ?? null)
     : null;
-
-  // B2 API v4 nests encryption mode under defaultServerSideEncryption.value.mode
-  // (not the top-level .mode that v2/v3 docs showed). Accept both to be safe.
-  const sse = b.defaultServerSideEncryption;
-  const sseMode = sse?.value?.mode ?? sse?.mode ?? null;
-  const encryption = sseMode === 'SSE-B2' ? 'SSE-B2'
-                   : sseMode === 'SSE-C'  ? 'SSE-C'
-                   : 'none';
-
-  // File lock: API v4 uses fileLockConfiguration.value.isFileLockEnabled.
-  // Fall back to top-level isFileLockEnabled for backward compat.
-  const flc = b.fileLockConfiguration;
-  const fileLockEnabled = flc?.value?.isFileLockEnabled ?? b.isFileLockEnabled ?? false;
-  const fileLock = fileLockEnabled ? (flc?.value?.defaultRetention?.mode ?? 'enabled') : 'none';
-
   return {
     ...b,
     region,
     // Derive display fields
     publicAccess: b.bucketType === 'allPublic',
-    encryption,
-    fileLock,
+    encryption: sse?.mode === 'SSE-B2' ? 'SSE-B2'
+              : sse?.mode === 'SSE-C' ? 'SSE-C'
+              : 'none',
     cors: Array.isArray(b.corsRules) ? b.corsRules.map((r) => r.allowedOrigins?.[0] || '*') : [],
     lifecycleRules: Array.isArray(b.lifecycleRules) ? b.lifecycleRules : [],
     versioning: null,     // B2 doesn't expose a versioning toggle; show '—'
@@ -353,17 +332,7 @@ export async function createBucket(payload) {
     b2Body.lifecycleRules = payload.lifecycleRules;
   }
 
-  // Route through the sub-account proxy when an accountId is provided so the
-  // bucket is created on the customer's sub-account rather than the master.
-  // listBuckets uses this same path — without it, create lands on master and
-  // the subsequent list call (which uses sub-account creds) won't see it.
-  if (payload.accountId) {
-    const data = await callAsCustomer(payload.accountId, 'b2_create_bucket', b2Body);
-    if (data === null) throw new Error(`No stored credentials for account ${payload.accountId}`);
-    return normalizeBucket(data);
-  }
-  const created = await callB2('b2_create_bucket', b2Body);
-  return normalizeBucket(created);
+  return callB2('b2_create_bucket', b2Body);
 }
 
 // ===== Application keys =====================================================
@@ -557,101 +526,41 @@ export async function getKeyLastUsed() {
 // Reference: https://www.backblaze.com/apidocs/s3-put-bucket-logging
 // Reference: https://www.backblaze.com/apidocs/s3-get-bucket-logging
 
-// =============================================================================
-// Bucket Access Logs — S3-compatible PutBucketLogging / GetBucketLogging
-// Reference: https://www.backblaze.com/docs/cloud-storage-bucket-access-logs
-//            https://www.backblaze.com/apidocs/s3-get-bucket-logging
-//            https://www.backblaze.com/apidocs/s3-put-bucket-logging
-//
-// B2 buckets are always versioned; access logs are delivered on a best-effort
-// basis (typically within a few hours) to the specified target bucket.
-// Log file naming: {prefix}/{accountId}/{region}/{bucket}/{YYYY}/{MM}/{DD}/{timestamp}-{uid}
-//
-// Browser → s3.<region>.backblazeb2.com is blocked by CORS.
-// Requests are proxied through the Express server at /api/customer-b2/:accountId/s3_logging
-// which performs AWS SigV4 signing server-side with the sub-account credentials.
-//
-// The key used for signing must have writeBucketLogging + readBucketLogging capabilities.
-// =============================================================================
-
-/**
- * Get current access-logging configuration for a bucket.
- *
- * @param {object} opts
- * @param {string} opts.bucketId    - used in mock mode
- * @param {string} opts.bucketName  - required in live mode
- * @param {string} opts.bucketRegion - B2 region id, e.g. "us-west-002" (required in live mode)
- * @param {string} opts.accountId   - sub-account accountId (required in live mode)
- *
- * @returns {{ enabled: boolean, targetBucket: string|null, targetPrefix: string }}
- */
-export async function getBucketLogging({ bucketId, bucketName, bucketRegion, accountId } = {}) {
+export async function getBucketLogging({ bucketId } = {}) {
   await wait(140);
   if (useMocks()) {
     const b = BUCKETS.find((x) => x.bucketId === bucketId);
     return {
-      enabled:      !!b?.accessLogging?.enabled,
-      targetBucket: b?.accessLogging?.targetBucketName || null,
-      targetPrefix: b?.accessLogging?.targetPrefix || '',
+      enabled: !!b?.accessLogging?.enabled,
+      targetBucketName: b?.accessLogging?.targetBucketName || null,
+      targetPrefix: b?.accessLogging?.targetPrefix || null,
+      datePartitioned: !!b?.accessLogging?.datePartitioned,
     };
   }
-
-  if (!bucketName || !bucketRegion || !accountId) {
-    return { enabled: false, targetBucket: null, targetPrefix: '', _noData: true };
-  }
-
-  const res = await fetch(
-    `/api/customer-b2/${accountId}/s3_logging?bucketName=${encodeURIComponent(bucketName)}&bucketRegion=${encodeURIComponent(bucketRegion)}`,
-    { credentials: 'include' },
-  );
-  if (res.status === 404) return { enabled: false, targetBucket: null, targetPrefix: '', _noCredentials: true };
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `GetBucketLogging failed: ${res.status}`);
-  }
-  return res.json();
+  // Live: GET https://{bucketName}.s3.{region}.backblazeb2.com/?logging
+  // Returns S3 BucketLoggingStatus XML — parse with DOMParser.
+  throw new Error('Live S3 GetBucketLogging not implemented — needs a CORS proxy');
 }
 
-/**
- * Enable or disable access logging on a bucket.
- *
- * @param {object} opts
- * @param {string}  opts.bucketId      - used in mock mode
- * @param {string}  opts.bucketName    - required in live mode
- * @param {string}  opts.bucketRegion  - B2 region id (required in live mode)
- * @param {string}  opts.accountId     - sub-account accountId (required in live mode)
- * @param {boolean} opts.enabled       - true to enable, false to disable
- * @param {string}  [opts.targetBucket]  - destination bucket name (required when enabling)
- * @param {string}  [opts.targetPrefix]  - prefix for log object keys (optional)
- *
- * @returns {{ ok: boolean, enabled: boolean, targetBucket: string|null, targetPrefix: string }}
- */
-export async function setBucketLogging({ bucketId, bucketName, bucketRegion, accountId, enabled, targetBucket, targetPrefix = '' } = {}) {
+export async function setBucketLogging({ bucketId, enabled, targetBucketName, targetPrefix = '', datePartitioned = false } = {}) {
   await wait(420);
   if (useMocks()) {
     const b = BUCKETS.find((x) => x.bucketId === bucketId);
     if (!b) throw new Error('Bucket not found');
     b.accessLogging = enabled
-      ? { enabled: true, targetBucketName: targetBucket, targetPrefix }
+      ? { enabled: true, targetBucketName, targetPrefix, datePartitioned }
       : { enabled: false };
-    return { ok: true, enabled: !!enabled, targetBucket: targetBucket || null, targetPrefix };
+    return { ok: true, ...b.accessLogging };
   }
-
-  if (!bucketName || !bucketRegion || !accountId) {
-    throw new Error('bucketName, bucketRegion, and accountId are required for live setBucketLogging');
-  }
-
-  const res = await fetch(`/api/customer-b2/${accountId}/s3_logging`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bucketName, bucketRegion, enabled, targetBucket, targetPrefix }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `PutBucketLogging failed: ${res.status}`);
-  }
-  return res.json();
+  // Live: PUT https://{bucketName}.s3.{region}.backblazeb2.com/?logging
+  //   <BucketLoggingStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  //     <LoggingEnabled>
+  //       <TargetBucket>{targetBucketName}</TargetBucket>
+  //       <TargetPrefix>{targetPrefix}</TargetPrefix>
+  //     </LoggingEnabled>
+  //   </BucketLoggingStatus>
+  // (empty <BucketLoggingStatus/> body to disable)
+  throw new Error('Live S3 PutBucketLogging not implemented — needs a CORS proxy');
 }
 
 // =============================================================================
@@ -670,54 +579,67 @@ export async function setBucketLogging({ bucketId, bucketName, bucketRegion, acc
 //   4. Returns rows shaped the same as DAILY_USAGE (storageBytes, egressBytes…)
 let _usageCache = null;
 let _usageCacheExpiry = 0;
-let _rawRowsCache = null;    // pre-aggregation rows with region field intact
-let _reportsBucketName = null; // resolved once we successfully fetch
 
 async function fetchUsageFromReportsBucket({ days = 30 } = {}) {
   if (_usageCache && _usageCacheExpiry > Date.now()) return _usageCache;
 
-  // Delegate the CSV fetch (find bucket → list files → download → parse) to the
-  // server-side route. Rather than sending raw credentials and letting the server
-  // re-authorize, we pass the browser's existing auth token + the original (non-
-  // proxied) B2 URLs so the server can make direct outbound calls immediately.
   const auth = await ensureAuth();
-  const res = await fetch('/api/master-b2/reports-csv', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      authorizationToken: auth.authorizationToken,
-      apiUrl:             auth._rawApiUrl    || auth.apiUrl,
-      downloadUrl:        auth._rawDownloadUrl || auth.downloadUrl,
-      accountId:          auth.accountId,
-      days,
-    }),
-  });
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    if (body.error === 'no_reports_bucket') {
-      throw new Error(body.detail || 'b2-reports bucket not found — enable daily reports at backblaze.com/reports.htm');
-    }
-    throw new Error(`reports-csv server error ${res.status}: ${body.error || res.statusText}`);
+  // Step 1: find the reports bucket for this account.
+  // Backblaze names it b2-reports-<accountId> but the accountId in the name
+  // may differ from the master-key accountId if reports were enabled on a
+  // parent/group account. Accept any b2-reports-* bucket as a fallback.
+  const { buckets: allBuckets } = await callB2('b2_list_buckets', {});
+  const reportsBucket =
+    allBuckets.find((b) => b.bucketName === `b2-reports-${auth.accountId}`) ||
+    allBuckets.find((b) => b.bucketName.startsWith('b2-reports-'));
+
+  if (!reportsBucket) {
+    throw new Error(
+      `Could not locate b2-reports-* bucket among [${allBuckets.map((b) => b.bucketName).join(', ')}]. ` +
+      'Enable Usage Reports at https://secure.backblaze.com/reports.htm'
+    );
   }
 
-  const { rows: allRows, bucketName, filesScanned } = await res.json();
-  _reportsBucketName = bucketName || null; // cache for UI display
-  console.log(`[b2Adapter] server fetched ${allRows.length} rows from "${bucketName}" (${filesScanned} CSV file(s) scanned)`);
+  // Step 2: list CSV files for the requested date range
+  const today = new Date();
+  const cutoff = new Date(today.getTime() - days * 86400000);
+  const prefix = ''; // iterate everything, filter client-side by date
 
-  // Normalize reporting_location aliases (e.g. 'us-west-004' → 'us-west-002')
-  // so downstream aggregation and UI region lookups work correctly.
-  allRows.forEach((r) => {
-    r._date = r.date || r._date;
-    const resolved = resolveRegion(r.region);
-    if (resolved) r.region = resolved.id;
+  const { files: fileList } = await callB2('b2_list_file_names', {
+    bucketId: reportsBucket.bucketId,
+    prefix,
+    maxFileCount: 1000,
+  }, { skipAccountId: true });
+
+  // Keep only usage CSV files within the date window
+  // Pattern: YYYY-MM-DD/usage.group-*.csv
+  const csvFiles = (fileList || []).filter((f) => {
+    const m = f.fileName.match(/^(\d{4}-\d{2}-\d{2})\/usage\..*\.csv$/);
+    if (!m) return false;
+    const d = new Date(m[1]);
+    return d >= cutoff && d <= today;
   });
 
-  // Cache the raw (per-bucket-per-day) rows so getRegionUsage can group by
-  // region. These are saved BEFORE date-aggregation strips the region field.
-  _rawRowsCache = allRows;
+  // Step 3: download and parse each file
+  const allRows = [];
+  await Promise.all(
+    csvFiles.map(async (f) => {
+      const res = await fetch(
+        `${auth.downloadUrl}/b2api/v4/b2_download_file_by_id?fileId=${f.fileId}`,
+        { headers: { Authorization: auth.authorizationToken } }
+      );
+      if (!res.ok) return;
+      const text = await res.text();
+      const rows = parseBackblazeGroupUsageCsv(text);
+      const dateMatch = f.fileName.match(/^(\d{4}-\d{2}-\d{2})\//);
+      const date = dateMatch ? dateMatch[1] : null;
+      rows.forEach((r) => { if (date) r._date = date; });
+      allRows.push(...rows);
+    })
+  );
 
-  // Aggregate by date into DAILY_USAGE-shaped objects
+  // Step 4: aggregate by date into DAILY_USAGE-shaped objects
   const byDate = new Map();
   for (const r of allRows) {
     const date = r._date;
@@ -730,15 +652,13 @@ async function fetchUsageFromReportsBucket({ days = 30 } = {}) {
       classATxn: 0,
       classBTxn: 0,
       classCTxn: 0,
-      classDTxn: 0,
     };
-    cur.storageBytes += r.storageBytes || 0;
+    cur.storageBytes = Math.max(cur.storageBytes, r.storageBytes || 0);
     cur.egressBytes += r.egressBytes || 0;
     cur.uploadBytes += r.uploadBytes || 0;
     cur.classATxn += r.classATxn || 0;
     cur.classBTxn += r.classBTxn || 0;
     cur.classCTxn += r.classCTxn || 0;
-    cur.classDTxn += r.classDTxn || 0;
     byDate.set(date, cur);
   }
 
@@ -748,119 +668,6 @@ async function fetchUsageFromReportsBucket({ days = 30 } = {}) {
   return sorted;
 }
 
-// ===== Bucket list from CSV =================================================
-// Derives a bucket list directly from the daily CSV reports, without needing
-// per-sub-account credentials stored in the control-plane DB. Each CSV row
-// has bucketId, bucketName, accountId, groupId, region, and storageBytes —
-// enough to populate the Storage page bucket table.
-//
-// Returns an array of bucket-shaped objects for the latest date in the cache.
-// Pass accountId to filter to one sub-account, or omit for all sub-accounts.
-// Rows with no bucketId (account-level txn-only rows) are skipped.
-//
-// Metadata that only comes from b2_list_buckets (encryption, lifecycle, etc.)
-// is set to safe defaults — the page notes these are CSV-derived.
-export async function getBucketsFromCsv({ accountId } = {}) {
-  if (useMocks()) return [];
-  try {
-    await fetchUsageFromReportsBucket({ days: 30 });
-    const rawRows = _rawRowsCache || [];
-    if (!rawRows.length) return [];
-
-    const latestDate = rawRows.reduce((max, r) => (r._date > max ? r._date : max), '');
-
-    // One entry per bucketId, summing storageBytes across any region shards.
-    const byBucket = new Map();
-    for (const r of rawRows) {
-      // Require accountId — audit CSV files (usage.audit-group-*.csv) have
-      // stored_gb but no account_id column; including them doubles storage totals.
-      if (!r.bucketId || !r.accountId || r._date !== latestDate) continue;
-      if (accountId && r.accountId !== accountId) continue;
-      const cur = byBucket.get(r.bucketId);
-      if (cur) {
-        cur.storageBytes += r.storageBytes || 0;
-        cur.egressBytes  += r.egressBytes  || 0;
-      } else {
-        byBucket.set(r.bucketId, {
-          bucketId:      r.bucketId,
-          bucketName:    r.bucketName || r.bucketId,
-          accountId:     r.accountId  || null,
-          groupId:       r.groupId    || null,
-          region:        r.region     || null,
-          storageBytes:  r.storageBytes || 0,
-          egressBytes:   r.egressBytes  || 0,
-          // Fields not available from CSV — normalised to safe defaults
-          objectCount:   null,
-          bucketType:    'allPrivate',
-          publicAccess:  false,
-          encryption:    null,   // unknown without API call
-          fileLock:      'none',
-          versioning:    null,
-          lifecycleRules: [],
-          cors:          [],
-          replicationTo: null,
-          lastModified:  null,
-          _fromCsv:      true,   // flag so UI can show a note
-        });
-      }
-    }
-    return Array.from(byBucket.values());
-  } catch (e) {
-    console.warn('[b2Adapter] getBucketsFromCsv failed:', e.message);
-    return [];
-  }
-}
-
-// ===== Per-customer usage from CSV ==========================================
-// Aggregates the raw-rows cache by accountId so views can show per-customer
-// storage / egress / transaction metrics without relying on b2Stats from the
-// Partner API (which often returns 0 or is absent for sub-accounts).
-//
-// Returns a Map<accountId, { storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d }>
-// In demo mode returns an empty Map (demo customers already have values baked in).
-export async function getCustomerUsageFromCsv() {
-  if (useMocks()) return new Map();
-  try {
-    // fetchUsageFromReportsBucket populates _rawRowsCache; safe to call multiple
-    // times — subsequent calls return the cached result immediately.
-    await fetchUsageFromReportsBucket({ days: 30 });
-    const rawRows = _rawRowsCache || [];
-    if (!rawRows.length) return new Map();
-
-    // Storage is a snapshot (daily average), not cumulative — use the latest
-    // date only. Egress and transactions accumulate over the 30-day window.
-    // Use _date (normalized YYYY-MM-DD) — partner CSVs use M/D/YY in the raw
-    // date field; fetchUsageFromReportsBucket normalizes and stores in _date.
-    const latestDate = rawRows.reduce((max, r) => (r._date > max ? r._date : max), '');
-
-    const byAccount = new Map();
-    for (const r of rawRows) {
-      if (!r.accountId) continue;
-      const cur = byAccount.get(r.accountId) || {
-        storageBytes: 0,
-        egressBytes30d: 0,
-        txnA30d: 0,
-        txnB30d: 0,
-        txnC30d: 0,
-      };
-      // Each row is one bucket — sum across all buckets for the same account
-      // to get the account total (there is no pre-aggregated row in the CSV).
-      if (r._date === latestDate) {
-        cur.storageBytes += r.storageBytes || 0;
-      }
-      cur.egressBytes30d += r.egressBytes || 0;
-      cur.txnA30d += r.classATxn || 0;
-      cur.txnB30d += r.classBTxn || 0;
-      cur.txnC30d += r.classCTxn || 0;
-      byAccount.set(r.accountId, cur);
-    }
-    return byAccount;
-  } catch (e) {
-    console.warn('[b2Adapter] getCustomerUsageFromCsv failed:', e.message);
-    return new Map();
-  }
-}
-
 // ===== Usage / metrics ======================================================
 // CSV-DERIVED. There is no JSON usage API on B2.
 export async function getDailyUsage({ days = 30 } = {}) {
@@ -868,34 +675,27 @@ export async function getDailyUsage({ days = 30 } = {}) {
   if (!useMocks()) {
     try {
       const rows = await fetchUsageFromReportsBucket({ days });
-      return { usage: rows.slice(-days), source: 'csv-live', reportsBucketName: _reportsBucketName };
+      return { usage: rows.slice(-days), source: 'csv-live' };
     } catch (e) {
       console.warn('[b2Adapter] getDailyUsage live fetch failed — returning empty (no CSV reports):', e.message);
-      return { usage: [], source: 'no-data', reportsBucketName: null };
+      return { usage: [], source: 'no-data' };
     }
   }
-  return { usage: DAILY_USAGE.slice(-days), source: 'mock', reportsBucketName: null };
+  return { usage: DAILY_USAGE.slice(-days), source: 'mock' };
 }
 
 export async function getRegionUsage() {
   await wait();
   if (!useMocks()) {
     try {
-      // fetchUsageFromReportsBucket populates _rawRowsCache with per-bucket-per-day
-      // rows that still carry the region field. We use those for region grouping —
-      // the date-aggregated rows it returns have already lost the region field.
-      await fetchUsageFromReportsBucket({ days: 30 });
-      const rawRows = _rawRowsCache || [];
-      // Group by region field (normalized by fetchUsageFromReportsBucket)
+      const rows = await fetchUsageFromReportsBucket({ days: 30 });
+      // Group by region field (reporting_location in real CSV)
       const byRegion = new Map();
-      for (const r of rawRows) {
-        // Skip rows with no resolvable region — they can't be attributed to a
-        // known location and would produce a spurious "unknown" card.
-        if (!r.region) continue;
-        const regionId = r.region;
+      for (const r of rows) {
+        const regionId = r.region || 'unknown';
         const cur = byRegion.get(regionId) || {
           regionId,
-          code: r.region,
+          code: r.region || regionId,
           storageBytes: 0,
           egressBytes30d: 0,
           uploadBytes30d: 0,
@@ -905,7 +705,7 @@ export async function getRegionUsage() {
           bucketCount: 0,
           growth30d: null,
         };
-        cur.storageBytes += r.storageBytes || 0;
+        cur.storageBytes = Math.max(cur.storageBytes, r.storageBytes || 0);
         cur.egressBytes30d += r.egressBytes || 0;
         cur.uploadBytes30d += r.uploadBytes || 0;
         cur.classATxn30d += r.classATxn || 0;
@@ -913,18 +713,10 @@ export async function getRegionUsage() {
         cur.classCTxn30d += r.classCTxn || 0;
         byRegion.set(regionId, cur);
       }
-      // Merge with known REGIONS for display metadata.
-      // resolveRegion handles alias mapping (e.g. 'us-west-004' → us-west-002),
-      // but rows are already normalized at this point so a direct id/code lookup
-      // is sufficient. We call resolveRegion as the final fallback.
+      // Merge with known REGIONS for display metadata
       const regionList = Array.from(byRegion.values()).map((r) => {
-        const meta =
-          REGIONS.find((x) => x.id === r.regionId) ||
-          REGIONS.find((x) => x.code === r.code) ||
-          resolveRegion(r.regionId);
-        return meta
-          ? { ...r, regionId: meta.id, code: meta.code, flag: meta.flag, color: meta.color, city: meta.city, country: meta.country }
-          : r;
+        const meta = REGIONS.find((x) => x.id === r.regionId || x.code === r.code);
+        return meta ? { ...r, regionId: meta.id, code: meta.code } : r;
       });
       return { regions: regionList, source: 'csv-live' };
     } catch (e) {
@@ -1009,74 +801,6 @@ export async function getActivityHeatmap() {
 export async function listRegions() {
   await wait(80);
   return { regions: REGIONS };
-}
-
-// ===== Object counts (background-job cache) ==================================
-// The server-side objectCountJob runs every 24h, paginates b2_list_file_names
-// for every sub-account bucket, and stores the results in the object_counts DB
-// table.  This function reads that table via a simple GET — no B2 call needed
-// at render time, so the Storage page shows real object counts instantly.
-//
-// Returns a Map<bucketId, objectCount>.
-// In demo mode returns an empty Map (demo buckets have mock counts baked in).
-let _objectCountsCache    = null;
-let _objectCountsCacheExp = 0;
-const OBJECT_COUNTS_TTL   = 60 * 60 * 1000; // re-read from DB at most once per hour
-
-export async function getObjectCounts() {
-  if (useMocks()) return new Map();
-  if (_objectCountsCache && _objectCountsCacheExp > Date.now()) return _objectCountsCache;
-  try {
-    const res = await fetch('/api/master-b2/object-counts', { credentials: 'include' });
-    if (!res.ok) {
-      console.warn('[b2Adapter] getObjectCounts: server returned', res.status);
-      return new Map();
-    }
-    const { counts } = await res.json();
-    const map = new Map((counts || []).map((c) => [c.bucketId, c.objectCount]));
-    _objectCountsCache    = map;
-    _objectCountsCacheExp = Date.now() + OBJECT_COUNTS_TTL;
-    return map;
-  } catch (e) {
-    console.warn('[b2Adapter] getObjectCounts failed:', e.message);
-    return new Map();
-  }
-}
-
-// ===== File index (background-job cache) =====================================
-// The objectCountJob writes per-file metadata to the file_index SQLite table
-// alongside the object counts.  This function queries that index — instant
-// server DB read, zero B2 calls, any sort order, full-text prefix filtering.
-//
-// Returns { files, total, indexedAt, isComplete }
-//   files      – array of { fileName, fileId, size, uploadedAt, contentType }
-//   total      – total rows matching the query (useful for pagination UI)
-//   indexedAt  – ISO timestamp of the last index run for this bucket
-//   isComplete – true if the bucket has been indexed at least once
-//
-// In demo mode returns { files: [], total: 0, indexedAt: null, isComplete: false }
-// so the FilesTab falls back to the live b2_list_file_names path (correct for demos).
-export async function getFileIndex(bucketId, {
-  prefix = '',
-  limit  = 100,
-  offset = 0,
-  sortBy = 'name',   // 'name' | 'size' | 'uploadedAt'
-  sortDir = 'asc',   // 'asc' | 'desc'
-} = {}) {
-  if (useMocks()) return { files: [], total: 0, indexedAt: null, isComplete: false };
-  try {
-    const params = new URLSearchParams({ limit, offset, sortBy, sortDir });
-    if (prefix) params.set('prefix', prefix);
-    const res = await fetch(
-      `/api/master-b2/file-index/${encodeURIComponent(bucketId)}?${params}`,
-      { credentials: 'include' },
-    );
-    if (!res.ok) return { files: [], total: 0, indexedAt: null, isComplete: false };
-    return res.json();
-  } catch (e) {
-    console.warn('[b2Adapter] getFileIndex failed:', e.message);
-    return { files: [], total: 0, indexedAt: null, isComplete: false };
-  }
 }
 
 // ===== Convenience auth surface =============================================

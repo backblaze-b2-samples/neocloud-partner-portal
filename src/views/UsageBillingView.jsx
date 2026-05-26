@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Receipt, Upload, Download, Database, Activity, Calculator, FileSpreadsheet } from 'lucide-react';
+import { Receipt, Upload, Download, Database, Activity, Calculator, FileSpreadsheet, AlertTriangle } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tabs, Tag,
   Table, THead, TBody, TR, TH, TD, LoadingState,
@@ -9,6 +9,7 @@ import * as b2 from '../api/b2Adapter.js';
 import { parseDailyUsageCsv, rollupBy, estimateCost, PRICING, loadSampleCsv } from '../api/csvParser.js';
 import { CUSTOMERS } from '../data/customers.js';
 import { bytes, compactNumber, currency, percent } from '../lib/format.js';
+import { useApp } from '../lib/AppContext.jsx';
 
 const RANGES = [
   { id: 'd7', label: 'Last 7 days', days: 7 },
@@ -17,8 +18,11 @@ const RANGES = [
 ];
 
 export default function UsageBillingView() {
+  const { isLive } = useApp();
   const [loading, setLoading] = useState(true);
   const [usage, setUsage] = useState([]);
+  const [usageSource, setUsageSource] = useState(null);
+  const [reportsBucket, setReportsBucket] = useState(null);
   const [heatmap, setHeatmap] = useState([]);
   const [csvText, setCsvText] = useState('');
   const [parsed, setParsed] = useState([]);
@@ -29,18 +33,26 @@ export default function UsageBillingView() {
     Promise.all([
       b2.getDailyUsage({ days: 30 }),
       b2.getActivityHeatmap(),
-      loadSampleCsv(),
-    ]).then(([{ usage }, { cells }, csv]) => {
-      setUsage(usage);
+      // In live mode skip the bundled sample CSV — it's irrelevant to real data
+      isLive ? Promise.resolve('') : loadSampleCsv(),
+    ]).then(([{ usage: u, source, reportsBucketName }, { cells }, csv]) => {
+      setUsage(u);
+      setUsageSource(source);
+      if (reportsBucketName) setReportsBucket(reportsBucketName);
       setHeatmap(cells);
       setCsvText(csv);
-      setParsed(parseDailyUsageCsv(csv));
+      setParsed(isLive ? [] : parseDailyUsageCsv(csv));
       setLoading(false);
     });
-  }, []);
+  }, [isLive]);
 
   if (loading) return <LoadingState label="Downloading and parsing daily usage CSV" />;
 
+  // Only show the "not available" warning when the server explicitly failed to find
+  // the reports bucket. Zero-valued data (e.g. master account with no direct storage)
+  // is valid — don't warn just because all metrics happen to be 0.
+  const noLiveData = isLive && usageSource === 'no-data';
+  const bucketLabel = reportsBucket || 'b2-reports-<accountId>';
   const days = RANGES.find((r) => r.id === range).days;
   const windowed = usage.slice(-days);
   const sum = windowed.reduce((acc, d) => {
@@ -50,16 +62,17 @@ export default function UsageBillingView() {
     acc.classA += d.classATxn;
     acc.classB += d.classBTxn;
     acc.classC += d.classCTxn;
+    acc.classD += d.classDTxn || 0;
     return acc;
-  }, { storage: 0, upload: 0, egress: 0, classA: 0, classB: 0, classC: 0 });
+  }, { storage: 0, upload: 0, egress: 0, classA: 0, classB: 0, classC: 0, classD: 0 });
 
   // Cost model — rough monthly using current windowed averages
   const monthlyAvg = days < 30 ? sum.egress * (30 / days) : sum.egress;
   const cost = estimateCost({
     storageBytesAvg: sum.storage,
     downloadBytes: monthlyAvg,
-    classBTxn: (sum.classB / days) * 30,
-    classCTxn: (sum.classC / days) * 30,
+    classDTxn: (sum.classD ?? 0) * (30 / days),
+    days: 30,
   });
 
   // Reseller margin model
@@ -75,9 +88,28 @@ export default function UsageBillingView() {
       <PageHeader
         eyebrow="Operations"
         title="Usage & billing"
-        subtitle="All values on this page are derived from the Daily Usage CSV report (b2-reports-$ACCOUNTID/YYYY-MM-DD/Usage.csv). The B2 Native API does not expose aggregate storage / egress / transaction metrics in JSON form."
-        actions={<Tag variant="warn"><FileSpreadsheet size={11} className="mr-1" /> CSV-driven</Tag>}
+        subtitle={isLive ? 'Storage, egress, and transaction data is updated daily.' : `All values on this page are derived from the Daily Usage CSV report (${bucketLabel}/YYYY-MM-DD/Usage.csv). The B2 Native API does not expose aggregate storage / egress / transaction metrics in JSON form.`}
+        actions={!isLive ? <Tag variant="warn"><FileSpreadsheet size={11} className="mr-1" /> CSV-driven</Tag> : null}
       />
+
+      {noLiveData && (
+        <div className="flex items-start gap-3 rounded-lg border border-accent-amber/30 bg-accent-amber/5 px-4 py-3 text-xs text-accent-amber">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <span className="font-semibold">Usage data not available.</span>{' '}
+            All metrics on this page are derived from the Daily Usage CSV report stored in{' '}
+            <code className="text-ink-200">{bucketLabel}</code>. No CSV files were found in that bucket, so all values show zero.{' '}
+            <a
+              href="https://secure.backblaze.com/reports.htm"
+              target="_blank"
+              rel="noreferrer"
+              className="underline hover:text-white"
+            >
+              Enable at backblaze.com/reports.htm
+            </a>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <Tabs tabs={RANGES} value={range} onChange={setRange} />
@@ -94,8 +126,8 @@ export default function UsageBillingView() {
         <MetricCard label={`Uploads · ${days}d`} value={bytes(sum.upload)} source="csv" icon={<Upload size={14} />} accent="violet" />
         <MetricCard
           label={`Transactions · ${days}d`}
-          value={compactNumber(sum.classA + sum.classB + sum.classC)}
-          unit="A+B+C"
+          value={compactNumber(sum.classA + sum.classB + sum.classC + sum.classD)}
+          unit="A+B+C+D"
           source="csv"
           icon={<Activity size={14} />}
           accent="amber"
@@ -142,7 +174,7 @@ export default function UsageBillingView() {
             <TBody>
               <TR hover={false}>
                 <TD className="text-ink-100">Storage</TD>
-                <TD className="text-ink-300">{currency(PRICING.storagePerGbMonth, { decimals: 4 })}/GB·month</TD>
+                <TD className="text-ink-300">$6.95/TB·month</TD>
                 <TD className="text-right font-mono">{bytes(sum.storage)}</TD>
                 <TD className="text-right font-mono text-bb-red">{currency(cost.storageCost)}</TD>
               </TR>
@@ -153,22 +185,28 @@ export default function UsageBillingView() {
                 <TD className="text-right font-mono text-bb-red">{currency(cost.egressCost)}</TD>
               </TR>
               <TR hover={false}>
-                <TD className="text-ink-100">Class B (download / get info)</TD>
-                <TD className="text-ink-300">first 2,500/day free, then {currency(PRICING.classBPer10k, { decimals: 4 })}/10k</TD>
-                <TD className="text-right font-mono">{compactNumber((sum.classB / days) * 30)}</TD>
-                <TD className="text-right font-mono text-bb-red">{currency(cost.classBCost)}</TD>
-              </TR>
-              <TR hover={false}>
-                <TD className="text-ink-100">Class C (list / metadata)</TD>
-                <TD className="text-ink-300">first 2,500/day free, then {currency(PRICING.classCPer1k, { decimals: 4 })}/1k</TD>
-                <TD className="text-right font-mono">{compactNumber((sum.classC / days) * 30)}</TD>
-                <TD className="text-right font-mono text-bb-red">{currency(cost.classCCost)}</TD>
-              </TR>
-              <TR hover={false}>
                 <TD className="text-ink-100">Class A (uploads)</TD>
                 <TD className="text-accent-green">always free</TD>
                 <TD className="text-right font-mono">{compactNumber((sum.classA / days) * 30)}</TD>
                 <TD className="text-right font-mono text-accent-green">$0.00</TD>
+              </TR>
+              <TR hover={false}>
+                <TD className="text-ink-100">Class B (downloads)</TD>
+                <TD className="text-accent-green">always free</TD>
+                <TD className="text-right font-mono">{compactNumber((sum.classB / days) * 30)}</TD>
+                <TD className="text-right font-mono text-accent-green">$0.00</TD>
+              </TR>
+              <TR hover={false}>
+                <TD className="text-ink-100">Class C (list / metadata)</TD>
+                <TD className="text-accent-green">always free</TD>
+                <TD className="text-right font-mono">{compactNumber((sum.classC / days) * 30)}</TD>
+                <TD className="text-right font-mono text-accent-green">$0.00</TD>
+              </TR>
+              <TR hover={false}>
+                <TD className="text-ink-100">Class D (event notifications)</TD>
+                <TD className="text-ink-300">first 2,500/day free, then {currency(PRICING.classDPer10k, { decimals: 4 })}/10k</TD>
+                <TD className="text-right font-mono">{compactNumber((sum.classD ?? 0) * (30 / days))}</TD>
+                <TD className="text-right font-mono text-bb-red">{currency(cost.classDCost)}</TD>
               </TR>
             </TBody>
             <THead>
@@ -222,8 +260,8 @@ export default function UsageBillingView() {
         </Card>
       </div>
 
-      {/* CSV-derived per-customer rollup */}
-      <Card padding="p-0">
+      {/* CSV-derived per-customer rollup — hidden in live mode (requires CSV reports) */}
+      {!isLive && <Card padding="p-0">
         <div className="flex items-center justify-between border-b border-ink-700 px-5 py-4">
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Per-customer rollup · from parsed CSV</h3>
@@ -264,7 +302,7 @@ export default function UsageBillingView() {
             })}
           </TBody>
         </Table>
-      </Card>
+      </Card>}
 
       {/* Heatmap */}
       <Card>
@@ -276,21 +314,23 @@ export default function UsageBillingView() {
         <Heatmap cells={heatmap} />
       </Card>
 
-      {/* Raw CSV preview */}
-      <Card padding="p-0">
-        <div className="flex items-center justify-between border-b border-ink-700 px-5 py-4">
-          <div>
-            <h3 className="text-sm font-semibold text-ink-100">Raw CSV preview</h3>
-            <p className="mt-0.5 text-xs text-ink-300">
-              First {Math.min(20, csvText.split('\n').length - 1)} rows from the bundled sample (replace with the file pulled from <code>b2-reports-$ACCOUNTID/YYYY-MM-DD/Usage.csv</code>)
-            </p>
+      {/* Raw CSV preview — demo mode only */}
+      {!isLive && (
+        <Card padding="p-0">
+          <div className="flex items-center justify-between border-b border-ink-700 px-5 py-4">
+            <div>
+              <h3 className="text-sm font-semibold text-ink-100">Raw CSV preview</h3>
+              <p className="mt-0.5 text-xs text-ink-300">
+                First {Math.min(20, csvText.split('\n').length - 1)} rows from the bundled sample (replace with the file pulled from <code>{bucketLabel}/YYYY-MM-DD/Usage.csv</code>)
+              </p>
+            </div>
+            <Tag variant="info">{csvText.split('\n').length - 1} rows · {csvText.split(',').length / (csvText.split('\n').length - 1) | 0} cols/row</Tag>
           </div>
-          <Tag variant="info">{csvText.split('\n').length - 1} rows · {csvText.split(',').length / (csvText.split('\n').length - 1) | 0} cols/row</Tag>
-        </div>
-        <pre className="max-h-72 overflow-auto bg-ink-950/80 p-4 text-[11px] text-ink-300">
+          <pre className="max-h-72 overflow-auto bg-ink-950/80 p-4 text-[11px] text-ink-300">
 {csvText.split('\n').slice(0, 20).join('\n')}
-        </pre>
-      </Card>
+          </pre>
+        </Card>
+      )}
     </div>
   );
 }

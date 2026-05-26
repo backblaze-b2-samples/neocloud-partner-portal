@@ -18,7 +18,8 @@ const defaultConfig = {
   masterKeyId: '',
   masterApplicationKey: '',
   proxyUrl: '',
-  defaultGroupId: 'kevinco-resellers',
+  reportsBucketName: '',   // e.g. "b2-reports-357e9d54ce31" — auto-discovered when blank
+  defaultGroupId: 'neocloud-internal',
 };
 
 function load() {

@@ -30,10 +30,14 @@ export default function PartnerView() {
   const [tab, setTab] = useState('all');
   const [showCreate, setShowCreate] = useState(false);
 
-  const refresh = () => partner.getCustomers().then(({ customers }) => {
-    setCustomers(customers);
-    setLoading(false);
-  });
+  const refresh = () => partner.getCustomers()
+    .then(({ customers }) => {
+      setCustomers(customers);
+    })
+    .catch((err) => {
+      console.error('[PartnerView] getCustomers failed:', err);
+    })
+    .finally(() => setLoading(false));
   useEffect(() => { refresh(); }, []);
 
   if (loading) return <LoadingState label="Listing group members via Partner API v3" />;
@@ -142,7 +146,7 @@ export default function PartnerView() {
                 <TR key={c.id} onClick={() => navigate('customer-detail', { customerId: c.id })}>
                   <TD>
                     <div className="font-medium text-ink-100">{c.name}</div>
-                    <div className="text-[11px] text-ink-400">{c.industry}</div>
+                    {c.industry && <div className="text-[11px] text-ink-400">{c.industry}</div>}
                   </TD>
                   <TD className="text-[11px] font-mono text-ink-300">{c.groupId}</TD>
                   <TD>
@@ -174,7 +178,18 @@ export default function PartnerView() {
       <CreateCustomerDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        onCreated={refresh}
+        onCreated={(newCust) => {
+          // Optimistic insert so the row shows up the instant the success
+          // panel is dismissed; the background refresh below reconciles with
+          // B2 (which can take a few seconds for listGroups + per-group
+          // member pagination + CSV usage parsing).
+          const row = partner.customerRowFromCreated(newCust);
+          if (row) {
+            setCustomers((prev) => [row, ...prev.filter((c) => c.accountId !== row.accountId)]);
+            setTab('all');  // make sure it's visible regardless of current filter
+          }
+          refresh();
+        }}
       />
     </div>
   );
