@@ -61,7 +61,10 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
   const resolvedRegionId = bucket.region || customerRegion || null;
   const region = REGIONS.find((r) => r.id === resolvedRegionId);
   // In live mode bucket.customerId is null — use customerName from nav params.
-  const customer = CUSTOMERS.find((c) => c.id === bucket.customerId) || (customerName ? { name: customerName } : null);
+  // accountId IS the customer's id in live mode (see getCustomer in partnerApi.js),
+  // so include it in the fallback so the "Back to <name>" link navigates correctly.
+  const customer = CUSTOMERS.find((c) => c.id === bucket.customerId)
+    || (customerName ? { id: accountId, name: customerName } : null);
   // normalizeBucket() derives a `fileLock` field ('none' | 'compliance' | 'governance' | 'enabled').
   // Prefer that over reading the raw nested fileLockConfiguration structure.
   const lockEnabled = bucket.fileLock && bucket.fileLock !== 'none';
