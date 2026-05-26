@@ -44,7 +44,7 @@ const insertSession = db.prepare(`
 `);
 const selectSession = db.prepare(`
   SELECT s.id, s.user_id, s.csrf_token, s.expires_at,
-         u.id AS uid, u.email, u.role, u.active, u.must_change_password
+         u.id AS uid, u.email, u.role, u.account_id, u.active, u.must_change_password
   FROM sessions s JOIN users u ON u.id = s.user_id
   WHERE s.id = ? AND s.expires_at > ?
 `);
@@ -72,6 +72,7 @@ export function getSession(sid) {
       id: row.uid,
       email: row.email,
       role: row.role,
+      accountId: row.account_id || null,
       active: !!row.active,
       mustChangePassword: !!row.must_change_password,
     },

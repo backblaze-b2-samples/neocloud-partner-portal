@@ -11,13 +11,22 @@ import { hashPassword, generateTempPassword, destroyAllSessionsFor } from '../au
 import { audit, listAudit } from '../audit.js';
 import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
 import {
-  ROLES, listUsers, findById, findByEmail, createUser,
+  ROLES, CUSTOMER_ROLES, listUsers, findById, findByEmail, createUser,
   isValidEmail, isStrongPassword, isValidRole,
   setRole, setActive, setMustChangePassword, setPasswordHash,
-  activeAdminCount, activeAdminCountExcept, publicUser,
+  activeAdminCount, activeAdminCountExcept, publicUser, findUsersByAccountId,
 } from '../users.js';
 
 const router = express.Router();
+
+// Accounts that cannot be modified, force-reset, or deactivated by anyone.
+const PROTECTED_EMAILS = new Set(
+  (process.env.PROTECTED_ACCOUNT_EMAIL || 'klott@backblaze.com,demo@backblaze.com')
+    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+);
+function isProtected(userRow) {
+  return PROTECTED_EMAILS.has((userRow?.email || '').toLowerCase());
+}
 
 router.use(requireAuth, requireRole('admin'), requireCsrf);
 
@@ -27,14 +36,15 @@ router.get('/users', (_req, res) => {
 });
 
 router.post('/users', async (req, res) => {
-  const { email, password, role } = req.body || {};
+  const { email, password, role, accountId } = req.body || {};
   if (!isValidEmail(email)) return res.status(400).json({ error: 'Invalid email' });
   if (!isStrongPassword(password)) return res.status(400).json({ error: 'Password must be 8+ characters' });
   if (!isValidRole(role)) return res.status(400).json({ error: 'Invalid role' });
+  if (CUSTOMER_ROLES.includes(role) && !accountId) return res.status(400).json({ error: 'accountId is required for customer roles' });
   if (findByEmail(email)) return res.status(409).json({ error: 'Email already in use' });
 
   const hash = await hashPassword(password);
-  const created = createUser({ email, passwordHash: hash, role, mustChangePassword: true });
+  const created = createUser({ email, passwordHash: hash, role, accountId: accountId || null, mustChangePassword: true });
   audit({
     actorId: req.session.user.id, action: 'user.created',
     targetUserId: created.id, details: { role }, ip: req.ip,
@@ -47,6 +57,7 @@ router.patch('/users/:id', (req, res) => {
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
   const target = findById(id);
   if (!target) return res.status(404).json({ error: 'Not found' });
+  if (isProtected(target)) return res.status(403).json({ error: 'This account is protected and cannot be modified.' });
 
   const { role, active, mustChangePassword } = req.body || {};
   const changes = [];
@@ -93,6 +104,7 @@ router.post('/users/:id/reset-password', async (req, res) => {
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
   const target = findById(id);
   if (!target) return res.status(404).json({ error: 'Not found' });
+  if (isProtected(target)) return res.status(403).json({ error: 'This account is protected and cannot be modified.' });
 
   const temp = generateTempPassword();
   const hash = await hashPassword(temp);
@@ -112,6 +124,7 @@ router.delete('/users/:id', (req, res) => {
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
   const target = findById(id);
   if (!target) return res.status(404).json({ error: 'Not found' });
+  if (isProtected(target)) return res.status(403).json({ error: 'This account is protected and cannot be modified.' });
   if (target.role === 'admin' && activeAdminCountExcept(id) === 0) {
     return res.status(409).json({ error: 'Cannot deactivate the last active admin' });
   }

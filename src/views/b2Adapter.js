@@ -1033,42 +1033,6 @@ export async function getObjectCounts() {
   }
 }
 
-// ===== File index (background-job cache) =====================================
-// The objectCountJob writes per-file metadata to the file_index SQLite table
-// alongside the object counts.  This function queries that index — instant
-// server DB read, zero B2 calls, any sort order, full-text prefix filtering.
-//
-// Returns { files, total, indexedAt, isComplete }
-//   files      – array of { fileName, fileId, size, uploadedAt, contentType }
-//   total      – total rows matching the query (useful for pagination UI)
-//   indexedAt  – ISO timestamp of the last index run for this bucket
-//   isComplete – true if the bucket has been indexed at least once
-//
-// In demo mode returns { files: [], total: 0, indexedAt: null, isComplete: false }
-// so the FilesTab falls back to the live b2_list_file_names path (correct for demos).
-export async function getFileIndex(bucketId, {
-  prefix = '',
-  limit  = 100,
-  offset = 0,
-  sortBy = 'name',   // 'name' | 'size' | 'uploadedAt'
-  sortDir = 'asc',   // 'asc' | 'desc'
-} = {}) {
-  if (useMocks()) return { files: [], total: 0, indexedAt: null, isComplete: false };
-  try {
-    const params = new URLSearchParams({ limit, offset, sortBy, sortDir });
-    if (prefix) params.set('prefix', prefix);
-    const res = await fetch(
-      `/api/master-b2/file-index/${encodeURIComponent(bucketId)}?${params}`,
-      { credentials: 'include' },
-    );
-    if (!res.ok) return { files: [], total: 0, indexedAt: null, isComplete: false };
-    return res.json();
-  } catch (e) {
-    console.warn('[b2Adapter] getFileIndex failed:', e.message);
-    return { files: [], total: 0, indexedAt: null, isComplete: false };
-  }
-}
-
 // ===== Convenience auth surface =============================================
 export async function authorizeAccount() {
   return ensureAuth();

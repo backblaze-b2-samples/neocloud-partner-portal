@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft, Database, KeyRound, Activity, Plus, Mail, Hash, Globe, Layers,
   Lock, ShieldCheck, Eye, EyeOff, Clock, Trash2, GitBranch, ChevronRight,
-  Download as DownloadIcon, FileSpreadsheet,
+  Download as DownloadIcon, FileSpreadsheet, Pencil, UserX,
 } from 'lucide-react';
 import { buildCustomerUsageCsv, downloadText } from '../api/csvParser.js';
 import {
@@ -10,7 +10,7 @@ import {
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState,
 } from '../components/ui.jsx';
 import { TrendAreaChart, StackedBarChart } from '../components/charts.jsx';
-import { CreateBucketDialog } from '../components/dialogs.jsx';
+import { CreateBucketDialog, EditCustomerDialog, TerminateMemberDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import * as partner from '../api/partnerApi.js';
 import * as b2 from '../api/b2Adapter.js';
@@ -34,17 +34,33 @@ export default function CustomerDetailView({ customerId }) {
   const [keys, setKeys] = useState([]);
   const [activity, setActivity] = useState([]);
   const [tab, setTab] = useState('overview');
-  const [showBucketDialog, setShowBucketDialog] = useState(false);
+  const [showBucketDialog, setShowBucketDialog]       = useState(false);
+  const [showEditDialog, setShowEditDialog]           = useState(false);
+  const [showTerminateDialog, setShowTerminateDialog] = useState(false);
 
   const refresh = () => {
     partner.getCustomer(customerId).then((c) => {
+      // In live mode, pass accountId so the API uses the sub-account's own credentials.
+      // In demo mode, customerId is used to filter mock data.
+      const accountId = c?.accountId;
       Promise.all([
-        b2.listBuckets({ customerId }),
-        b2.listApplicationKeys({ customerId }),
-        b2.getBucketActivity({ accountId: c?.accountId }),
-      ]).then(([{ buckets }, { keys }, { records }]) => {
+        b2.listBuckets({ customerId, accountId }),
+        b2.listApplicationKeys({ customerId, accountId }),
+        b2.getBucketActivity({ accountId }),
+        // Merge storage bytes (from CSV) and object counts (from 24h job DB cache)
+        // so the bucket cards show real numbers without extra API calls.
+        accountId ? b2.getBucketsFromCsv({ accountId }) : Promise.resolve([]),
+        b2.getObjectCounts(),
+      ]).then(([{ buckets: apiBuckets }, { keys }, { records }, csvBuckets, objectCounts]) => {
         setCustomer(c);
-        setBuckets(buckets);
+        // Build lookup maps for O(1) merge
+        const csvByBucketId = new Map((csvBuckets || []).map((b) => [b.bucketId, b]));
+        const enriched = apiBuckets.map((b) => ({
+          ...b,
+          storageBytes: csvByBucketId.get(b.bucketId)?.storageBytes ?? b.storageBytes ?? null,
+          objectCount:  objectCounts.get(b.bucketId) ?? b.objectCount ?? null,
+        }));
+        setBuckets(enriched);
         setKeys(keys);
         setActivity(records);
         setLoading(false);
@@ -85,7 +101,7 @@ export default function CustomerDetailView({ customerId }) {
       </button>
 
       <PageHeader
-        eyebrow={`Customer · ${customer.industry}`}
+        eyebrow={customer.industry ? `Customer · ${customer.industry}` : 'Customer'}
         title={customer.name}
         subtitle={`Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region?.flag} ${region?.code}`}
         actions={
@@ -99,10 +115,24 @@ export default function CustomerDetailView({ customerId }) {
               <DownloadIcon size={12} /> Download usage CSV
             </button>
             <button
+              onClick={() => setShowEditDialog(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800"
+              title="Edit customer metadata and pricing"
+            >
+              <Pencil size={12} /> Edit
+            </button>
+            <button
               onClick={() => setShowBucketDialog(true)}
               className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
             >
               <Plus size={12} /> Create bucket
+            </button>
+            <button
+              onClick={() => setShowTerminateDialog(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-bb-red/40 bg-bb-red/10 px-3 py-1.5 text-xs font-medium text-bb-red hover:bg-bb-red/20"
+              title="Terminate / eject this customer from the Partner group"
+            >
+              <UserX size={12} /> Terminate
             </button>
           </div>
         }
@@ -134,6 +164,20 @@ export default function CustomerDetailView({ customerId }) {
         onClose={() => setShowBucketDialog(false)}
         customer={customer}
         onCreated={refresh}
+      />
+
+      <EditCustomerDialog
+        open={showEditDialog}
+        onClose={() => setShowEditDialog(false)}
+        customer={customer}
+        onSaved={refresh}
+      />
+
+      <TerminateMemberDialog
+        open={showTerminateDialog}
+        onClose={() => setShowTerminateDialog(false)}
+        customer={customer}
+        onTerminated={() => navigate('partner')}
       />
     </div>
   );
@@ -180,7 +224,13 @@ function OverviewTab({ customer, buckets, keys }) {
             <KV icon={<Mail size={12} />} label="Contact" value={customer.contactEmail} />
             <KV icon={<Hash size={12} />} label="Account ID" value={customer.accountId} mono />
             <KV icon={<Globe size={12} />} label="Region" value={`${customer.region}`} mono />
-            <KV label="Plan" value={customer.plan} />
+            <KV label="Plan" value={customer.plan || <span className="text-ink-500 italic">not set</span>} />
+            {customer.price_per_gb_storage != null && (
+              <KV label="Billed storage" value={`$${customer.price_per_gb_storage}/GB/mo`} mono accent="text-accent-teal" />
+            )}
+            {customer.price_per_gb_download != null && (
+              <KV label="Billed download" value={`$${customer.price_per_gb_download}/GB`} mono accent="text-accent-teal" />
+            )}
             <KV label="Onboarded" value={shortDate(customer.onboarded)} />
           </dl>
         </Card>
@@ -216,15 +266,21 @@ function BucketsTab({ buckets, customer, onCreate }) {
   }
   return (
     <div className="space-y-4">
-      {buckets.map((b) => <BucketDetailCard key={b.bucketId} bucket={b} />)}
+      {buckets.map((b) => <BucketDetailCard key={b.bucketId} bucket={b} accountId={customer?.accountId} customerName={customer?.name} customerRegion={customer?.region} />)}
     </div>
   );
 }
 
-function BucketDetailCard({ bucket }) {
+function BucketDetailCard({ bucket, accountId, customerName, customerRegion }) {
   const { navigate } = useNav();
   const region = REGIONS.find((r) => r.id === bucket.region);
-  const open = () => navigate('bucket-detail', { bucketId: bucket.bucketId, fromCustomer: true });
+  const open = () => navigate('bucket-detail', {
+    bucketId: bucket.bucketId,
+    fromCustomer: true,
+    accountId,
+    customerName,
+    customerRegion: bucket.region || customerRegion || null,
+  });
   return (
     <div
       role="button"

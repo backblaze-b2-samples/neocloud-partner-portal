@@ -11,7 +11,7 @@ export const CUSTOMERS = [
     industry: 'GPU Cloud / AI Inference',
     region: 'us-east-005',
     plan: 'Reseller — Tier 2',
-    groupId: 'kevinco-resellers',
+    groupId: 'neocloud-internal',
     storageBytes: 4.82e15,    // 4.82 PB
     egressBytes30d: 1.18e15,  // 1.18 PB
     txnA30d: 412_540_000,
@@ -32,7 +32,7 @@ export const CUSTOMERS = [
     industry: 'VFX / Media Pipeline',
     region: 'us-west-002',
     plan: 'Reseller — Tier 1',
-    groupId: 'kevinco-resellers',
+    groupId: 'neocloud-internal',
     storageBytes: 9.44e15,
     egressBytes30d: 5.21e15,
     txnA30d: 1_204_000_000,
@@ -53,7 +53,7 @@ export const CUSTOMERS = [
     industry: 'Bare-Metal Cloud',
     region: 'eu-central-003',
     plan: 'Partner — Custom',
-    groupId: 'kevinco-strategic',
+    groupId: 'neocloud-external',
     storageBytes: 2.91e15,
     egressBytes30d: 0.47e15,
     txnA30d: 188_900_000,
@@ -74,7 +74,7 @@ export const CUSTOMERS = [
     industry: 'Foundation Model Training',
     region: 'us-east-005',
     plan: 'Reseller — Tier 2',
-    groupId: 'kevinco-resellers',
+    groupId: 'neocloud-internal',
     storageBytes: 18.6e15,    // 18.6 PB - largest
     egressBytes30d: 3.92e15,
     txnA30d: 2_104_000_000,
@@ -95,7 +95,7 @@ export const CUSTOMERS = [
     industry: 'Vector DB / RAG SaaS',
     region: 'us-east-005',
     plan: 'Reseller — Tier 3',
-    groupId: 'kevinco-resellers',
+    groupId: 'neocloud-internal',
     storageBytes: 0.42e15,
     egressBytes30d: 0.18e15,
     txnA30d: 28_400_000,
@@ -116,7 +116,7 @@ export const CUSTOMERS = [
     industry: 'OTT / Video CDN Origin',
     region: 'us-west-002',
     plan: 'Reseller — Tier 2',
-    groupId: 'kevinco-resellers',
+    groupId: 'neocloud-internal',
     storageBytes: 6.18e15,
     egressBytes30d: 8.94e15,  // egress > storage = high download workload
     txnA30d: 412_000_000,
@@ -137,7 +137,7 @@ export const CUSTOMERS = [
     industry: 'Life Sciences / Bioinformatics',
     region: 'ca-east-006',
     plan: 'Partner — Custom',
-    groupId: 'kevinco-strategic',
+    groupId: 'neocloud-external',
     storageBytes: 11.2e15,
     egressBytes30d: 0.62e15,
     txnA30d: 84_000_000,
@@ -158,7 +158,7 @@ export const CUSTOMERS = [
     industry: 'Autonomy / Sensor Data',
     region: 'us-west-002',
     plan: 'Reseller — Tier 3',
-    groupId: 'kevinco-resellers',
+    groupId: 'neocloud-internal',
     storageBytes: 3.84e15,
     egressBytes30d: 0.28e15,
     txnA30d: 218_000_000,
@@ -176,17 +176,20 @@ export const CUSTOMERS = [
 
 // Aggregate metrics roll-up. In production these come from the daily usage
 // CSV report (egress/transactions) plus aggregated storage from Partner API.
+// n() coerces null/undefined to 0 so live-mode totals don't produce NaN.
+const n = (v) => v ?? 0;
+
 export function aggregate(customers = CUSTOMERS) {
   return customers.reduce(
     (acc, c) => {
-      acc.storageBytes += c.storageBytes;
-      acc.egressBytes30d += c.egressBytes30d;
-      acc.txnA30d += c.txnA30d;
-      acc.txnB30d += c.txnB30d;
-      acc.txnC30d += c.txnC30d;
-      acc.cogs30d += c.cogs30d;
-      acc.revenue30d += c.revenue30d;
-      acc.activeBuckets += c.activeBuckets;
+      acc.storageBytes += n(c.storageBytes);
+      acc.egressBytes30d += n(c.egressBytes30d);
+      acc.txnA30d += n(c.txnA30d);
+      acc.txnB30d += n(c.txnB30d);
+      acc.txnC30d += n(c.txnC30d);
+      acc.cogs30d += n(c.cogs30d);
+      acc.revenue30d += n(c.revenue30d);
+      acc.activeBuckets += n(c.activeBuckets);
       return acc;
     },
     {

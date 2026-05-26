@@ -21,7 +21,7 @@ export function compactNumber(n) {
   if (abs >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
   if (abs >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return `${n}`;
+  return `${Math.round(n)}`;
 }
 
 export function currency(n, opts = {}) {
@@ -52,8 +52,10 @@ export function deltaSign(n) {
 }
 
 export function shortDate(d) {
+  if (d == null) return '—';
   const dt = typeof d === 'string' ? new Date(d) : d;
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (!dt || isNaN(dt)) return '—';
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 export function relativeTime(date) {
@@ -69,7 +71,9 @@ export function relativeTime(date) {
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 14 * 86400) return `${Math.floor(diff / 86400)}d ago`;
+  // Older than 2 weeks: show the actual date so "428d ago" doesn't confuse.
+  return new Date(then).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export function cx(...args) {

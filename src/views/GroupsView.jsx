@@ -27,8 +27,11 @@ function GroupsList() {
       .then(([{ groups }, { customers }]) => {
         setGroups(groups);
         setAllCustomers(customers);
-        setLoading(false);
-      });
+      })
+      .catch((err) => {
+        console.error('[GroupsView] Partner API fetch failed:', err);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <LoadingState label="Listing groups via b2_list_groups" />;
@@ -37,15 +40,15 @@ function GroupsList() {
     const members = allCustomers.filter((c) => c.groupId === g.groupId);
     return {
       members: members.length,
-      storage: members.reduce((s, c) => s + c.storageBytes, 0),
-      egress: members.reduce((s, c) => s + c.egressBytes30d, 0),
-      revenue: members.reduce((s, c) => s + c.revenue30d, 0),
+      storage: members.reduce((s, c) => s + (c.storageBytes ?? 0), 0),
+      egress: members.reduce((s, c) => s + (c.egressBytes30d ?? 0), 0),
+      revenue: members.reduce((s, c) => s + (c.revenue30d ?? 0), 0),
     };
   }
 
   const totals = allCustomers.reduce((acc, c) => {
-    acc.storage += c.storageBytes;
-    acc.revenue += c.revenue30d;
+    acc.storage += (c.storageBytes ?? 0);
+    acc.revenue += (c.revenue30d ?? 0);
     return acc;
   }, { storage: 0, revenue: 0 });
 
@@ -129,8 +132,11 @@ function GroupDetail({ groupId }) {
       .then(([g, { customers }]) => {
         setGroup(g);
         setMembers(customers);
-        setLoading(false);
-      });
+      })
+      .catch((err) => {
+        console.error('[GroupDetail] Partner API fetch failed:', err);
+      })
+      .finally(() => setLoading(false));
   }, [groupId]);
 
   if (loading) return <LoadingState label="Loading group members" />;
@@ -213,7 +219,7 @@ function GroupDetail({ groupId }) {
                 <TR key={c.id} onClick={() => navigate('customer-detail', { customerId: c.id })}>
                   <TD>
                     <div className="font-medium text-ink-100">{c.name}</div>
-                    <div className="text-[11px] text-ink-400">{c.industry}</div>
+                    {c.industry && <div className="text-[11px] text-ink-400">{c.industry}</div>}
                   </TD>
                   <TD className="text-ink-200">{region?.flag} {region?.code}</TD>
                   <TD className="text-ink-300">{c.plan}</TD>

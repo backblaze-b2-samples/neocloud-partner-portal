@@ -43,45 +43,12 @@ export default function RegionView() {
           countByRegion.set(c.region, (countByRegion.get(c.region) || 0) + 1);
         }
 
-        if (rSrc === 'csv-live') {
-          // CSV is the authoritative source for metrics. Enrich each CSV region
-          // with customerCount, then append any partner-known regions that had no
-          // CSV activity (zero uploads in the window) so they still appear in the UI.
-          const csvRegionIds = new Set(regions.map((r) => r.regionId));
-
-          // Partner-only regions (no CSV activity) — show with partner storage
-          // from b2Stats and customerCount, but null egress/upload (not in API).
-          const partnerOnlyRegions = [];
-          for (const [regionId, count] of countByRegion) {
-            if (csvRegionIds.has(regionId)) continue;
-            const meta = REGIONS.find((r) => r.id === regionId);
-            // Sum storageBytes from partner b2Stats for customers in this region
-            const storageSumBytes = customers
-              .filter((c) => c.region === regionId && c.storageBytes != null)
-              .reduce((s, c) => s + c.storageBytes, 0);
-            partnerOnlyRegions.push({
-              regionId,
-              code:          meta?.code  || regionId,
-              flag:          meta?.flag  || null,
-              color:         meta?.color || null,
-              city:          meta?.city  || null,
-              country:       meta?.country || null,
-              storageBytes:  storageSumBytes || null,
-              egressBytes30d: null,
-              uploadBytes30d: null,
-              classATxn30d:   null,
-              classBTxn30d:   null,
-              classCTxn30d:   null,
-              bucketCount:   null,
-              customerCount: count,
-              growth30d:     null,
-            });
-          }
-
-          finalRegions = [
-            ...regions.map((r) => ({ ...r, customerCount: countByRegion.get(r.regionId) ?? null })),
-            ...partnerOnlyRegions,
-          ];
+        if (rSrc === 'csv-live' && regions.length > 0) {
+          // CSV data is available — keep its metrics but enrich with customerCount.
+          finalRegions = regions.map((r) => ({
+            ...r,
+            customerCount: countByRegion.get(r.regionId) ?? null,
+          }));
           finalSource = 'csv-live';
         } else if (countByRegion.size > 0) {
           // CSV unavailable — fall back to partner-derived (shows warning).

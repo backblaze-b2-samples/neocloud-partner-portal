@@ -32,15 +32,12 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
   const [liveStats, setLiveStats] = useState(null); // { objectCount, storageBytes, isLastPage }
 
   useEffect(() => {
-    // Fetch bucket metadata, first-page file stats, and DB object count in parallel.
+    // Fetch bucket metadata and first-page file stats in parallel.
     Promise.all([
       b2.getBucket(bucketId, { accountId }),
       b2.listFileVersions({ bucketId, accountId, maxFileCount: 1000 }),
-      b2.getObjectCounts(),
-    ]).then(([b, fileResp, objectCounts]) => {
-      // Merge the DB-cached object count into the bucket so FilesTab can display it.
-      const dbCount = objectCounts.get(bucketId);
-      setBucket(b ? { ...b, objectCount: dbCount ?? b.objectCount ?? null } : b);
+    ]).then(([b, fileResp]) => {
+      setBucket(b);
       if (fileResp?.files) {
         const pageBytes = fileResp.files.reduce((s, f) => s + (f.contentLength || 0), 0);
         setLiveStats({
@@ -62,9 +59,7 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
   const region = REGIONS.find((r) => r.id === resolvedRegionId);
   // In live mode bucket.customerId is null — use customerName from nav params.
   const customer = CUSTOMERS.find((c) => c.id === bucket.customerId) || (customerName ? { name: customerName } : null);
-  // normalizeBucket() derives a `fileLock` field ('none' | 'compliance' | 'governance' | 'enabled').
-  // Prefer that over reading the raw nested fileLockConfiguration structure.
-  const lockEnabled = bucket.fileLock && bucket.fileLock !== 'none';
+  const lockEnabled = !!bucket.fileLockConfiguration?.isFileLockEnabled;
 
   // Prefer live stats from file listing; fall back to bucket metadata (usually null in live mode).
   const displayObjectCount = liveStats?.objectCount ?? bucket.objectCount;
@@ -188,26 +183,13 @@ function OverviewTab({ bucket, customer, region }) {
 // ============================================================================
 const PAGE_SIZES = [50, 100, 250, 1000];
 const SORT_MODES = [
-  { id: 'name-asc',  label: 'Name (A → Z)',          sortBy: 'name',       sortDir: 'asc'  },
-  { id: 'name-desc', label: 'Name (Z → A)',          sortBy: 'name',       sortDir: 'desc' },
-  { id: 'size-desc', label: 'Size (largest first)',  sortBy: 'size',       sortDir: 'desc' },
-  { id: 'size-asc',  label: 'Size (smallest first)', sortBy: 'size',       sortDir: 'asc'  },
-  { id: 'date-desc', label: 'Upload date (newest)',  sortBy: 'uploadedAt', sortDir: 'desc' },
-  { id: 'date-asc',  label: 'Upload date (oldest)',  sortBy: 'uploadedAt', sortDir: 'asc'  },
+  { id: 'name-asc',  label: 'Name (A → Z)',     api: true },
+  { id: 'name-desc', label: 'Name (Z → A)',     api: false },
+  { id: 'size-desc', label: 'Size (largest first)',  api: false },
+  { id: 'size-asc',  label: 'Size (smallest first)', api: false },
+  { id: 'date-desc', label: 'Upload date (newest)',  api: false },
+  { id: 'date-asc',  label: 'Upload date (oldest)',  api: false },
 ];
-
-// Translate a file_index row into the shape FileRow expects.
-function indexRowToFile(f) {
-  return {
-    fileName:           f.fileName,
-    fileId:             f.fileId,
-    contentLength:      f.size,
-    uploadTimestamp:    f.uploadedAt ? new Date(f.uploadedAt).getTime() : null,
-    contentType:        f.contentType || '—',
-    serverSideEncryption: null, // not stored in the index
-    _fromIndex: true,
-  };
-}
 
 function FilesTab({ bucket, accountId, onStats }) {
   const [draftPrefix, setDraftPrefix] = useState('');
@@ -216,102 +198,49 @@ function FilesTab({ bucket, accountId, onStats }) {
   const [sortMode, setSortMode] = useState('name-asc');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // ── Index mode (background job has run) ────────────────────────────────
-  // null = not yet detected; false = not indexed; true = indexed
-  const [indexed, setIndexed] = useState(null);
-  const [indexedAt, setIndexedAt] = useState(null);  // ISO timestamp
-  const [totalFiles, setTotalFiles] = useState(null); // total matching rows
-  const [indexPage, setIndexPage] = useState(1);
-
-  // ── Live mode (cursor-based, B2 API fallback) ───────────────────────────
+  // cursorStack[i] is the startFileName for page i+1. First page is null.
   const [cursorStack, setCursorStack] = useState([null]);
   const [nextCursor, setNextCursor] = useState(null);
 
   const currentCursor = cursorStack[cursorStack.length - 1];
-  const livePage = cursorStack.length;
-  const sortDef = SORT_MODES.find((s) => s.id === sortMode) || SORT_MODES[0];
+  const pageNumber = cursorStack.length;
 
-  // Reset pagination when prefix, pageSize, or sort changes.
-  // Also resets mode detection (indexed may change between buckets).
   useEffect(() => {
-    setIndexPage(1);
-    setCursorStack([null]);
-  }, [bucket.bucketId, activePrefix, pageSize, sortMode]);
-
-  // ── Data fetching ────────────────────────────────────────────────────────
-  // Phase 1 (indexed === null): probe the index. Sets `indexed` true/false.
-  // Phase 2: fetch from index or live depending on `indexed`.
-  useEffect(() => {
-    if (indexed === null) {
-      // Probe: check if this bucket has been indexed yet.
-      b2.getFileIndex(bucket.bucketId, { limit: 1 }).then((probe) => {
-        setIndexed(probe.isComplete);
-        setIndexedAt(probe.indexedAt);
-        // Don't fetch yet — the state update will trigger the next effect run.
-      });
-      return;
-    }
-
     setLoading(true);
+    b2.listFileVersions({
+      bucketId: bucket.bucketId,
+      accountId,
+      prefix: activePrefix,
+      startFileName: currentCursor || undefined,
+      maxFileCount: pageSize,
+    }).then((r) => {
+      setFiles(r.files);
+      setNextCursor(r.nextFileName);
+      setLoading(false);
+      // Bubble page stats up to the bucket header cards.
+      // Only report on the first page (no prefix filter, no cursor offset) so
+      // the header shows total-ish numbers, not a mid-browse page slice.
+      if (onStats && !activePrefix && !currentCursor) {
+        const pageBytes = (r.files || []).reduce((s, f) => s + (f.contentLength || 0), 0);
+        onStats({
+          objectCount: r.files?.length ?? 0,
+          storageBytes: pageBytes,
+          isLastPage: !r.nextFileName,
+        });
+      }
+    });
+  }, [bucket.bucketId, activePrefix, currentCursor, pageSize]);
 
-    if (indexed) {
-      // ── Index path: instant DB read, any sort order ──────────────────
-      b2.getFileIndex(bucket.bucketId, {
-        prefix:  activePrefix,
-        limit:   pageSize,
-        offset:  (indexPage - 1) * pageSize,
-        sortBy:  sortDef.sortBy,
-        sortDir: sortDef.sortDir,
-      }).then((r) => {
-        setFiles((r.files || []).map(indexRowToFile));
-        setTotalFiles(r.total ?? null);
-        setIndexedAt(r.indexedAt);
-        setLoading(false);
-        if (onStats && !activePrefix && indexPage === 1) {
-          onStats({ objectCount: r.total ?? 0, storageBytes: null, isLastPage: true });
-        }
-      }).catch(() => { setFiles([]); setLoading(false); });
-    } else {
-      // ── Live path: cursor-based B2 API ───────────────────────────────
-      b2.listFileVersions({
-        bucketId:      bucket.bucketId,
-        accountId,
-        prefix:        activePrefix,
-        startFileName: currentCursor || undefined,
-        maxFileCount:  pageSize,
-      }).then((r) => {
-        setFiles(r.files || []);
-        setNextCursor(r.nextFileName || null);
-        setLoading(false);
-        if (onStats && !activePrefix && !currentCursor) {
-          const pageBytes = (r.files || []).reduce((s, f) => s + (f.contentLength || 0), 0);
-          onStats({ objectCount: r.files?.length ?? 0, storageBytes: pageBytes, isLastPage: !r.nextFileName });
-        }
-      }).catch(() => { setFiles([]); setLoading(false); });
-    }
-  }, [bucket.bucketId, indexed, activePrefix, indexPage, currentCursor, pageSize, sortMode]);
-
-  // ── Actions ──────────────────────────────────────────────────────────────
   function applyPrefix(p) {
     setActivePrefix(p);
-    setIndexPage(1);
     setCursorStack([null]);
   }
-  // Index pagination (offset-based)
-  const totalIndexPages = totalFiles != null ? Math.ceil(totalFiles / pageSize) || 1 : null;
-  function indexNextPage() { if (indexPage < totalIndexPages) setIndexPage((p) => p + 1); }
-  function indexPrevPage() { if (indexPage > 1) setIndexPage((p) => p - 1); }
-  function indexFirstPage() { setIndexPage(1); }
-  function indexLastPage()  { if (totalIndexPages) setIndexPage(totalIndexPages); }
-  // Live pagination (cursor-based)
-  function nextPage()  { if (nextCursor) setCursorStack((s) => [...s, nextCursor]); }
-  function prevPage()  { if (livePage > 1) setCursorStack((s) => s.slice(0, -1)); }
+  function nextPage() { if (nextCursor) setCursorStack((s) => [...s, nextCursor]); }
+  function prevPage() { if (pageNumber > 1) setCursorStack((s) => s.slice(0, -1)); }
   function firstPage() { setCursorStack([null]); }
 
-  // In live mode only name-asc is server-native; other sorts are client-side.
   const sortedFiles = useMemo(() => {
-    if (indexed || sortMode === 'name-asc') return files; // index: server already sorted
+    if (sortMode === 'name-asc') return files;
     const sorted = [...files];
     const cmp = {
       'name-desc': (a, b) => b.fileName.localeCompare(a.fileName),
@@ -322,9 +251,9 @@ function FilesTab({ bucket, accountId, onStats }) {
     }[sortMode];
     if (cmp) sorted.sort(cmp);
     return sorted;
-  }, [files, sortMode, indexed]);
+  }, [files, sortMode]);
 
-  const sortIsClientSide = !indexed && sortMode !== 'name-asc';
+  const sortIsApiNative = sortMode === 'name-asc';
   const totalBytes = files.reduce((s, f) => s + (f.contentLength || 0), 0);
 
   // Folder grouping (top-level prefixes from the loaded page)
@@ -345,35 +274,16 @@ function FilesTab({ bucket, accountId, onStats }) {
 
   return (
     <div className="space-y-4">
-      {/* Status banner — adapts based on whether the index has run */}
-      {indexed ? (
-        <Card className="border-teal-500/30 bg-teal-500/5" padding="p-3">
-          <div className="flex items-start gap-3 text-[11.5px] text-ink-200">
-            <Database size={14} className="mt-0.5 shrink-0 text-teal-400" />
-            <div className="leading-relaxed">
-              <strong className="text-ink-100">Served from local index.</strong>{' '}
-              File metadata is stored in a SQLite index built by the 24-hour background job.
-              All sort orders are server-native, prefix filters run in the DB, and pagination
-              is instant — no B2 API calls at browse time.
-              {indexedAt && (
-                <span className="ml-1 text-ink-400">
-                  Last indexed {relativeTime(new Date(indexedAt).getTime())}.
-                </span>
-              )}
-            </div>
+      {/* Scale notice — honest about the API's listing limits */}
+      <Card className="border-accent-amber/30 bg-accent-amber/5" padding="p-3">
+        <div className="flex items-start gap-3 text-[11.5px] text-ink-200">
+          <Info size={14} className="mt-0.5 shrink-0 text-accent-amber" />
+          <div className="leading-relaxed">
+            <strong className="text-ink-100">Listing at scale.</strong>{' '}
+            <code className="text-ink-100">b2_list_file_versions</code> returns files in lexicographic <strong>name order only</strong> with cursor-based forward pagination (<code>startFileName</code> / <code>nextFileName</code>). Sorting by size or upload date requires loading all pages and sorting client-side — not viable for buckets with millions of files. For real inventory needs, run a periodic background job that walks the bucket and writes to your own index, then keep it fresh with <a href="https://www.backblaze.com/docs/cloud-storage-event-notifications" target="_blank" rel="noreferrer" className="text-bb-red hover:underline">Event Notifications</a>. Each list call is a Class C transaction — small cost per page but it adds up over millions of files.
           </div>
-        </Card>
-      ) : (
-        <Card className="border-accent-amber/30 bg-accent-amber/5" padding="p-3">
-          <div className="flex items-start gap-3 text-[11.5px] text-ink-200">
-            <Info size={14} className="mt-0.5 shrink-0 text-accent-amber" />
-            <div className="leading-relaxed">
-              <strong className="text-ink-100">Listing at scale.</strong>{' '}
-              <code className="text-ink-100">b2_list_file_names</code> returns files in lexicographic <strong>name order only</strong> with cursor-based forward pagination. Sorting by size or upload date is applied to the current page only — not viable for large buckets. Once the 24-hour background job has run for this bucket, all sorts become server-native and pagination becomes instant.
-            </div>
-          </div>
-        </Card>
-      )}
+        </div>
+      </Card>
 
       {/* Controls */}
       <Card padding="p-4">
@@ -409,7 +319,7 @@ function FilesTab({ bucket, accountId, onStats }) {
             )}
           </form>
 
-          {/* Sort + page size */}
+          {/* Sort */}
           <div className="ml-auto flex items-center gap-2 text-xs">
             <label className="text-ink-400">Sort</label>
             <select
@@ -418,25 +328,23 @@ function FilesTab({ bucket, accountId, onStats }) {
               className="h-8 rounded-md border border-ink-700 bg-ink-900 px-2 text-xs text-ink-100 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
             >
               {SORT_MODES.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}{indexed ? '' : s.sortBy === 'name' && s.sortDir === 'asc' ? ' · native' : ' · page only'}
-                </option>
+                <option key={s.id} value={s.id}>{s.label} {s.api ? '· native' : '· current page'}</option>
               ))}
             </select>
 
             <label className="text-ink-400">Page size</label>
             <select
               value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setCursorStack([null]); }}
               className="h-8 rounded-md border border-ink-700 bg-ink-900 px-2 text-xs text-ink-100 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
             >
               {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            <SourceBadge source={indexed ? 'db' : 'api'} />
+            <SourceBadge source="api" />
           </div>
         </div>
 
-        {sortIsClientSide && !loading && (
+        {!sortIsApiNative && !loading && (
           <div className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-accent-amber/10 px-2.5 py-1 text-[11px] text-accent-amber ring-1 ring-inset ring-accent-amber/30">
             <AlertTriangle size={11} />
             Sort applies to <strong>current page only</strong> ({files.length} files). The full bucket may not be in this order.
@@ -445,11 +353,9 @@ function FilesTab({ bucket, accountId, onStats }) {
 
         <div className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
           <MiniStat label="Files in page" value={files.length} />
-          <MiniStat label="Bytes in page" value={indexed ? '—' : bytes(totalBytes)} />
-          <MiniStat label="Bucket total objects" value={compactNumber(indexed ? totalFiles : bucket.objectCount)} />
-          {indexed
-            ? <MiniStat label={`Page ${indexPage}`} value={totalIndexPages ? `of ${totalIndexPages}` : '…'} />
-            : <MiniStat label={`Page ${livePage}`} value={nextCursor ? 'more available' : 'last page'} />}
+          <MiniStat label="Bytes in page" value={bytes(totalBytes)} />
+          <MiniStat label="Bucket total objects" value={compactNumber(bucket.objectCount)} note="csv" />
+          <MiniStat label={`Page ${pageNumber}`} value={nextCursor ? 'more available' : 'last page'} />
         </div>
       </Card>
 
@@ -507,50 +413,33 @@ function FilesTab({ bucket, accountId, onStats }) {
           {/* Pagination footer */}
           <div className="flex items-center justify-between border-t border-ink-700 px-5 py-3 text-[11px] text-ink-300">
             <div>
-              Showing {sortedFiles.length} files
-              {activePrefix && <> under <code className="text-ink-100">{activePrefix}</code></>}
-              {sortIsClientSide && <span className="ml-2 text-accent-amber">· sorted client-side (page only)</span>}
-              {indexed && totalFiles != null && <span className="ml-2 text-teal-400">· {totalFiles.toLocaleString()} total in index</span>}
+              Showing {sortedFiles.length} files {activePrefix && <>under <code className="text-ink-100">{activePrefix}</code></>}
+              {!sortIsApiNative && <span className="ml-2 text-accent-amber">· sorted client-side (page only)</span>}
             </div>
-            {indexed ? (
-              <div className="flex items-center gap-1">
-                <button onClick={indexFirstPage} disabled={indexPage === 1}
-                  className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  « First
-                </button>
-                <button onClick={indexPrevPage} disabled={indexPage === 1}
-                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  <ChevronLeft size={11} /> Prev
-                </button>
-                <span className="px-2 font-mono">
-                  Page {indexPage}{totalIndexPages ? ` / ${totalIndexPages}` : ''}
-                </span>
-                <button onClick={indexNextPage} disabled={totalIndexPages != null && indexPage >= totalIndexPages}
-                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  Next <ChevronRight size={11} />
-                </button>
-                <button onClick={indexLastPage} disabled={totalIndexPages != null && indexPage >= totalIndexPages}
-                  className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  Last »
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1">
-                <button onClick={firstPage} disabled={livePage === 1}
-                  className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  « First
-                </button>
-                <button onClick={prevPage} disabled={livePage === 1}
-                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  <ChevronLeft size={11} /> Prev
-                </button>
-                <span className="px-2 font-mono">Page {livePage}</span>
-                <button onClick={nextPage} disabled={!nextCursor}
-                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed">
-                  Next <ChevronRight size={11} />
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={firstPage}
+                disabled={pageNumber === 1}
+                className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                « First
+              </button>
+              <button
+                onClick={prevPage}
+                disabled={pageNumber === 1}
+                className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={11} /> Prev
+              </button>
+              <span className="px-2 font-mono">Page {pageNumber}</span>
+              <button
+                onClick={nextPage}
+                disabled={!nextCursor}
+                className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next <ChevronRight size={11} />
+              </button>
+            </div>
           </div>
         </Card>
       )}
@@ -591,12 +480,9 @@ function FileRow({ f, bucketId }) {
         <TD className="text-right font-mono text-ink-100">{bytes(f.contentLength)}</TD>
         <TD className="text-right text-[11px] text-ink-300">{relativeTime(f.uploadTimestamp)}</TD>
         <TD>
-          {f._fromIndex
-            ? <Tag variant="default"><Lock size={10} className="mr-0.5" /> —</Tag>
-            : <Tag variant={f.serverSideEncryption?.mode ? 'info' : 'warn'}>
-                <Lock size={10} className="mr-0.5" /> {f.serverSideEncryption?.mode || 'none'}
-              </Tag>
-          }
+          <Tag variant={f.serverSideEncryption?.mode ? 'info' : 'warn'}>
+            <Lock size={10} className="mr-0.5" /> {f.serverSideEncryption?.mode || 'none'}
+          </Tag>
         </TD>
         <TD className="font-mono text-[10.5px] text-ink-400">{f.fileId.slice(0, 24)}…</TD>
         <TD className="text-center">

@@ -2,15 +2,18 @@
 
 import { db } from './db.js';
 
-export const ROLES = ['admin', 'manager', 'user'];
+export const ROLES = ['admin', 'manager', 'user', 'support', 'customer_admin', 'customer_readonly'];
+export const PARTNER_ROLES = ['admin', 'manager', 'user', 'support'];
+export const CUSTOMER_ROLES = ['customer_admin', 'customer_readonly'];
 
 const insert = db.prepare(`
-  INSERT INTO users (email, password_hash, role, active, must_change_password, created_at, updated_at)
-  VALUES (?, ?, ?, 1, ?, ?, ?)
+  INSERT INTO users (email, password_hash, role, account_id, active, must_change_password, created_at, updated_at)
+  VALUES (?, ?, ?, ?, 1, ?, ?, ?)
 `);
 const byEmail = db.prepare(`SELECT * FROM users WHERE email = ?`);
 const byId = db.prepare(`SELECT * FROM users WHERE id = ?`);
-const all = db.prepare(`SELECT id, email, role, active, must_change_password, created_at, updated_at, last_login_at FROM users ORDER BY id`);
+const all = db.prepare(`SELECT id, email, role, account_id, active, must_change_password, created_at, updated_at, last_login_at FROM users ORDER BY id`);
+const allByAccountId = db.prepare(`SELECT id, email, role, account_id, active, must_change_password, created_at, updated_at, last_login_at FROM users WHERE account_id = ? ORDER BY id`);
 const updatePw = db.prepare(`UPDATE users SET password_hash = ?, must_change_password = ?, updated_at = ? WHERE id = ?`);
 const updateLogin = db.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`);
 const updateRole = db.prepare(`UPDATE users SET role = ?, updated_at = ? WHERE id = ?`);
@@ -53,10 +56,14 @@ export function listUsers() {
   return all.all().map(publicUser);
 }
 
-export function createUser({ email, passwordHash, role, mustChangePassword = false }) {
+export function createUser({ email, passwordHash, role, accountId = null, mustChangePassword = false }) {
   const now = new Date().toISOString();
-  const info = insert.run(normalizeEmail(email), passwordHash, role, mustChangePassword ? 1 : 0, now, now);
+  const info = insert.run(normalizeEmail(email), passwordHash, role, accountId, mustChangePassword ? 1 : 0, now, now);
   return findById(info.lastInsertRowid);
+}
+
+export function findUsersByAccountId(accountId) {
+  return allByAccountId.all(accountId).map(publicUser);
 }
 
 export function setPasswordHash(userId, passwordHash, mustChangePassword = 0) {
@@ -95,6 +102,7 @@ export function publicUser(row) {
     id: row.id,
     email: row.email,
     role: row.role,
+    accountId: row.account_id || null,
     active: !!row.active,
     mustChangePassword: !!row.must_change_password,
     createdAt: row.created_at,
