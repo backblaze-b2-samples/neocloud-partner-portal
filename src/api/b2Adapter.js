@@ -1033,7 +1033,9 @@ export async function getObjectCounts() {
       return new Map();
     }
     const { counts } = await res.json();
-    const map = new Map((counts || []).map((c) => [c.bucketId, c.objectCount]));
+    // Map<bucketId, { count, countedAt }>. Callers reading .count keep working;
+    // new callers can also read .countedAt for staleness display.
+    const map = new Map((counts || []).map((c) => [c.bucketId, { count: c.objectCount, countedAt: c.countedAt }]));
     _objectCountsCache    = map;
     _objectCountsCacheExp = Date.now() + OBJECT_COUNTS_TTL;
     return map;
@@ -1041,6 +1043,25 @@ export async function getObjectCounts() {
     console.warn('[b2Adapter] getObjectCounts failed:', e.message);
     return new Map();
   }
+}
+
+// Trigger a server-side re-count of a single sub-account's buckets. Returns
+// when the job finishes (can take seconds for accounts with many large
+// buckets). Invalidates the local cache so the next getObjectCounts() reads
+// fresh data from the DB.
+export async function refreshObjectCounts(accountId) {
+  if (useMocks()) return { ok: true, bucketsProcessed: 0, elapsedMs: 0 };
+  const res = await fetch(`/api/master-b2/object-counts/refresh/${encodeURIComponent(accountId)}`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || body.error || `refresh failed: ${res.status}`);
+  }
+  _objectCountsCache    = null;
+  _objectCountsCacheExp = 0;
+  return res.json();
 }
 
 // ===== File index (background-job cache) =====================================
