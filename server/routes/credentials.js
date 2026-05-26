@@ -32,7 +32,7 @@ router.use(requireAuth, requireRole('admin'), requireCsrf);
 // Validation helpers
 // ---------------------------------------------------------------------------
 
-const VALID_REGIONS = new Set(['us-west', 'us-east', 'eu-central']);
+const VALID_REGIONS = new Set(['us-west', 'us-east', 'eu-central', 'ca-east']);
 
 function validateCredentialBody(body) {
   const { accountId, email, groupId, region, applicationKeyId, applicationKey } = body ?? {};

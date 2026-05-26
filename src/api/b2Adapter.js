@@ -353,7 +353,17 @@ export async function createBucket(payload) {
     b2Body.lifecycleRules = payload.lifecycleRules;
   }
 
-  return callB2('b2_create_bucket', b2Body);
+  // Route through the sub-account proxy when an accountId is provided so the
+  // bucket is created on the customer's sub-account rather than the master.
+  // listBuckets uses this same path — without it, create lands on master and
+  // the subsequent list call (which uses sub-account creds) won't see it.
+  if (payload.accountId) {
+    const data = await callAsCustomer(payload.accountId, 'b2_create_bucket', b2Body);
+    if (data === null) throw new Error(`No stored credentials for account ${payload.accountId}`);
+    return normalizeBucket(data);
+  }
+  const created = await callB2('b2_create_bucket', b2Body);
+  return normalizeBucket(created);
 }
 
 // ===== Application keys =====================================================
