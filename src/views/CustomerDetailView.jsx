@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft, Database, KeyRound, Activity, Plus, Mail, Hash, Globe, Layers,
   Lock, ShieldCheck, Eye, EyeOff, Clock, Trash2, GitBranch, ChevronRight,
-  Download as DownloadIcon, FileSpreadsheet, Pencil, UserX,
+  Download as DownloadIcon, FileSpreadsheet, Pencil, UserX, RefreshCw,
 } from 'lucide-react';
 import { buildCustomerUsageCsv, downloadText } from '../api/csvParser.js';
 import {
@@ -37,6 +37,8 @@ export default function CustomerDetailView({ customerId }) {
   const [showBucketDialog, setShowBucketDialog]       = useState(false);
   const [showEditDialog, setShowEditDialog]           = useState(false);
   const [showTerminateDialog, setShowTerminateDialog] = useState(false);
+  const [refreshingCounts, setRefreshingCounts]       = useState(false);
+  const [countsError, setCountsError]                 = useState(null);
 
   const refresh = () => {
     partner.getCustomer(customerId).then((c) => {
@@ -55,11 +57,15 @@ export default function CustomerDetailView({ customerId }) {
         setCustomer(c);
         // Build lookup maps for O(1) merge
         const csvByBucketId = new Map((csvBuckets || []).map((b) => [b.bucketId, b]));
-        const enriched = apiBuckets.map((b) => ({
-          ...b,
-          storageBytes: csvByBucketId.get(b.bucketId)?.storageBytes ?? b.storageBytes ?? null,
-          objectCount:  objectCounts.get(b.bucketId) ?? b.objectCount ?? null,
-        }));
+        const enriched = apiBuckets.map((b) => {
+          const oc = objectCounts.get(b.bucketId);
+          return {
+            ...b,
+            storageBytes:    csvByBucketId.get(b.bucketId)?.storageBytes ?? b.storageBytes ?? null,
+            objectCount:     oc?.count ?? b.objectCount ?? null,
+            countedAt:       oc?.countedAt ?? null,
+          };
+        });
         setBuckets(enriched);
         setKeys(keys);
         setActivity(records);
@@ -69,6 +75,28 @@ export default function CustomerDetailView({ customerId }) {
   };
 
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [customerId]);
+
+  // Trigger an on-demand object-count re-count for this customer's buckets,
+  // then reload so the new counts + timestamps render.
+  async function handleRefreshCounts() {
+    if (!customer?.accountId) return;
+    setRefreshingCounts(true);
+    setCountsError(null);
+    try {
+      await b2.refreshObjectCounts(customer.accountId);
+      refresh();
+    } catch (err) {
+      setCountsError(err?.message || String(err));
+    } finally {
+      setRefreshingCounts(false);
+    }
+  }
+
+  // Newest counted_at across this customer's buckets (or null if none counted).
+  const lastCountedAt = buckets.reduce((acc, b) => {
+    if (!b.countedAt) return acc;
+    return (!acc || b.countedAt > acc) ? b.countedAt : acc;
+  }, null);
 
   if (loading) return <LoadingState label="Loading customer detail" />;
   if (!customer) {
@@ -107,6 +135,25 @@ export default function CustomerDetailView({ customerId }) {
         actions={
           <div className="flex items-center gap-2">
             <HealthPill status={customer.health} />
+            <button
+              onClick={handleRefreshCounts}
+              disabled={refreshingCounts}
+              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800 disabled:opacity-50"
+              title={
+                countsError
+                  ? `Last refresh failed: ${countsError}`
+                  : lastCountedAt
+                    ? `Object counts last updated ${relativeTime(lastCountedAt)} (${lastCountedAt})`
+                    : 'Object counts have not been populated for this customer yet'
+              }
+            >
+              <RefreshCw size={12} className={refreshingCounts ? 'animate-spin' : ''} />
+              {refreshingCounts
+                ? 'Refreshing…'
+                : lastCountedAt
+                  ? `Counts · ${relativeTime(lastCountedAt)}`
+                  : 'Refresh counts'}
+            </button>
             <button
               onClick={() => downloadCustomerCsv(customer, buckets)}
               className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800"

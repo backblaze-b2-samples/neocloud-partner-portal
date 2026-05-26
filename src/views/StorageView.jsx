@@ -54,8 +54,8 @@ export default function StorageView() {
       // We fire it in parallel with the bucket fetch (both start before await).
       const objectCounts = await b2.getObjectCounts();
       const withCounts = raw.map((bucket) => {
-        const count = objectCounts.get(bucket.bucketId);
-        return count != null ? { ...bucket, objectCount: count } : bucket;
+        const entry = objectCounts.get(bucket.bucketId);
+        return entry?.count != null ? { ...bucket, objectCount: entry.count } : bucket;
       });
 
       const sorted = [...withCounts].sort((a, b) => a.bucketName.localeCompare(b.bucketName));
