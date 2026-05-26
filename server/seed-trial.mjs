@@ -501,7 +501,7 @@ function getBucketDefs(account) {
       bucketType: 'allPrivate',
       sse:        true,
       objectLock: true,
-      lifecycle:  [{ fileNamePrefix: 'backups/daily/', daysFromUploadingUntilHiding: null, daysFromHidingUntilDeleting: 180 }],
+      lifecycle:  [{ fileNamePrefix: 'backups/daily/', daysFromUploadingToHiding: null, daysFromHidingToDeleting: 180 }],
       files: [
         {
           path: 'manifests/restore-point-2026-05-07.json',
@@ -567,7 +567,7 @@ function getBucketDefs(account) {
       name:       `nc-${shortCode}-deploy-artifacts-${r}`,
       bucketType: 'allPrivate',
       sse:        true,
-      lifecycle:  [{ fileNamePrefix: 'releases/', daysFromUploadingUntilHiding: null, daysFromHidingUntilDeleting: 90 }],
+      lifecycle:  [{ fileNamePrefix: 'releases/', daysFromUploadingToHiding: null, daysFromHidingToDeleting: 90 }],
       files: [
         {
           path: 'releases/v1.2.3/manifest.json',
@@ -590,7 +590,7 @@ function getBucketDefs(account) {
         name:       `nc-${shortCode}-datasets-${r}`,
         bucketType: 'allPrivate',
         sse:        true,
-        lifecycle:  [{ fileNamePrefix: 'datasets/raw/', daysFromUploadingUntilHiding: null, daysFromHidingUntilDeleting: 7 }],
+        lifecycle:  [{ fileNamePrefix: 'datasets/raw/', daysFromUploadingToHiding: null, daysFromHidingToDeleting: 7 }],
         files: [
           {
             path: 'datasets/raw/training-batch-001.csv',
@@ -681,7 +681,7 @@ function getBucketDefs(account) {
       name:       `nc-${shortCode}-uploads-${r}`,
       bucketType: 'allPrivate',
       sse:        true,
-      lifecycle:  [{ fileNamePrefix: '', daysFromUploadingUntilHiding: null, daysFromHidingUntilDeleting: 30 }],
+      lifecycle:  [{ fileNamePrefix: '', daysFromUploadingToHiding: null, daysFromHidingToDeleting: 30 }],
       files: [
         {
           path: 'uploads/images/product-001.jpg',
