@@ -110,8 +110,13 @@ function GroupsList() {
       <CreateCustomerDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        onCreated={(c) => {
-          // Refresh — data files mutate in place in mocks, easier than re-fetching
+        onCreated={(newCust) => {
+          // Optimistic insert into the flat customers list so per-group
+          // member counts update immediately; refresh reconciles after.
+          const row = partner.customerRowFromCreated(newCust);
+          if (row) {
+            setAllCustomers((prev) => [row, ...prev.filter((c) => c.accountId !== row.accountId)]);
+          }
           partner.getCustomers().then(({ customers }) => setAllCustomers(customers));
           partner.listGroups().then(({ groups }) => setGroups(groups));
         }}
@@ -238,7 +243,13 @@ function GroupDetail({ groupId }) {
         open={showCreate}
         onClose={() => setShowCreate(false)}
         defaultGroupId={groupId}
-        onCreated={() => partner.getCustomers({ groupId }).then(({ customers }) => setMembers(customers))}
+        onCreated={(newCust) => {
+          const row = partner.customerRowFromCreated(newCust);
+          if (row) {
+            setMembers((prev) => [row, ...prev.filter((c) => c.accountId !== row.accountId)]);
+          }
+          partner.getCustomers({ groupId }).then(({ customers }) => setMembers(customers));
+        }}
       />
     </div>
   );

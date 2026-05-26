@@ -11,6 +11,26 @@ import { hashPassword } from './auth.js';
 import { audit } from './audit.js';
 import { activeAdminCount, createUser, findByEmail, isValidEmail } from './users.js';
 
+const DEMO_USERS = [
+  { email: 'demo@backblaze.com',     role: 'admin',             accountId: null },
+  { email: 'lumora-admin@demo.com',  role: 'customer_admin',    accountId: '7f3a91d2c4b8' },
+  { email: 'lumora-viewer@demo.com', role: 'customer_readonly', accountId: '7f3a91d2c4b8' },
+  { email: 'support@demo.com',       role: 'support',           accountId: null },
+];
+
+export async function seedDemoUsers() {
+  const hash = await hashPassword('demo');
+  let created = 0;
+  for (const { email, role, accountId } of DEMO_USERS) {
+    if (findByEmail(email)) continue;
+    const u = createUser({ email, passwordHash: hash, role, accountId, mustChangePassword: false });
+    audit({ actorId: null, action: 'admin.seeded', targetUserId: u.id, details: { source: 'demo-seed' } });
+    console.log(`[seed] Demo user provisioned: ${email} (${role})`);
+    created++;
+  }
+  return { created };
+}
+
 export async function seedDefaultAdmin() {
   if (activeAdminCount() > 0) return { seeded: false, reason: 'admin-exists' };
 

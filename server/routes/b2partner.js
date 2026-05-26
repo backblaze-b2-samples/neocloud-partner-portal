@@ -21,6 +21,7 @@
 
 import express from 'express';
 import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
+import { upsertCredential } from '../credentials.js';
 
 const router = express.Router();
 router.use(requireAuth, requireNotDemo);
@@ -30,7 +31,7 @@ router.use(requireAuth, requireNotDemo);
 const ALLOWED_ENDPOINTS = new Set([
   'b2_list_groups',
   'b2_list_group_members',
-  'b2_create_account',
+  'b2_create_group_member',   // provision a new sub-account; response carries the only copy of applicationKey
   // Member management
   'b2_eject_group_member',    // eject a sub-account from a group (optional email change included)
   'b2_update_account_email',  // update a sub-account's login email (without ejecting)
@@ -86,6 +87,33 @@ router.post('/:endpoint', async (req, res) => {
     });
 
     const text = await b2Res.text();
+
+    // Intercept b2_create_group_member success: extract the one-time
+    // applicationKey and persist credentials before forwarding to the browser.
+    // Without this, the secret reaches the browser and is then gone forever —
+    // every subsequent per-customer call (listBuckets / createBucket / etc.)
+    // would fail with "no_credentials".
+    if (endpoint === 'b2_create_group_member' && b2Res.ok) {
+      try {
+        const data = JSON.parse(text);
+        const newAccountId = data?.groupMember?.accountId;
+        if (newAccountId && data.applicationKeyId && data.applicationKey) {
+          upsertCredential({
+            accountId:        newAccountId,
+            email:            forwardBody.memberEmail,
+            groupId:          forwardBody.groupId,
+            region:           forwardBody.region,
+            applicationKeyId: data.applicationKeyId,
+            applicationKey:   data.applicationKey,
+          });
+          console.log(`[b2partner] stored credentials for new sub-account ${newAccountId} (${forwardBody.memberEmail})`);
+        }
+      } catch (credErr) {
+        // Don't fail the user-facing request just because credential storage hit
+        // an error — log loudly so it gets noticed in pm2 logs.
+        console.error(`[b2partner] FAILED to store credentials for new sub-account: ${credErr.message}`);
+      }
+    }
 
     // Forward B2's status code and body verbatim so the browser-side error
     // handling in partnerApi.js can parse the same error shape.

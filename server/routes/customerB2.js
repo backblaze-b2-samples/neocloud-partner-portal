@@ -111,6 +111,7 @@ const ALLOWED_ENDPOINTS = new Set([
   'b2_list_file_names',
   'b2_list_file_versions',
   'b2_get_file_info',
+  'b2_create_bucket',
 ]);
 
 // Auth token cache: accountId → { token, apiUrl, expiresAt }
@@ -165,7 +166,7 @@ router.post('/:accountId/:endpoint', requireAuth, async (req, res) => {
 
   const targetUrl = `${auth.apiUrl}/b2api/v4/${endpoint}`;
   // Only inject accountId for endpoints that require it; file-listing endpoints don't accept it.
-  const NEEDS_ACCOUNT_ID = new Set(['b2_list_buckets', 'b2_list_keys']);
+  const NEEDS_ACCOUNT_ID = new Set(['b2_list_buckets', 'b2_list_keys', 'b2_create_bucket']);
   const body = NEEDS_ACCOUNT_ID.has(endpoint)
     ? { accountId: auth.accountId, ...req.body }
     : { ...req.body };
@@ -181,15 +182,21 @@ router.post('/:accountId/:endpoint', requireAuth, async (req, res) => {
     });
     const text = await b2Res.text();
 
-    // For b2_list_buckets, inject _apiHost so the client can derive region.
-    // The sub-account's apiUrl encodes the region (api003=eu, api004=us-west, api005=us-east).
-    if (endpoint === 'b2_list_buckets' && b2Res.ok) {
+    // For bucket-shaped responses, inject _apiHost so the client can derive
+    // region. The sub-account's apiUrl encodes the region (api003=eu-central,
+    // api004=us-west, api005=us-east, api006=ca-east). b2_list_buckets returns
+    // { buckets: [...] }; b2_create_bucket returns a single bucket object.
+    if ((endpoint === 'b2_list_buckets' || endpoint === 'b2_create_bucket') && b2Res.ok) {
       try {
         const parsed = JSON.parse(text);
         const m = auth.apiUrl?.match(/api(\d+)\.backblazeb2\.com/);
         const apiHost = m ? `api${m[1]}.backblazeb2.com` : null;
-        if (parsed.buckets && apiHost) {
-          parsed.buckets = parsed.buckets.map((b) => ({ ...b, _apiHost: apiHost }));
+        if (apiHost) {
+          if (Array.isArray(parsed.buckets)) {
+            parsed.buckets = parsed.buckets.map((b) => ({ ...b, _apiHost: apiHost }));
+          } else if (parsed.bucketId) {
+            parsed._apiHost = apiHost;
+          }
         }
         return res.status(b2Res.status).json(parsed);
       } catch (_) { /* fall through to raw send */ }

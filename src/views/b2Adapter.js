@@ -353,17 +353,7 @@ export async function createBucket(payload) {
     b2Body.lifecycleRules = payload.lifecycleRules;
   }
 
-  // Route through the sub-account proxy when an accountId is provided so the
-  // bucket is created on the customer's sub-account rather than the master.
-  // listBuckets uses this same path — without it, create lands on master and
-  // the subsequent list call (which uses sub-account creds) won't see it.
-  if (payload.accountId) {
-    const data = await callAsCustomer(payload.accountId, 'b2_create_bucket', b2Body);
-    if (data === null) throw new Error(`No stored credentials for account ${payload.accountId}`);
-    return normalizeBucket(data);
-  }
-  const created = await callB2('b2_create_bucket', b2Body);
-  return normalizeBucket(created);
+  return callB2('b2_create_bucket', b2Body);
 }
 
 // ===== Application keys =====================================================
@@ -1040,42 +1030,6 @@ export async function getObjectCounts() {
   } catch (e) {
     console.warn('[b2Adapter] getObjectCounts failed:', e.message);
     return new Map();
-  }
-}
-
-// ===== File index (background-job cache) =====================================
-// The objectCountJob writes per-file metadata to the file_index SQLite table
-// alongside the object counts.  This function queries that index — instant
-// server DB read, zero B2 calls, any sort order, full-text prefix filtering.
-//
-// Returns { files, total, indexedAt, isComplete }
-//   files      – array of { fileName, fileId, size, uploadedAt, contentType }
-//   total      – total rows matching the query (useful for pagination UI)
-//   indexedAt  – ISO timestamp of the last index run for this bucket
-//   isComplete – true if the bucket has been indexed at least once
-//
-// In demo mode returns { files: [], total: 0, indexedAt: null, isComplete: false }
-// so the FilesTab falls back to the live b2_list_file_names path (correct for demos).
-export async function getFileIndex(bucketId, {
-  prefix = '',
-  limit  = 100,
-  offset = 0,
-  sortBy = 'name',   // 'name' | 'size' | 'uploadedAt'
-  sortDir = 'asc',   // 'asc' | 'desc'
-} = {}) {
-  if (useMocks()) return { files: [], total: 0, indexedAt: null, isComplete: false };
-  try {
-    const params = new URLSearchParams({ limit, offset, sortBy, sortDir });
-    if (prefix) params.set('prefix', prefix);
-    const res = await fetch(
-      `/api/master-b2/file-index/${encodeURIComponent(bucketId)}?${params}`,
-      { credentials: 'include' },
-    );
-    if (!res.ok) return { files: [], total: 0, indexedAt: null, isComplete: false };
-    return res.json();
-  } catch (e) {
-    console.warn('[b2Adapter] getFileIndex failed:', e.message);
-    return { files: [], total: 0, indexedAt: null, isComplete: false };
   }
 }
 

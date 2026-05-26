@@ -122,5 +122,34 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_fidx_size     ON file_index(bucket_id, size);
 `);
 
+// Migration: add account_id column and expand role CHECK on users table.
+// Uses a recreate-and-rename pattern because SQLite doesn't support ALTER COLUMN.
+{
+  const cols = db.pragma('table_info(users)');
+  const hasAccountId = cols.some(c => c.name === 'account_id');
+  if (!hasAccountId) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE users_v2 (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        email                TEXT NOT NULL UNIQUE,
+        password_hash        TEXT NOT NULL,
+        role                 TEXT NOT NULL CHECK(role IN ('admin','manager','user','support','customer_admin','customer_readonly')),
+        account_id           TEXT,
+        active               INTEGER NOT NULL DEFAULT 1,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL,
+        last_login_at        TEXT
+      );
+      INSERT INTO users_v2 (id, email, password_hash, role, account_id, active, must_change_password, created_at, updated_at, last_login_at)
+        SELECT id, email, password_hash, role, NULL, active, must_change_password, created_at, updated_at, last_login_at FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_v2 RENAME TO users;
+    `);
+    db.pragma('foreign_keys = ON');
+  }
+}
+
 // Best-effort sweep of expired sessions on every boot.
 db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(new Date().toISOString());
