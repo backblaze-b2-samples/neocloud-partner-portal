@@ -66,26 +66,26 @@ function loadStoredCredential(email) {
 const ACCOUNTS = [
   // ── Internal / IT ──────────────────────────────────────────────────────────
   {
-    email:       'alex.johnson@neocloud-storage.com',
+    email:       'marcus.brennan@neocloud-storage.com',
     groupId:     '165914',
     groupName:   'Internal / IT',
     region:      'us-west',
-    shortCode:   'int-johnson',
+    shortCode:   'int-brennan',
     type:        'internal',
     subType:     'backup',
   },
   {
-    email:       'james.rivera@neocloud-storage.com',
+    email:       'wei.tanaka@neocloud-storage.com',
     groupId:     '165914',
     groupName:   'Internal / IT',
     region:      'us-east',
-    shortCode:   'int-rivera',
+    shortCode:   'int-tanaka',
     type:        'internal',
     subType:     'infra',
   },
   // ── AI Customers ───────────────────────────────────────────────────────────
   {
-    email:       'customer1-west@neocloud-storage.com',
+    email:       'mira.delgado@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -94,7 +94,7 @@ const ACCOUNTS = [
     displayName: 'VectorMind AI',
   },
   {
-    email:       'customer3-eu@neocloud-storage.com',
+    email:       'tomas.engman@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -104,7 +104,7 @@ const ACCOUNTS = [
   },
   // ── AI Customers (c4 – c43) ────────────────────────────────────────────────
   {
-    email:       'sara.chen@neocloud-storage.com',
+    email:       'leah.zhou@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -113,7 +113,7 @@ const ACCOUNTS = [
     displayName: 'NeuralDrift',
   },
   {
-    email:       'lucas.patel@neocloud-storage.com',
+    email:       'arjun.kapoor@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -122,7 +122,7 @@ const ACCOUNTS = [
     displayName: 'SynthAI',
   },
   {
-    email:       'emma.weber@neocloud-storage.com',
+    email:       'katja.holm@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -131,7 +131,7 @@ const ACCOUNTS = [
     displayName: 'DataNeural',
   },
   {
-    email:       'jordan.kim@neocloud-storage.com',
+    email:       'eun.park@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -140,7 +140,7 @@ const ACCOUNTS = [
     displayName: 'VectorEdge',
   },
   {
-    email:       'aisha.okonkwo@neocloud-storage.com',
+    email:       'zara.adebayo@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -149,7 +149,7 @@ const ACCOUNTS = [
     displayName: 'DeepSynth',
   },
   {
-    email:       'ryan.torres@neocloud-storage.com',
+    email:       'diego.alvarez@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -158,7 +158,7 @@ const ACCOUNTS = [
     displayName: 'ModelBridge',
   },
   {
-    email:       'lena.hoffmann@neocloud-storage.com',
+    email:       'freya.steiner@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -167,7 +167,7 @@ const ACCOUNTS = [
     displayName: 'CortexLabs',
   },
   {
-    email:       'dev.sharma@neocloud-storage.com',
+    email:       'rohan.shetty@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -176,7 +176,7 @@ const ACCOUNTS = [
     displayName: 'NovaMind',
   },
   {
-    email:       'miguel.garcia@neocloud-storage.com',
+    email:       'alma.castro@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -185,7 +185,7 @@ const ACCOUNTS = [
     displayName: 'TensorPath',
   },
   {
-    email:       'yuki.nakamura@neocloud-storage.com',
+    email:       'kenji.sato@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -194,7 +194,7 @@ const ACCOUNTS = [
     displayName: 'AIMatrix',
   },
   {
-    email:       'sofia.mueller@neocloud-storage.com',
+    email:       'elsa.klein@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -203,7 +203,7 @@ const ACCOUNTS = [
     displayName: 'AlphaLearn',
   },
   {
-    email:       'alex.osei@neocloud-storage.com',
+    email:       'kofi.mensah@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -212,7 +212,7 @@ const ACCOUNTS = [
     displayName: 'PulseAI',
   },
   {
-    email:       'nina.petrov@neocloud-storage.com',
+    email:       'aleksei.volkov@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -221,7 +221,7 @@ const ACCOUNTS = [
     displayName: 'InferEdge',
   },
   {
-    email:       'omar.hassan@neocloud-storage.com',
+    email:       'tarek.khalil@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -230,7 +230,7 @@ const ACCOUNTS = [
     displayName: 'SynapticLab',
   },
   {
-    email:       'claire.dupont@neocloud-storage.com',
+    email:       'manon.leclerc@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -239,7 +239,7 @@ const ACCOUNTS = [
     displayName: 'NeuralStack',
   },
   {
-    email:       'james.liu@neocloud-storage.com',
+    email:       'ming.zhao@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -248,7 +248,7 @@ const ACCOUNTS = [
     displayName: 'FlowML',
   },
   {
-    email:       'priya.reddy@neocloud-storage.com',
+    email:       'divya.iyer@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -257,7 +257,7 @@ const ACCOUNTS = [
     displayName: 'QuantumML',
   },
   {
-    email:       'ben.okonkwo@neocloud-storage.com',
+    email:       'kwame.boateng@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -266,7 +266,7 @@ const ACCOUNTS = [
     displayName: 'DeepVector',
   },
   {
-    email:       'anna.svensson@neocloud-storage.com',
+    email:       'lina.bergman@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -275,7 +275,7 @@ const ACCOUNTS = [
     displayName: 'EuroML',
   },
   {
-    email:       'carlos.mendez@neocloud-storage.com',
+    email:       'julian.rojas@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -284,7 +284,7 @@ const ACCOUNTS = [
     displayName: 'AxisNeural',
   },
   {
-    email:       'diana.chen@neocloud-storage.com',
+    email:       'mei.wang@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -293,7 +293,7 @@ const ACCOUNTS = [
     displayName: 'ModelForge',
   },
   {
-    email:       'eliot.burke@neocloud-storage.com',
+    email:       'owen.kelly@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -302,7 +302,7 @@ const ACCOUNTS = [
     displayName: 'CognexAI',
   },
   {
-    email:       'fiona.walsh@neocloud-storage.com',
+    email:       'niamh.byrne@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -311,7 +311,7 @@ const ACCOUNTS = [
     displayName: 'SentinelAI',
   },
   {
-    email:       'guo.wei@neocloud-storage.com',
+    email:       'han.li@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -320,7 +320,7 @@ const ACCOUNTS = [
     displayName: 'TensorScale',
   },
   {
-    email:       'hana.nakamura@neocloud-storage.com',
+    email:       'akira.fujimoto@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -329,7 +329,7 @@ const ACCOUNTS = [
     displayName: 'NeuralBytes',
   },
   {
-    email:       'ivan.petrov@neocloud-storage.com',
+    email:       'dmitri.sokolov@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -338,7 +338,7 @@ const ACCOUNTS = [
     displayName: 'FeatureLab',
   },
   {
-    email:       'jasmine.tran@neocloud-storage.com',
+    email:       'mai.nguyen@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -347,7 +347,7 @@ const ACCOUNTS = [
     displayName: 'EvoNeural',
   },
   {
-    email:       'kai.bergstrom@neocloud-storage.com',
+    email:       'tobias.lind@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -356,7 +356,7 @@ const ACCOUNTS = [
     displayName: 'SignalForge',
   },
   {
-    email:       'leo.santos@neocloud-storage.com',
+    email:       'matias.oliveira@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -365,7 +365,7 @@ const ACCOUNTS = [
     displayName: 'InferCore',
   },
   {
-    email:       'maya.patel@neocloud-storage.com',
+    email:       'ananya.shah@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -374,7 +374,7 @@ const ACCOUNTS = [
     displayName: 'NovaCortex',
   },
   {
-    email:       'noa.cohen@neocloud-storage.com',
+    email:       'tal.weiss@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -383,7 +383,7 @@ const ACCOUNTS = [
     displayName: 'CognifyLabs',
   },
   {
-    email:       'oscar.lindqvist@neocloud-storage.com',
+    email:       'henrik.lundqvist@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -392,7 +392,7 @@ const ACCOUNTS = [
     displayName: 'NeuralPath',
   },
   {
-    email:       'petra.novak@neocloud-storage.com',
+    email:       'jana.kovacic@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -401,7 +401,7 @@ const ACCOUNTS = [
     displayName: 'DataForge',
   },
   {
-    email:       'quinn.murphy@neocloud-storage.com',
+    email:       'liam.donovan@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -410,7 +410,7 @@ const ACCOUNTS = [
     displayName: 'SynapseML',
   },
   {
-    email:       'rosa.moretti@neocloud-storage.com',
+    email:       'giulia.romano@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -419,7 +419,7 @@ const ACCOUNTS = [
     displayName: 'FluxAI',
   },
   {
-    email:       'sam.oduya@neocloud-storage.com',
+    email:       'otieno.kamau@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -428,7 +428,7 @@ const ACCOUNTS = [
     displayName: 'VectorStack',
   },
   {
-    email:       'tara.kim@neocloud-storage.com',
+    email:       'jiwoo.han@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -437,7 +437,7 @@ const ACCOUNTS = [
     displayName: 'DeepForge',
   },
   {
-    email:       'ugo.rossi@neocloud-storage.com',
+    email:       'matteo.bianchi@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'eu-central',
@@ -446,7 +446,7 @@ const ACCOUNTS = [
     displayName: 'ItalAI',
   },
   {
-    email:       'vera.jansen@neocloud-storage.com',
+    email:       'eva.vandenberg@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-west',
@@ -455,7 +455,7 @@ const ACCOUNTS = [
     displayName: 'ModelPilot',
   },
   {
-    email:       'will.carter@neocloud-storage.com',
+    email:       'ethan.ward@neocloud-storage.com',
     groupId:     '165915',
     groupName:   'AI Customers',
     region:      'us-east',
@@ -465,7 +465,7 @@ const ACCOUNTS = [
   },
   // ── SaaS Customers ─────────────────────────────────────────────────────────
   {
-    email:       'customer8-west@neocloud-storage.com',
+    email:       'noah.hayes@neocloud-storage.com',
     groupId:     '165916',
     groupName:   'SaaS Customers',
     region:      'us-west',
@@ -474,7 +474,7 @@ const ACCOUNTS = [
     displayName: 'StreamVault',
   },
   {
-    email:       'customer11-eu@neocloud-storage.com',
+    email:       'silke.ackermann@neocloud-storage.com',
     groupId:     '165916',
     groupName:   'SaaS Customers',
     region:      'eu-central',

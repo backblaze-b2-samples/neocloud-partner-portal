@@ -14,7 +14,7 @@
 // Usage (run from project root on EC2):
 //   node server/seed-data.mjs                       # seed all accounts
 //   node server/seed-data.mjs --dry-run             # preview without uploading
-//   node server/seed-data.mjs --account customer1-west@neocloud-storage.com
+//   node server/seed-data.mjs --account mira.delgado@neocloud-storage.com
 //
 // Required env vars (loaded from .env automatically):
 //   B2_MASTER_KEY_ID          Master application key ID
