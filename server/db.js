@@ -84,10 +84,21 @@ db.exec(`
     price_per_gb_storage  REAL,   -- $/GB/month override (null = use standard)
     price_per_gb_download REAL,   -- $/GB egress override (null = use standard)
     notes                 TEXT,
+    -- 'active' (default) or 'ejected'. Ejected customers can no longer be
+    -- operated on via the per-customer proxy (no live API calls) but their
+    -- CSV-derived usage / billing data remains visible for up to 90 days.
+    status                TEXT NOT NULL DEFAULT 'active',
+    ejected_at            TEXT,
+    -- Cached from b2_list_group_members so ejected customers (no longer in the
+    -- live member list) can still render in the portal.
+    email                 TEXT,
+    group_id              TEXT,
+    region                TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_meta_account ON customer_metadata(account_id);
+  CREATE INDEX IF NOT EXISTS idx_meta_status  ON customer_metadata(status);
 
   -- Object counts: cached per-bucket file counts from b2_list_file_names.
   -- Written by the 24-hour background job (server/jobs/objectCountJob.js).
