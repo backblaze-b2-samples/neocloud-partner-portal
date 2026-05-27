@@ -1,9 +1,14 @@
 // =============================================================================
 // archive-reports.mjs — Daily CSV report archiver.
 //
-// Backblaze only retains 7 days of usage CSV files in the b2-reports-* bucket.
-// This script downloads any files not yet archived locally so the dashboard can
-// display 30–90 days of history regardless of B2's retention window.
+// Backblaze auto-regenerates any missing daily Usage CSV from the last 7 days
+// (per https://www.backblaze.com/docs/cloud-storage-use-partner-api-reports —
+// "Do not delete files until they are at least seven days old because the
+// system will regenerate them"). Older files are not regenerated but are also
+// not deleted by Backblaze — they remain in the b2-reports-* bucket
+// indefinitely. This script keeps a local mirror at server/data/reports/ so
+// the dashboard can render extended history without re-downloading CSVs on
+// every request.
 //
 // Archives are saved to: server/data/reports/YYYY-MM-DD/<filename>.csv
 //
