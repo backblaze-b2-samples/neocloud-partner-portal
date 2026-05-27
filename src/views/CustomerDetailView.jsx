@@ -787,11 +787,11 @@ function LoginsTab({ accountId, isCustomer }) {
                   {u.active ? 'Active' : 'Inactive'}
                 </span>
               </TD>
-              <TD className="text-xs text-ink-300">
-                {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
+              <TD className="text-xs text-ink-300" title={u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : ''}>
+                {u.lastLoginAt ? relativeTime(u.lastLoginAt) : '—'}
               </TD>
               <TD className="text-xs text-ink-300">
-                {new Date(u.createdAt).toLocaleDateString()}
+                {shortDate(u.createdAt)}
               </TD>
             </TR>
           ))}

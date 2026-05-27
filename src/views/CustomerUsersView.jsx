@@ -6,7 +6,7 @@ import {
 import { Card, CardHeader, LoadingState } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { api, ApiError } from '../lib/apiClient.js';
-import { cx } from '../lib/format.js';
+import { cx, relativeTime } from '../lib/format.js';
 
 const CUSTOMER_ROLES = ['customer_admin', 'customer_readonly'];
 const ROLE_LABELS = {
@@ -166,7 +166,9 @@ export default function CustomerUsersView() {
                             : 'bg-ink-700 text-ink-300 ring-ink-600'
                         )}>{u.active ? 'Active' : 'Inactive'}</span>
                       </Td>
-                      <Td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</Td>
+                      <Td title={u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : ''}>
+                        {u.lastLoginAt ? relativeTime(u.lastLoginAt) : '—'}
+                      </Td>
                       <Td className="text-right">
                         {busy && <Loader2 size={12} className="ml-auto animate-spin text-ink-400" />}
                         {!busy && !isMe && (

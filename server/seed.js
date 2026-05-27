@@ -38,9 +38,17 @@ export async function seedDefaultAdmin() {
   const password = process.env.DEFAULT_ADMIN_PASSWORD;
 
   if (!email || !password) {
-    // No admin and no seed configured — flag loudly. The app will start, but
-    // there will be no way to log in until an admin is provisioned.
-    console.warn('[seed] No admin in DB and DEFAULT_ADMIN_EMAIL/PASSWORD not set. Set them and restart, or provision via a one-off script.');
+    // No admin and no seed configured. Make this impossible to miss — the
+    // app would otherwise start and reject every login with the unhelpful
+    // "Invalid credentials" because there is no admin to log in as.
+    console.error('');
+    console.error('═════════════════════════════════════════════════════════════════');
+    console.error('  ERROR: no admin user in DB and DEFAULT_ADMIN_* env vars unset.');
+    console.error('  The portal will accept no logins until an admin is provisioned.');
+    console.error('  Set DEFAULT_ADMIN_EMAIL and DEFAULT_ADMIN_PASSWORD in .env, then');
+    console.error('  restart. See DEPLOY.md → "First-run setup".');
+    console.error('═════════════════════════════════════════════════════════════════');
+    console.error('');
     return { seeded: false, reason: 'no-env' };
   }
   if (!isValidEmail(email)) {

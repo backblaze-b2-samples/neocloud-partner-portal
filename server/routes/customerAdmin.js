@@ -36,7 +36,12 @@ router.patch('/users/:id', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
   const target = findById(id);
-  if (!target || target.account_id !== myAccountId) return res.status(404).json({ error: 'Not found' });
+  // Guard: both sides must have a non-null accountId, otherwise `null === null`
+  // could let a customer_admin (myAccountId=null is impossible but defend anyway)
+  // reach a target without an accountId.
+  if (!target || !target.account_id || !myAccountId || target.account_id !== myAccountId) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   const { role, active, mustChangePassword } = req.body || {};
   const changes = [];
   if (role !== undefined) {
@@ -62,7 +67,12 @@ router.post('/users/:id/reset-password', async (req, res) => {
   const myAccountId = req.session.user.accountId;
   const id = Number(req.params.id);
   const target = findById(id);
-  if (!target || target.account_id !== myAccountId) return res.status(404).json({ error: 'Not found' });
+  // Guard: both sides must have a non-null accountId, otherwise `null === null`
+  // could let a customer_admin (myAccountId=null is impossible but defend anyway)
+  // reach a target without an accountId.
+  if (!target || !target.account_id || !myAccountId || target.account_id !== myAccountId) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   const temp = generateTempPassword();
   const hash = await hashPassword(temp);
   setPasswordHash(id, hash, 1);
