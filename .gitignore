@@ -58,6 +58,11 @@ server/data/
 *.db-shm
 .fuse_hidden*
 
+# Vitest in-memory DB residue (when ':memory:' is treated as a path)
+:memory:
+:memory:-shm
+:memory:-wal
+
 # Local repair/debug scripts
 *.local
 *.mjs.local
