@@ -30,6 +30,7 @@ import fs   from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireAuth, requireNotDemo, requireCsrf, canAccessAccount } from '../middleware/requireAuth.js';
+import { audit } from '../audit.js';
 import { db } from '../db.js';
 import { runForAccount as runObjectCountForAccount } from '../jobs/objectCountJob.js';
 
@@ -314,6 +315,12 @@ router.post('/reports-csv', async (req, res) => {
     return res.status(400).json({ error: 'authorizationToken, apiUrl, downloadUrl, and accountId are required' });
   }
   if (!canAccessAccount(req.session.user, accountId)) {
+    audit({
+      actorId: req.session.user.id,
+      action:  'authz.denied',
+      details: { route: 'master-b2/reports-csv', accountId },
+      ip:      req.ip,
+    });
     return res.status(403).json({ error: 'Forbidden — accountId does not belong to this user' });
   }
 

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Card, CardHeader, LoadingState } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
+import { useNav } from '../lib/nav.js';
 import { api, ApiError } from '../lib/apiClient.js';
 import { cx, shortDate, relativeTime } from '../lib/format.js';
 import { CUSTOMERS } from '../data/customers.js';
@@ -155,6 +156,7 @@ export default function UserManagementView() {
 }
 
 function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId, onUpdate, onResetPassword }) {
+  const { navigate } = useNav();
   return (
     <Card padding="p-0">
       <div className="border-b border-ink-700 px-5 py-3">
@@ -182,7 +184,13 @@ function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId,
                 return (
                   <tr key={u.id} className="border-t border-ink-800 text-ink-200">
                     <Td>
-                      <span className="font-medium text-ink-100">{u.email}</span>
+                      <button
+                        onClick={() => navigate('user-detail', { userId: u.id })}
+                        className="font-medium text-ink-100 hover:text-bb-red focus:outline-none"
+                        title="View user detail + activity"
+                      >
+                        {u.email}
+                      </button>
                       {isMe && <span className="ml-2 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet">you</span>}
                       {protected_ && <span className="ml-2 inline-flex items-center gap-1 rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 ring-1 ring-ink-600"><Lock size={9} /> protected</span>}
                       {u.mustChangePassword && <span className="ml-2 rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>}

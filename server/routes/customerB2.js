@@ -20,6 +20,7 @@ import express from 'express';
 import { createHmac, createHash } from 'crypto';
 import { requireAuth, requireNotDemo, requireCsrf, canAccessAccount } from '../middleware/requireAuth.js';
 import { getCredential, getDecryptedApplicationKey } from '../credentials.js';
+import { audit } from '../audit.js';
 import { REGIONS } from '../../src/data/regions.js';
 
 // B2 bucket name rules: 6–63 chars, lowercase a-z, 0-9, hyphen, no leading/trailing
@@ -30,6 +31,12 @@ const ALLOWED_REGIONS = new Set(REGIONS.map((r) => r.id));
 
 function rejectInvalidAccountAccess(req, res) {
   if (canAccessAccount(req.session.user, req.params.accountId)) return null;
+  audit({
+    actorId: req.session.user.id,
+    action:  'authz.denied',
+    details: { route: 'customer-b2', accountId: req.params.accountId, method: req.method },
+    ip:      req.ip,
+  });
   res.status(403).json({ error: 'Forbidden — accountId does not belong to this user' });
   return true;
 }
@@ -196,6 +203,18 @@ router.post('/:accountId/:endpoint', requireCsrf, async (req, res) => {
     });
     const text = await b2Res.text();
 
+    // Audit only mutating endpoints. Read-only listings (b2_list_*,
+    // b2_get_file_info) fire on every page load and would flood the table.
+    const MUTATING = new Set(['b2_create_bucket']);
+    if (b2Res.ok && MUTATING.has(endpoint)) {
+      audit({
+        actorId: req.session.user.id,
+        action:  `customer_b2.${endpoint}`,
+        details: { accountId, bucketName: req.body?.bucketName ?? null },
+        ip:      req.ip,
+      });
+    }
+
     // For bucket-shaped responses, inject _apiHost so the client can derive
     // region. The sub-account's apiUrl encodes the region (api003=eu-central,
     // api004=us-west, api005=us-east, api006=ca-east). b2_list_buckets returns
@@ -315,6 +334,12 @@ router.post('/:accountId/s3_logging', requireCsrf, async (req, res) => {
       console.error(`[customerB2] s3_put_bucket_logging ${accountId}/${bucketName}: ${s3Res.status} ${errText}`);
       return res.status(s3Res.status).json({ error: `S3 PutBucketLogging failed: ${s3Res.status}`, detail: errText });
     }
+    audit({
+      actorId: req.session.user.id,
+      action:  enabled ? 'customer_b2.s3_logging_enabled' : 'customer_b2.s3_logging_disabled',
+      details: { accountId, bucketName, targetBucket: targetBucket || null, targetPrefix },
+      ip:      req.ip,
+    });
     res.json({ ok: true, enabled: !!enabled, targetBucket: targetBucket || null, targetPrefix });
   } catch (err) {
     console.error('[customerB2] s3_put_bucket_logging fetch error:', err.message);

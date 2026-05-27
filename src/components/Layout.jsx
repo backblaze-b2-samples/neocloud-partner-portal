@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, Database, Globe, Receipt,
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
-  LogOut, ShieldCheck, UserCog, BadgeDollarSign,
+  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -20,6 +20,7 @@ const ALL_NAV = [
   { id: 'usage',     label: 'Usage & billing',      icon: Receipt,          group: 'Operations' },
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
   { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requireRole: 'admin' },
+  { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
   { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
   { id: 'account',   label: 'My account',           icon: UserCog,          group: 'System' },
