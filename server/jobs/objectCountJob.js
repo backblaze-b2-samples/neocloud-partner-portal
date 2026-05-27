@@ -215,14 +215,6 @@ async function processAccount(storedCred) {
   return { accountId, bucketsProcessed };
 }
 
-// Exposed for the per-account refresh endpoint — runs the same per-account
-// walk synchronously so the caller can wait for fresh counts/bytes.
-export async function runForAccount(accountId) {
-  const cred = listCredentials().find((c) => c.account_id === accountId);
-  if (!cred) throw new Error(`No credentials stored for accountId ${accountId}`);
-  return processAccount(cred);
-}
-
 // ---------------------------------------------------------------------------
 // Main job entry point
 // ---------------------------------------------------------------------------

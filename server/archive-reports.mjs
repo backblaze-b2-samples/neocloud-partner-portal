@@ -23,12 +23,15 @@
 //   30 10 * * * cd /var/www/backblaze-neocloud-demo && node server/archive-reports.mjs >> /var/log/neocloud-archive.log 2>&1
 // =============================================================================
 
-import 'dotenv/config';
 import fs   from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 
+// Load .env relative to this file so the script works regardless of CWD.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+
 const DRY_RUN   = process.argv.includes('--dry-run');
 
 // Local archive directory — persists across PM2 restarts / server reboots.

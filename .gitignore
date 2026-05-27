@@ -67,3 +67,10 @@ server/data/
 *.local
 *.mjs.local
 fix-missing-credentials.mjs
+
+# Personal dev helper shell scripts at repo root (hardcoded local paths +
+# EC2 hostname). deploy.sh is the only one that ships.
+/show-*.sh
+/test-*.sh
+/install-*.sh
+/reset-*.sh

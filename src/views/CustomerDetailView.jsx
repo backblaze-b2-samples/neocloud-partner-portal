@@ -207,25 +207,6 @@ export default function CustomerDetailView({ customerId }) {
               {syncing ? 'Syncing…' : 'Refresh'}
             </button>
             <button
-              onClick={handleRefreshCounts}
-              disabled={refreshingCounts}
-              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800 disabled:opacity-50"
-              title={
-                countsError
-                  ? `Last refresh failed: ${countsError}`
-                  : lastCountedAt
-                    ? `Object counts last updated ${relativeTime(lastCountedAt)} (${lastCountedAt})`
-                    : 'Object counts have not been populated for this customer yet'
-              }
-            >
-              <RefreshCw size={12} className={refreshingCounts ? 'animate-spin' : ''} />
-              {refreshingCounts
-                ? 'Refreshing…'
-                : lastCountedAt
-                  ? `Counts · ${relativeTime(lastCountedAt)}`
-                  : 'Refresh counts'}
-            </button>
-            <button
               onClick={() => downloadCustomerCsv(customer, buckets)}
               className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800"
               title="Generate a Backblaze-shaped Usage.csv for this customer"

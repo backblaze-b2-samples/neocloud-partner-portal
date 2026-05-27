@@ -32,13 +32,10 @@ if (!email || !password) {
   console.error('Usage: node server/reset-password.mjs <email> <new-password>');
   process.exit(1);
 }
-// Skip the 8-char floor for the seeded demo account so we can restore the
-// documented `demo` password if it gets clobbered.
-const isDemoSeed = email.toLowerCase() === 'demo@backblaze.com';
-if (!isDemoSeed && password.length < 8) {
-  console.error('ERROR: password must be at least 8 characters.');
-  process.exit(1);
-}
+// Emergency / admin tool — no length floor. The normal admin-created-user
+// flow in the web UI still requires 8+ chars; this script is for cases like
+// restoring the documented seed password (`demo`) or unsticking a locked-out
+// account with whatever the operator chooses.
 
 const user = db.prepare('SELECT id, email, active, role FROM users WHERE email = ?').get(email);
 if (!user) {
