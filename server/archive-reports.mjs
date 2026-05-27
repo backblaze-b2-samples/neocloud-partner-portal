@@ -37,6 +37,7 @@ const DRY_RUN   = process.argv.includes('--dry-run');
 // Local archive directory — persists across PM2 restarts / server reboots.
 // Structure: server/data/reports/YYYY-MM-DD/<filename>.csv
 const ARCHIVE_DIR = path.join(__dirname, 'data', 'reports');
+fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
 
 // ─── Env ─────────────────────────────────────────────────────────────────────
 

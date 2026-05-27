@@ -38,6 +38,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Local CSV archive written by archive-reports.mjs.
 // Structure: server/data/reports/YYYY-MM-DD/<filename>.csv
 const ARCHIVE_DIR = path.join(__dirname, '..', 'data', 'reports');
+fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
 
 const router = Router();
 router.use(requireAuth, requireNotDemo);

@@ -6,7 +6,7 @@ import {
 import { Card, CardHeader, LoadingState } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { api, ApiError } from '../lib/apiClient.js';
-import { cx } from '../lib/format.js';
+import { cx, shortDate, relativeTime } from '../lib/format.js';
 import { CUSTOMERS } from '../data/customers.js';
 
 const ROLES = ['admin', 'manager', 'user', 'support', 'customer_admin', 'customer_readonly'];
@@ -206,8 +206,10 @@ function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId,
                           : 'bg-ink-700 text-ink-300 ring-ink-600'
                       )}>{u.active ? 'Active' : 'Inactive'}</span>
                     </Td>
-                    <Td>{new Date(u.createdAt).toLocaleDateString()}</Td>
-                    <Td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</Td>
+                    <Td>{shortDate(u.createdAt)}</Td>
+                    <Td title={u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : ''}>
+                      {u.lastLoginAt ? relativeTime(u.lastLoginAt) : '—'}
+                    </Td>
                     <Td className="text-right">
                       {busy && <Loader2 size={12} className="ml-auto animate-spin text-ink-400" />}
                       {!busy && !protected_ && (

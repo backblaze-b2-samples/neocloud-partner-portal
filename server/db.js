@@ -169,27 +169,26 @@ db.exec(`
   );
 `);
 
+// Tiny helper: add a column iff missing, log when we do.
+function addColumnIfMissing(table, col, type) {
+  const cols = db.pragma(`table_info(${table})`);
+  if (cols.some((c) => c.name === col)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  console.log(`[db] migration: ${table}.${col} added`);
+}
+
 // Migration: add total_bytes column to object_counts.
 // Populated by the objectCountJob during its file walk so the UI can show
 // real-time storage size (not just object count) without hitting the B2 API.
-{
-  const cols = db.pragma('table_info(object_counts)');
-  if (!cols.some((c) => c.name === 'total_bytes')) {
-    db.exec('ALTER TABLE object_counts ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0');
-  }
-}
+addColumnIfMissing('object_counts', 'total_bytes', 'INTEGER NOT NULL DEFAULT 0');
 
 // Migration: add ejection snapshot columns to customer_metadata.
 // The Partner API does not return ejected sub-accounts, so we snapshot the
 // fields we need to render them on the "Inactive" tab at eject time.
-{
-  const cols = db.pragma('table_info(customer_metadata)');
-  const has = (n) => cols.some((c) => c.name === n);
-  if (!has('ejected_at'))       db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_at TEXT');
-  if (!has('ejected_email'))    db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_email TEXT');
-  if (!has('ejected_group_id')) db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_group_id TEXT');
-  if (!has('ejected_region'))   db.exec('ALTER TABLE customer_metadata ADD COLUMN ejected_region TEXT');
-}
+addColumnIfMissing('customer_metadata', 'ejected_at',       'TEXT');
+addColumnIfMissing('customer_metadata', 'ejected_email',    'TEXT');
+addColumnIfMissing('customer_metadata', 'ejected_group_id', 'TEXT');
+addColumnIfMissing('customer_metadata', 'ejected_region',   'TEXT');
 
 // Best-effort sweep of expired sessions on every boot.
 db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(new Date().toISOString());

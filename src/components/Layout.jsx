@@ -351,10 +351,10 @@ function GlobalSearch() {
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
-        className="h-8 w-72 rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-xs text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
+        className="h-8 w-40 rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-xs text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40 sm:w-56 md:w-72"
       />
       {open && query.trim() && (
-        <div className="absolute right-0 top-9 z-30 w-96 overflow-hidden rounded-md border border-ink-700 bg-ink-900 shadow-xl">
+        <div className="absolute right-0 top-9 z-30 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-ink-700 bg-ink-900 shadow-xl">
           {!loaded && (
             <div className="p-3 text-[11px] text-ink-400">Loading index…</div>
           )}
