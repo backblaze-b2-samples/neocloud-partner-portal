@@ -48,3 +48,12 @@ export function requireCsrf(req, res, next) {
   }
   next();
 }
+
+// Partner staff (admin/manager/user/support — accountId is null) may access
+// any sub-account. Customer roles are locked to their own assigned accountId.
+// Use from any route that takes accountId as a request param.
+export function canAccessAccount(user, accountId) {
+  if (!user) return false;
+  if (!user.accountId) return true;
+  return user.accountId === accountId;
+}

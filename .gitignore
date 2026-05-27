@@ -14,6 +14,9 @@ coverage/
 !.env.example
 !.env.template
 
+# Per-developer deploy.sh overrides
+.deploy.env
+
 # Private keys and certificates
 *.pem
 *.key

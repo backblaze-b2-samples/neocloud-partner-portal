@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
-  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart } from '../components/charts.jsx';
 import { REGIONS } from '../data/regions.js';
@@ -28,17 +28,18 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
   const [loading, setLoading] = useState(true);
   const [bucket, setBucket] = useState(null);
   const [tab, setTab] = useState('overview');
+  const [error, setError] = useState(null);
   // Populated by FilesTab after its first listing call completes.
   const [liveStats, setLiveStats] = useState(null); // { objectCount, storageBytes, isLastPage }
 
-  useEffect(() => {
-    // Fetch bucket metadata, first-page file stats, and DB object count in parallel.
+  const load = () => {
+    setError(null);
+    setLoading(true);
     Promise.all([
       b2.getBucket(bucketId, { accountId }),
       b2.listFileVersions({ bucketId, accountId, maxFileCount: 1000 }),
       b2.getObjectCounts(),
     ]).then(([b, fileResp, objectCounts]) => {
-      // Merge the DB-cached object count + bytes into the bucket so FilesTab can display them.
       const oc = objectCounts.get(bucketId);
       setBucket(b ? {
         ...b,
@@ -54,9 +55,12 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
         });
       }
       setLoading(false);
-    });
-  }, [bucketId]);
+    }).catch((e) => { setError(e?.message || String(e)); setLoading(false); });
+  };
 
+  useEffect(load, [bucketId]);
+
+  if (error) return <ErrorState title="Could not load bucket" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Loading bucket detail" />;
   if (!bucket) return <EmptyState title="Bucket not found" message={`No bucket with id ${bucketId}`} />;
 

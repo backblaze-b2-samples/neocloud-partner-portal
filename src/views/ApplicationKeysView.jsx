@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
-  Table, THead, TBody, TR, TH, TD, LoadingState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import { deriveKeyCoverage, coverageToAvailability, coverageStatusBadge, getKeyActivityLabel } from '../api/accessLogCoverage.js';
@@ -38,8 +38,11 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
   const [lastUsed, setLastUsed] = useState(new Map());
   const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
   const [tab, setTab] = useState('all');
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
+    setLoading(true);
     Promise.all([
       b2.listApplicationKeys({ customerId: lockedCustomerId, accountId: lockedAccountId }),
       b2.getKeyLastUsed(),
@@ -52,9 +55,13 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
           buckets.map((bk) => [bk.bucketId, bk.accessLogging || { status: 'not_configured' }])
         ));
         setLoading(false);
-      });
-  }, [lockedCustomerId, lockedAccountId]);
+      })
+      .catch((e) => { setError(e?.message || String(e)); setLoading(false); });
+  };
 
+  useEffect(load, [lockedCustomerId, lockedAccountId]);
+
+  if (error) return <ErrorState title="Could not load application keys" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Listing application keys via b2_list_keys" />;
 
   const counts = keys.reduce((acc, k) => { acc[k.posture] = (acc[k.posture] || 0) + 1; return acc; }, {});

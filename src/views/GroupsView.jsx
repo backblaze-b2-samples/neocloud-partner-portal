@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { FolderTree, Users, ChevronRight, Plus, ArrowLeft } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, HealthPill,
-  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { CreateCustomerDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
@@ -21,19 +21,22 @@ function GroupsList() {
   const [groups, setGroups] = useState([]);
   const [allCustomers, setAllCustomers] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
+    setLoading(true);
     Promise.all([partner.listGroups(), partner.getCustomers()])
       .then(([{ groups }, { customers }]) => {
         setGroups(groups);
         setAllCustomers(customers);
       })
-      .catch((err) => {
-        console.error('[GroupsView] Partner API fetch failed:', err);
-      })
+      .catch((err) => setError(err?.message || String(err)))
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(load, []);
 
+  if (error) return <ErrorState title="Could not load groups" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Listing groups via b2_list_groups" />;
 
   function rollupForGroup(g) {
@@ -131,19 +134,22 @@ function GroupDetail({ groupId }) {
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
+    setLoading(true);
     Promise.all([partner.getGroup(groupId), partner.getCustomers({ groupId })])
       .then(([g, { customers }]) => {
         setGroup(g);
         setMembers(customers);
       })
-      .catch((err) => {
-        console.error('[GroupDetail] Partner API fetch failed:', err);
-      })
+      .catch((err) => setError(err?.message || String(err)))
       .finally(() => setLoading(false));
-  }, [groupId]);
+  };
+  useEffect(load, [groupId]);
 
+  if (error) return <ErrorState title="Could not load group" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Loading group members" />;
   if (!group) {
     return (

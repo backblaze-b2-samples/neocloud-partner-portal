@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Database, Lock, ShieldCheck, Eye, EyeOff, Copy, GitBranch, Layers, Filter, Boxes, Clock, Trash2, ChevronLeft, ChevronRight, Info, Users } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, SourceBadge, Tag, MetricCard,
-  Table, THead, TBody, TR, TH, TD, LoadingState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
 import { DonutChart } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
@@ -26,6 +26,7 @@ export default function StorageView({ lockedAccountId } = {}) {
   const [filterEncryption, setFilterEncryption] = useState('all');
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
+  const [error, setError] = useState(null);
 
   // Load customer list once (for the account selector).
   useEffect(() => {
@@ -36,6 +37,7 @@ export default function StorageView({ lockedAccountId } = {}) {
   // Reload buckets whenever the selected account changes.
   const loadBuckets = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       let raw;
       if (!isLive) {
@@ -78,6 +80,8 @@ export default function StorageView({ lockedAccountId } = {}) {
 
       const sorted = [...withCounts].sort((a, b) => a.bucketName.localeCompare(b.bucketName));
       setBuckets(sorted);
+    } catch (e) {
+      setError(e?.message || String(e));
     } finally {
       setLoading(false);
     }
@@ -104,6 +108,7 @@ export default function StorageView({ lockedAccountId } = {}) {
   const pageStart = (currentPage - 1) * pageSize;
   const pageRows = filtered.slice(pageStart, pageStart + pageSize);
 
+  if (error) return <ErrorState title="Could not load buckets" message={error} onRetry={loadBuckets} />;
   if (loading) return <LoadingState label="Listing buckets via b2_list_buckets" />;
 
   const totalStorage = buckets.reduce((s, b) => s + (b.storageBytes || 0), 0);

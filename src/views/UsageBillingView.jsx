@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Receipt, Upload, Download, Database, Activity, Calculator, FileSpreadsheet, AlertTriangle } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tabs, Tag,
-  Table, THead, TBody, TR, TH, TD, LoadingState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart, StackedBarChart, Heatmap } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
@@ -28,12 +28,14 @@ export default function UsageBillingView() {
   const [parsed, setParsed] = useState([]);
   const [range, setRange] = useState('d30');
   const [resaleMultiplier, setResaleMultiplier] = useState(2.1);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
+    setLoading(true);
     Promise.all([
       b2.getDailyUsage({ days: 30 }),
       b2.getActivityHeatmap(),
-      // In live mode skip the bundled sample CSV — it's irrelevant to real data
       isLive ? Promise.resolve('') : loadSampleCsv(),
     ]).then(([{ usage: u, source, reportsBucketName }, { cells }, csv]) => {
       setUsage(u);
@@ -43,9 +45,12 @@ export default function UsageBillingView() {
       setCsvText(csv);
       setParsed(isLive ? [] : parseDailyUsageCsv(csv));
       setLoading(false);
-    });
-  }, [isLive]);
+    }).catch((e) => { setError(e?.message || String(e)); setLoading(false); });
+  };
 
+  useEffect(load, [isLive]);
+
+  if (error) return <ErrorState title="Could not load usage data" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Downloading and parsing daily usage CSV" />;
 
   // Only show the "not available" warning when the server explicitly failed to find

@@ -9,7 +9,7 @@ import { api, ApiError } from '../lib/apiClient.js';
 import { buildCustomerUsageCsv, downloadText } from '../api/csvParser.js';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, HealthPill, Tabs,
-  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart, StackedBarChart } from '../components/charts.jsx';
 import { CreateBucketDialog, EditCustomerDialog, TerminateMemberDialog } from '../components/dialogs.jsx';
@@ -44,6 +44,7 @@ export default function CustomerDetailView({ customerId }) {
   const [showTerminateDialog, setShowTerminateDialog] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState(null);
   const [, forceTick] = useState(0); // ticks relativeTime display every 30s
 
   // Re-walk B2 for this customer's buckets (counts + bytes), then re-read all
@@ -64,6 +65,7 @@ export default function CustomerDetailView({ customerId }) {
   };
 
   const refresh = () => {
+    setError(null);
     partner.getCustomer(customerId).then((c) => {
       // In live mode, pass accountId so the API uses the sub-account's own credentials.
       // In demo mode, customerId is used to filter mock data.
@@ -101,8 +103,8 @@ export default function CustomerDetailView({ customerId }) {
         setActivity(records);
         setLastRefreshAt(Date.now());
         setLoading(false);
-      });
-    });
+      }).catch((e) => { setError(e?.message || String(e)); setLoading(false); });
+    }).catch((e) => { setError(e?.message || String(e)); setLoading(false); });
   };
 
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [customerId]);
@@ -120,6 +122,7 @@ export default function CustomerDetailView({ customerId }) {
     }
   }, [customer, tab]);
 
+  if (error) return <ErrorState title="Could not load customer" message={error} onRetry={() => { setLoading(true); refresh(); }} />;
   if (loading) return <LoadingState label="Loading customer detail" />;
   if (!customer) {
     return (

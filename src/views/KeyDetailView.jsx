@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
-  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart, StackedBarChart } from '../components/charts.jsx';
 import { BUCKETS } from '../data/buckets.js';
@@ -35,8 +35,11 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
   const [k, setKey] = useState(null);
   const [lastUsedTs, setLastUsedTs] = useState(null);
   const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
+    setLoading(true);
     Promise.all([
       b2.listApplicationKeys({ customerId, accountId }),
       b2.getKeyLastUsed(),
@@ -49,9 +52,12 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
         buckets.map((bk) => [bk.bucketId, bk.accessLogging || { status: 'not_configured' }])
       ));
       setLoading(false);
-    });
-  }, [keyId, customerId, accountId]);
+    }).catch((e) => { setError(e?.message || String(e)); setLoading(false); });
+  };
 
+  useEffect(load, [keyId, customerId, accountId]);
+
+  if (error) return <ErrorState title="Could not load key" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Loading application key" />;
   if (!k) {
     return (

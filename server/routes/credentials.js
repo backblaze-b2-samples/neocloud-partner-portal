@@ -14,6 +14,7 @@
 
 import express from 'express';
 import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
+import { credentialKeyLimiter } from '../rateLimit.js';
 import { audit } from '../audit.js';
 import {
   upsertCredential,
@@ -98,6 +99,12 @@ router.get('/:accountId', (req, res) => {
 // caller's responsibility not to log or forward the value carelessly.
 // ---------------------------------------------------------------------------
 router.get('/:accountId/key', (req, res) => {
+  const limit = credentialKeyLimiter(req);
+  if (!limit.ok) {
+    res.set('Retry-After', String(Math.ceil(limit.retryAfterMs / 1000)));
+    return res.status(429).json({ error: 'Too many key reveals — try again shortly.' });
+  }
+
   const row = getCredential(req.params.accountId);
   if (!row) return res.status(404).json({ error: 'Not found' });
 
@@ -105,7 +112,7 @@ router.get('/:accountId/key', (req, res) => {
   try {
     applicationKey = getDecryptedApplicationKey(req.params.accountId);
   } catch (err) {
-    console.error('[credentials] decrypt failed:', err.message);
+    console.error('[credentials] decrypt failed for', req.params.accountId);
     return res.status(500).json({ error: 'Decryption failed — CREDENTIAL_ENCRYPTION_KEY may have changed.' });
   }
 

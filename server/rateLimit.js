@@ -27,6 +27,15 @@ export function rateLimit({ key, limit, windowMs }) {
   return { ok: true };
 }
 
+// Throttle reads of a sub-account's decrypted B2 application key.
+// Even admins shouldn't be hammering this endpoint — surface anomalies fast.
+// 20 reveals per admin user per 15 minutes is generous for normal ops.
+export function credentialKeyLimiter(req) {
+  const uid = req.session?.user?.id || 'anon';
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  return rateLimit({ key: `credkey:${uid}:${ip}`, limit: 20, windowMs: 15 * 60 * 1000 });
+}
+
 export function loginLimiter(req) {
   const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   const emailBucket = String(req.body?.email || '').toLowerCase().trim().slice(0, 64);
