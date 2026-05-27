@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Users, ChevronRight, Plus, Info, UserMinus } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, SourceBadge, HealthPill, Tabs, Tag,
-  Table, THead, TBody, TR, TH, TD, LoadingState, MetricCard, EmptyState,
+  Table, THead, TBody, TR, TH, TD, LoadingState, MetricCard, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { CreateCustomerDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
@@ -32,17 +32,18 @@ export default function PartnerView() {
   const [customers, setCustomers] = useState([]);
   const [tab, setTab] = useState('all');
   const [showCreate, setShowCreate] = useState(false);
+  const [error, setError] = useState(null);
 
-  const refresh = () => partner.getCustomers()
-    .then(({ customers }) => {
-      setCustomers(customers);
-    })
-    .catch((err) => {
-      console.error('[PartnerView] getCustomers failed:', err);
-    })
-    .finally(() => setLoading(false));
+  const refresh = () => {
+    setError(null);
+    return partner.getCustomers()
+      .then(({ customers }) => setCustomers(customers))
+      .catch((err) => setError(err?.message || String(err)))
+      .finally(() => setLoading(false));
+  };
   useEffect(() => { refresh(); }, []);
 
+  if (error) return <ErrorState title="Could not load customers" message={error} onRetry={() => { setLoading(true); refresh(); }} />;
   if (loading) return <LoadingState label="Listing group members via Partner API v3" />;
 
   const activeCustomers = customers.filter(isActive);

@@ -18,8 +18,21 @@
 
 import express from 'express';
 import { createHmac, createHash } from 'crypto';
-import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
+import { requireAuth, requireNotDemo, requireCsrf, canAccessAccount } from '../middleware/requireAuth.js';
 import { getCredential, getDecryptedApplicationKey } from '../credentials.js';
+import { REGIONS } from '../../src/data/regions.js';
+
+// B2 bucket name rules: 6–63 chars, lowercase a-z, 0-9, hyphen, no leading/trailing
+// hyphen, no consecutive hyphens (the spec also forbids names starting with "b2-",
+// but those are valid Backblaze system buckets and may legitimately appear here).
+const BUCKET_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{4,61}[a-z0-9])$/;
+const ALLOWED_REGIONS = new Set(REGIONS.map((r) => r.id));
+
+function rejectInvalidAccountAccess(req, res) {
+  if (canAccessAccount(req.session.user, req.params.accountId)) return null;
+  res.status(403).json({ error: 'Forbidden — accountId does not belong to this user' });
+  return true;
+}
 
 // =============================================================================
 // Minimal AWS SigV4 signer — used for B2 S3-compatible API calls.
@@ -145,7 +158,8 @@ async function getSubAccountAuth(accountId) {
   return entry;
 }
 
-router.post('/:accountId/:endpoint', requireAuth, async (req, res) => {
+router.post('/:accountId/:endpoint', requireCsrf, async (req, res) => {
+  if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId, endpoint } = req.params;
 
   if (!ALLOWED_ENDPOINTS.has(endpoint)) {
@@ -217,12 +231,16 @@ router.post('/:accountId/:endpoint', requireAuth, async (req, res) => {
 //   POST { bucketName, bucketRegion, enabled, targetBucket, targetPrefix }  → { ok }
 // =============================================================================
 
-router.get('/:accountId/s3_logging', requireAuth, async (req, res) => {
+router.get('/:accountId/s3_logging', async (req, res) => {
+  if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId } = req.params;
   const { bucketName, bucketRegion } = req.query;
 
-  if (!bucketName || !bucketRegion) {
-    return res.status(400).json({ error: 'bucketName and bucketRegion query params required' });
+  if (!BUCKET_NAME_RE.test(String(bucketName || ''))) {
+    return res.status(400).json({ error: 'bucketName missing or malformed' });
+  }
+  if (!ALLOWED_REGIONS.has(String(bucketRegion))) {
+    return res.status(400).json({ error: `bucketRegion must be one of: ${[...ALLOWED_REGIONS].join(', ')}` });
   }
 
   let keyId, secret;
@@ -256,15 +274,19 @@ router.get('/:accountId/s3_logging', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/:accountId/s3_logging', requireAuth, async (req, res) => {
+router.post('/:accountId/s3_logging', requireCsrf, async (req, res) => {
+  if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId } = req.params;
   const { bucketName, bucketRegion, enabled, targetBucket, targetPrefix = '' } = req.body;
 
-  if (!bucketName || !bucketRegion) {
-    return res.status(400).json({ error: 'bucketName and bucketRegion required' });
+  if (!BUCKET_NAME_RE.test(String(bucketName || ''))) {
+    return res.status(400).json({ error: 'bucketName missing or malformed' });
   }
-  if (enabled && !targetBucket) {
-    return res.status(400).json({ error: 'targetBucket required when enabling logging' });
+  if (!ALLOWED_REGIONS.has(String(bucketRegion))) {
+    return res.status(400).json({ error: `bucketRegion must be one of: ${[...ALLOWED_REGIONS].join(', ')}` });
+  }
+  if (enabled && !BUCKET_NAME_RE.test(String(targetBucket || ''))) {
+    return res.status(400).json({ error: 'targetBucket required (and must be a valid B2 bucket name) when enabling logging' });
   }
 
   let keyId, secret;

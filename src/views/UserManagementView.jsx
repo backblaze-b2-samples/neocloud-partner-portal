@@ -178,7 +178,7 @@ function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId,
               {users.map((u) => {
                 const isMe = u.id === me?.id;
                 const busy = busyId === u.id;
-                const protected_ = ['klott@backblaze.com', 'demo@backblaze.com'].includes(u.email);
+                const protected_ = !!u.protected;
                 return (
                   <tr key={u.id} className="border-t border-ink-800 text-ink-200">
                     <Td>

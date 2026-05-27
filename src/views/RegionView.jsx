@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Globe, Server, Activity, Boxes, AlertTriangle, Users } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag,
-  LoadingState, EmptyState,
+  LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart, StackedBarChart, DonutChart } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
@@ -19,8 +19,11 @@ export default function RegionView() {
   const [regionUsage, setRegionUsage] = useState([]);
   const [regionSource, setRegionSource] = useState('');
   const [usage, setUsage] = useState([]);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
+    setLoading(true);
     const fetches = [
       b2.getRegionUsage(),
       b2.getDailyUsage({ days: 30 }),
@@ -139,9 +142,12 @@ export default function RegionView() {
       setRegionSource(finalSource);
       setUsage(u);
       setLoading(false);
-    });
-  }, [isLive]);
+    }).catch((e) => { setError(e?.message || String(e)); setLoading(false); });
+  };
 
+  useEffect(load, [isLive]);
+
+  if (error) return <ErrorState title="Could not load region data" message={error} onRetry={load} />;
   if (loading) return <LoadingState label="Computing region rollups" />;
 
   const hasStorageData = regionUsage.some((r) => r.storageBytes != null);

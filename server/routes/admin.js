@@ -20,9 +20,11 @@ import {
 const router = express.Router();
 
 // Accounts that cannot be modified, force-reset, or deactivated by anyone.
+// Configure via PROTECTED_ACCOUNT_EMAIL=foo@x.com,bar@y.com in .env.
+// Empty / unset means no accounts are protected.
 const PROTECTED_EMAILS = new Set(
-  (process.env.PROTECTED_ACCOUNT_EMAIL || 'klott@backblaze.com,demo@backblaze.com')
-    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+  (process.env.PROTECTED_ACCOUNT_EMAIL || '')
+    .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)
 );
 function isProtected(userRow) {
   return PROTECTED_EMAILS.has((userRow?.email || '').toLowerCase());
@@ -32,7 +34,10 @@ router.use(requireAuth, requireRole('admin'), requireCsrf);
 
 // List users (admin only). Returns email but never password_hash.
 router.get('/users', (_req, res) => {
-  res.json({ users: listUsers() });
+  // Enrich each row with a `protected` flag so the UI doesn't need to
+  // duplicate the PROTECTED_EMAILS list.
+  const users = listUsers().map((u) => ({ ...u, protected: isProtected(u) }));
+  res.json({ users });
 });
 
 router.post('/users', async (req, res) => {

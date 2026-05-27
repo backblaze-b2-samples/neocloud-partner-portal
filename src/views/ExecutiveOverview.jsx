@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import {
   PageHeader, MetricCard, Card, CardHeader, SourceBadge, HealthPill,
-  Tag, Table, THead, TBody, TR, TH, TD, LoadingState,
+  Tag, Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart, DonutChart, Sparkline, CHART_COLORS } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
@@ -29,22 +29,29 @@ export default function ExecutiveOverview() {
   const [groupId, setGroupId] = useState('all');
   const [lastSyncAt, setLastSyncAt] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState(null);
   const [, forceTick] = useState(0);
 
-  const loadAll = () => Promise.all([
-    partner.getCustomers(),
-    partner.listGroups(),
-    b2.listBuckets(),
-    b2.getDailyUsage({ days: 30 }),
-    b2.getRegionUsage(),
-    b2.getObjectSyncStatus(),
-  ]).then(([{ customers }, { groups }, { buckets }, { usage, source, reportsBucketName }, { regions }, { jobRanAt }]) => {
-    setData({ allCustomers: customers, groups, buckets, usage, regions });
-    setUsageSource(source);
-    if (reportsBucketName) setReportsBucket(reportsBucketName);
-    setLastSyncAt(jobRanAt);
-    setLoading(false);
-  });
+  const loadAll = () => {
+    setError(null);
+    return Promise.all([
+      partner.getCustomers(),
+      partner.listGroups(),
+      b2.listBuckets(),
+      b2.getDailyUsage({ days: 30 }),
+      b2.getRegionUsage(),
+      b2.getObjectSyncStatus(),
+    ]).then(([{ customers }, { groups }, { buckets }, { usage, source, reportsBucketName }, { regions }, { jobRanAt }]) => {
+      setData({ allCustomers: customers, groups, buckets, usage, regions });
+      setUsageSource(source);
+      if (reportsBucketName) setReportsBucket(reportsBucketName);
+      setLastSyncAt(jobRanAt);
+      setLoading(false);
+    }).catch((e) => {
+      setError(e?.message || String(e));
+      setLoading(false);
+    });
+  };
 
   useEffect(() => { loadAll(); }, []);
 
@@ -94,6 +101,7 @@ export default function ExecutiveOverview() {
     return { customers: filteredCustomers, buckets: filteredBuckets, totals };
   }, [data, groupId]);
 
+  if (error) return <ErrorState title="Could not load overview" message={error} onRetry={() => { setLoading(true); loadAll(); }} />;
   if (loading || !data) return <LoadingState label="Pulling latest metrics" />;
   const { customers, buckets, totals } = view;
   const { groups, usage, regions } = data;

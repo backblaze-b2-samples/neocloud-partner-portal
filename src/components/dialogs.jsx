@@ -102,9 +102,9 @@ export function CreateCustomerDialog({ open, onClose, onCreated, defaultGroupId 
         />
       ) : (
         <form onSubmit={submit} className="space-y-4">
-          <Field label="Customer name" placeholder="Lumora AI" value={form.name} onChange={(v) => setForm({ ...form, name: v })} required />
-          <Field label="Contact email" type="email" placeholder="platform@lumora.ai" value={form.contactEmail} onChange={(v) => setForm({ ...form, contactEmail: v })} required />
-          <Field label="Industry" placeholder="GPU Cloud / AI Inference" value={form.industry} onChange={(v) => setForm({ ...form, industry: v })} />
+          <Field label="Customer name" placeholder="Acme Corp" value={form.name} onChange={(v) => setForm({ ...form, name: v })} required />
+          <Field label="Contact email" type="email" placeholder="contact@example.com" value={form.contactEmail} onChange={(v) => setForm({ ...form, contactEmail: v })} required />
+          <Field label="Industry" placeholder="e.g. AI / Media / Backup" value={form.industry} onChange={(v) => setForm({ ...form, industry: v })} />
           <Select
             label={liveGroups === null ? 'Group (loading…)' : `Group${isLive ? ' · live' : ''}`}
             value={form.groupId}

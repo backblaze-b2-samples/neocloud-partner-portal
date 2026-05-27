@@ -247,13 +247,26 @@ function normalizeApiKey(k) {
 }
 
 // ===== Customer proxy helper ================================================
+// Read the double-submit CSRF token that the server sets as a non-HttpOnly
+// cookie when a session is created. Required on every state-changing request.
+function readCsrfCookie() {
+  if (typeof document === 'undefined') return '';
+  const m = document.cookie.match(/(?:^|;\s*)csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 // In live mode, calls to list a sub-account's resources must use that
 // sub-account's own credentials. Route them through the server-side proxy
 // at /api/customer-b2/:accountId/:endpoint which handles credential lookup.
 async function callAsCustomer(accountId, endpoint, body = {}) {
+  const csrf = readCsrfCookie();
   const res = await fetch(`/api/customer-b2/${accountId}/${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+    },
+    credentials: 'include',
     body: JSON.stringify(body),
   });
   if (res.status === 404) {
@@ -667,10 +680,14 @@ export async function setBucketLogging({ bucketId, bucketName, bucketRegion, acc
     throw new Error('bucketName, bucketRegion, and accountId are required for live setBucketLogging');
   }
 
+  const csrf = readCsrfCookie();
   const res = await fetch(`/api/customer-b2/${accountId}/s3_logging`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+    },
     body: JSON.stringify({ bucketName, bucketRegion, enabled, targetBucket, targetPrefix }),
   });
   if (!res.ok) {
