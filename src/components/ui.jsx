@@ -102,6 +102,8 @@ export function MetricCard({
   icon,
   accent = 'red',
   children,        // optional sparkline / chart
+  onClick,         // optional — when set, the whole card becomes clickable
+  title,           // tooltip on the wrapper
 }) {
   const accentRing = {
     red: 'ring-bb-red/30',
@@ -119,8 +121,20 @@ export function MetricCard({
   }[accent];
   const positive = delta != null && delta >= 0;
 
+  const clickable = typeof onClick === 'function';
   return (
-    <Card className="relative overflow-hidden" padding="p-5">
+    <Card
+      className={cx(
+        'relative overflow-hidden',
+        clickable && 'cursor-pointer transition hover:border-ink-600 hover:bg-ink-850/60 focus-within:ring-2 focus-within:ring-bb-red/40'
+      )}
+      padding="p-5"
+      onClick={clickable ? onClick : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      title={title}
+    >
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           {icon && (
