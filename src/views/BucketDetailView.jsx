@@ -345,7 +345,8 @@ function FilesTab({ bucket, accountId, onStats }) {
   }, [files, sortMode, indexed]);
 
   const sortIsClientSide = !indexed && sortMode !== 'name-asc';
-  const totalBytes = files.reduce((s, f) => s + (f.contentLength || 0), 0);
+  // Indexed rows come from file_index.size; live API rows come from b2_list_file_names.contentLength.
+  const totalBytes = files.reduce((s, f) => s + (f.size ?? f.contentLength ?? 0), 0);
 
   // Folder grouping (top-level prefixes from the loaded page)
   const folders = useMemo(() => {
@@ -465,7 +466,7 @@ function FilesTab({ bucket, accountId, onStats }) {
 
         <div className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
           <MiniStat label="Files in page" value={files.length} />
-          <MiniStat label="Bytes in page" value={indexed ? '—' : bytes(totalBytes)} />
+          <MiniStat label="Bytes in page" value={bytes(totalBytes)} />
           <MiniStat label="Bucket total objects" value={compactNumber(indexed ? totalFiles : bucket.objectCount)} />
           {indexed
             ? <MiniStat label={`Page ${indexPage}`} value={totalIndexPages ? `of ${totalIndexPages}` : '…'} />
