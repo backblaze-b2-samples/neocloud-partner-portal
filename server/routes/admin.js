@@ -40,6 +40,15 @@ router.get('/users', (_req, res) => {
   res.json({ users });
 });
 
+// Get one user by id — used by the user-detail view in the UI.
+router.get('/users/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+  const u = findById(id);
+  if (!u) return res.status(404).json({ error: 'Not found' });
+  res.json({ user: { ...publicUser(u), protected: isProtected(u) } });
+});
+
 router.post('/users', async (req, res) => {
   const { email, password, role, accountId } = req.body || {};
   if (!isValidEmail(email)) return res.status(400).json({ error: 'Invalid email' });
@@ -143,8 +152,46 @@ router.delete('/users/:id', (req, res) => {
   res.json({ user: publicUser(findById(id)) });
 });
 
-router.get('/audit', (_req, res) => {
-  res.json({ entries: listAudit({ limit: 200 }) });
+router.get('/audit', (req, res) => {
+  const { limit, offset, action, actorId, targetUserId, involvingUserId, fromDate, toDate } = req.query;
+  const result = listAudit({
+    limit:           limit    ? Number(limit)  : 100,
+    offset:          offset   ? Number(offset) : 0,
+    action:          action   ? String(action) : undefined,
+    actorId:         actorId  ? Number(actorId) : undefined,
+    targetUserId:    targetUserId    ? Number(targetUserId)    : undefined,
+    involvingUserId: involvingUserId ? Number(involvingUserId) : undefined,
+    fromDate:        fromDate ? String(fromDate) : undefined,
+    toDate:          toDate   ? String(toDate)   : undefined,
+  });
+  res.json(result);
+});
+
+// CSV export — same filters as the list endpoint, but returns text/csv and
+// is hard-capped at 50k rows so a runaway export can't tie up the box.
+router.get('/audit.csv', (req, res) => {
+  const { action, actorId, fromDate, toDate } = req.query;
+  const { entries } = listAudit({
+    limit: 50_000, offset: 0,
+    action:   action   ? String(action)   : undefined,
+    actorId:  actorId  ? Number(actorId)  : undefined,
+    fromDate: fromDate ? String(fromDate) : undefined,
+    toDate:   toDate   ? String(toDate)   : undefined,
+  });
+
+  const esc = (v) => {
+    if (v == null) return '';
+    const s = String(v);
+    return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const header = 'id,created_at,actor_id,action,target_user_id,ip,details\n';
+  const rows = entries.map((r) =>
+    [r.id, r.created_at, r.actor_id ?? '', r.action, r.target_user_id ?? '', r.ip ?? '', r.details ?? ''].map(esc).join(',')
+  ).join('\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="audit-${new Date().toISOString().slice(0,10)}.csv"`);
+  res.send(header + rows + '\n');
 });
 
 router.get('/roles', (_req, res) => res.json({ roles: ROLES }));

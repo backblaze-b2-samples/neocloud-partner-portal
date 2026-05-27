@@ -24,6 +24,7 @@ import masterB2Router from './routes/masterB2.js';
 import customerAdminRouter from './routes/customerAdmin.js';
 import { seedDefaultAdmin, seedDemoUsers } from './seed.js';
 import { scheduleObjectCountJob } from './jobs/objectCountJob.js';
+import { pruneAudit } from './audit.js';
 
 const PORT = Number(process.env.PORT || 3001);
 const app = express();
@@ -80,5 +81,23 @@ app.use((err, req, res, _next) => {
     console.log(`[server] listening on :${PORT} (env=${process.env.NODE_ENV || 'development'})`);
     // Start background jobs after the server is accepting connections.
     scheduleObjectCountJob();
+
+    // Audit retention — prune entries older than AUDIT_RETENTION_DAYS once
+    // per day. Default 365 days (lines up with typical SOC2 / NIST windows).
+    // Set to 0 to disable pruning entirely.
+    const retention = Number(process.env.AUDIT_RETENTION_DAYS ?? 365);
+    if (retention > 0) {
+      const prune = () => {
+        try {
+          const removed = pruneAudit(retention);
+          if (removed > 0) console.log(`[audit] pruned ${removed} entries older than ${retention} days`);
+        } catch (e) {
+          console.error('[audit] prune failed:', e.message);
+        }
+      };
+      // First run 1 min after boot (so we see it in logs), then every 24h.
+      setTimeout(prune, 60_000);
+      setInterval(prune, 24 * 60 * 60 * 1000);
+    }
   });
 })();

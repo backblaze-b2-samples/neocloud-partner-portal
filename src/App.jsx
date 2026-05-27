@@ -26,6 +26,8 @@ const ResellerPlans = lazy(() => import('./views/ResellerPlansView.jsx'));
 const Login = lazy(() => import('./views/LoginView.jsx'));
 const Account = lazy(() => import('./views/AccountView.jsx'));
 const UserManagement = lazy(() => import('./views/UserManagementView.jsx'));
+const UserDetail = lazy(() => import('./views/UserDetailView.jsx'));
+const AuditLog = lazy(() => import('./views/AuditLogView.jsx'));
 const CustomerUsers = lazy(() => import('./views/CustomerUsersView.jsx'));
 
 const VIEWS = {
@@ -44,11 +46,13 @@ const VIEWS = {
   plans: ResellerPlans,
   account: Account,
   users: UserManagement,
+  'user-detail': UserDetail,
+  audit: AuditLog,
   'customer-users': CustomerUsers,
 };
 
 // Routes only an admin may navigate to.
-const ADMIN_ONLY = new Set(['users']);
+const ADMIN_ONLY = new Set(['users', 'user-detail', 'audit']);
 
 function CustomerShell() {
   const { config, user, isCustomerAdmin, customerAccountId, authReady, isAuthenticated } = useApp();
