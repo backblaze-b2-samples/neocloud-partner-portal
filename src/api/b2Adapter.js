@@ -16,7 +16,7 @@
 // IMPORTANT NOTES:
 //   - b2_list_buckets returns metadata only — no storage bytes / object counts.
 //   - There is no `b2_get_usage` endpoint. Aggregated usage (storage, egress,
-//     Class A/B/C transactions) comes from the Daily Usage CSV report
+//     Class A/B/C/D transactions) comes from the Daily Usage CSV report
 //     (see ./csvParser.js).
 //   - Storage tiers do not exist on B2 — there is one hot class only.
 //   - Lifecycle rules on B2 only hide and delete files. No transitions.
@@ -291,8 +291,26 @@ export async function getBucket(bucketId, { accountId } = {}) {
   }
   if (accountId) {
     const data = await callAsCustomer(accountId, 'b2_list_buckets', { bucketId });
-    if (data === null) return null;
-    return data.buckets?.[0] ? normalizeBucket(data.buckets[0]) : null;
+    if (data !== null) {
+      return data.buckets?.[0] ? normalizeBucket(data.buckets[0]) : null;
+    }
+    // Credentials not stored for this sub-account. Return a minimal stub so
+    // BucketDetailView can render a degraded view rather than "Bucket not found".
+    return {
+      bucketId,
+      bucketName: bucketId,
+      accountId,
+      _noCredentials: true,
+      lifecycleRules: [],
+      fileLock: 'none',
+      fileLockConfiguration: { isFileLockEnabled: false, defaultRetention: null },
+      versioning: null,
+      encryption: null,
+      publicAccess: null,
+      storageBytes: null,
+      objectCount: null,
+      lastModified: null,
+    };
   }
   const { buckets } = await callB2('b2_list_buckets', { bucketId });
   return buckets?.[0] ? normalizeBucket(buckets[0]) : null;
@@ -534,6 +552,11 @@ export async function getBucketActivity({ accountId, bucketName, bucketId } = {}
 // retained log window).
 export async function getKeyLastUsed() {
   await wait(150);
+  if (!useMocks()) {
+    // Real per-key last-used requires mining access logs — not yet implemented.
+    // Return empty map so the UI shows "—" rather than fake timestamps.
+    return { lastUsed: new Map() };
+  }
   const { parseAccessLog } = await import('./accessLogParser.js');
   const text = await loadSampleAccessLog();
   const records = parseAccessLog(text);
@@ -589,10 +612,13 @@ export async function getBucketLogging({ bucketId, bucketName, bucketRegion, acc
   await wait(140);
   if (useMocks()) {
     const b = BUCKETS.find((x) => x.bucketId === bucketId);
+    const al = b?.accessLogging || { status: 'not_configured' };
     return {
-      enabled:      !!b?.accessLogging?.enabled,
-      targetBucket: b?.accessLogging?.targetBucketName || null,
-      targetPrefix: b?.accessLogging?.targetPrefix || '',
+      ...al,
+      // backward-compat fields for existing consumers
+      enabled:      al.status === 'enabled',
+      targetBucket: al.destinationBucket || null,
+      targetPrefix: al.destinationPrefix || '',
     };
   }
 
@@ -701,9 +727,8 @@ async function fetchUsageFromReportsBucket({ days = 30 } = {}) {
     throw new Error(`reports-csv server error ${res.status}: ${body.error || res.statusText}`);
   }
 
-  const { rows: allRows, bucketName, filesScanned } = await res.json();
+  const { rows: allRows, bucketName } = await res.json();
   _reportsBucketName = bucketName || null; // cache for UI display
-  console.log(`[b2Adapter] server fetched ${allRows.length} rows from "${bucketName}" (${filesScanned} CSV file(s) scanned)`);
 
   // Normalize reporting_location aliases (e.g. 'us-west-004' → 'us-west-002')
   // so downstream aggregation and UI region lookups work correctly.
@@ -816,7 +841,7 @@ export async function getBucketsFromCsv({ accountId } = {}) {
 // storage / egress / transaction metrics without relying on b2Stats from the
 // Partner API (which often returns 0 or is absent for sub-accounts).
 //
-// Returns a Map<accountId, { storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d }>
+// Returns a Map<accountId, { storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d }>
 // In demo mode returns an empty Map (demo customers already have values baked in).
 export async function getCustomerUsageFromCsv() {
   if (useMocks()) return new Map();
@@ -842,6 +867,7 @@ export async function getCustomerUsageFromCsv() {
         txnA30d: 0,
         txnB30d: 0,
         txnC30d: 0,
+        txnD30d: 0,
       };
       // Each row is one bucket — sum across all buckets for the same account
       // to get the account total (there is no pre-aggregated row in the CSV).
@@ -852,6 +878,7 @@ export async function getCustomerUsageFromCsv() {
       cur.txnA30d += r.classATxn || 0;
       cur.txnB30d += r.classBTxn || 0;
       cur.txnC30d += r.classCTxn || 0;
+      cur.txnD30d += r.classDTxn || 0;
       byAccount.set(r.accountId, cur);
     }
     return byAccount;
@@ -1033,9 +1060,15 @@ export async function getObjectCounts() {
       return new Map();
     }
     const { counts } = await res.json();
-    // Map<bucketId, { count, countedAt }>. Callers reading .count keep working;
-    // new callers can also read .countedAt for staleness display.
-    const map = new Map((counts || []).map((c) => [c.bucketId, { count: c.objectCount, countedAt: c.countedAt }]));
+    // Map<bucketId, { accountId, count, totalBytes, countedAt }>
+    const map = new Map(
+      (counts || []).map((c) => [c.bucketId, {
+        accountId:  c.accountId,
+        count:      c.objectCount,
+        totalBytes: c.totalBytes || 0,
+        countedAt:  c.countedAt,
+      }])
+    );
     _objectCountsCache    = map;
     _objectCountsCacheExp = Date.now() + OBJECT_COUNTS_TTL;
     return map;
@@ -1045,23 +1078,43 @@ export async function getObjectCounts() {
   }
 }
 
-// Trigger a server-side re-count of a single sub-account's buckets. Returns
-// when the job finishes (can take seconds for accounts with many large
-// buckets). Invalidates the local cache so the next getObjectCounts() reads
-// fresh data from the DB.
-export async function refreshObjectCounts(accountId) {
-  if (useMocks()) return { ok: true, bucketsProcessed: 0, elapsedMs: 0 };
-  const res = await fetch(`/api/master-b2/object-counts/refresh/${encodeURIComponent(accountId)}`, {
-    method: 'POST',
-    credentials: 'include',
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || body.error || `refresh failed: ${res.status}`);
-  }
+// Force a server-side re-walk of one account's buckets. Returns when complete,
+// then invalidates the local object-counts cache so the next read pulls fresh.
+export async function syncAccount(accountId) {
+  if (useMocks()) return { ok: true };
+  const { api } = await import('../lib/apiClient.js');
+  const res = await api.post(`/api/master-b2/sync-account/${accountId}`);
   _objectCountsCache    = null;
   _objectCountsCacheExp = 0;
-  return res.json();
+  return res;
+}
+
+// Alias kept for compatibility with earlier remote API surface.
+export const refreshObjectCounts = syncAccount;
+
+// Force a server-side re-walk of every sub-account's buckets. Used by the
+// dashboard "Sync" button. Resolves when the full job completes.
+export async function syncAllAccounts() {
+  if (useMocks()) return { ok: true };
+  const { api } = await import('../lib/apiClient.js');
+  const res = await api.post('/api/master-b2/sync-all');
+  _objectCountsCache    = null;
+  _objectCountsCacheExp = 0;
+  return res;
+}
+
+// Returns metadata about the last object-count job run: { jobRanAt }
+// Used by the dashboard to show "Last synced X ago" with a real timestamp.
+export async function getObjectSyncStatus() {
+  if (useMocks()) return { jobRanAt: null };
+  try {
+    const res = await fetch('/api/master-b2/object-counts', { credentials: 'include' });
+    if (!res.ok) return { jobRanAt: null };
+    const data = await res.json();
+    return { jobRanAt: data.jobRanAt || null };
+  } catch {
+    return { jobRanAt: null };
+  }
 }
 
 // ===== File index (background-job cache) =====================================

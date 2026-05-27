@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, Database, Globe, Receipt,
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
-  LogOut, ShieldCheck, UserCog,
+  LogOut, ShieldCheck, UserCog, BadgeDollarSign,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -18,6 +18,7 @@ const ALL_NAV = [
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
   { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requireRole: 'admin' },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
+  { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
   { id: 'account',   label: 'My account',           icon: UserCog,          group: 'System' },
   { id: 'settings',  label: 'Settings & credentials', icon: SettingsIcon,  group: 'System' },
 ];
@@ -26,10 +27,14 @@ const ALL_NAV = [
 // disabled) so they don't appear in the rendered HTML for non-admins.
 function navFor(user) {
   if (!user) return [];
-  return ALL_NAV.filter((n) => {
+  let items = ALL_NAV.filter((n) => {
     if (!n.requireRole) return true;
     return n.requireRole === user.role;
   });
+  if (user.role === 'support') {
+    items = items.filter((n) => n.id !== 'users' && n.id !== 'settings');
+  }
+  return items;
 }
 
 export const NAV = ALL_NAV;
@@ -244,6 +249,104 @@ export function TopBar({ active, onOpenSettings }) {
           <span className={cx('h-1.5 w-1.5 rounded-full live-dot', isLive ? 'bg-accent-green' : 'bg-accent-violet')} />
           <span>{isLive ? (hasCreds ? 'Live · 4 regions' : 'Live · no creds') : 'Demo · 4 regions'}</span>
         </div>
+      </div>
+    </header>
+  );
+}
+
+// =============================================================================
+// Customer Portal Sidebar & TopBar
+// =============================================================================
+
+const CUSTOMER_NAV = [
+  { id: 'my-overview',     label: 'My overview', icon: LayoutDashboard, group: 'My account' },
+  { id: 'storage',         label: 'My storage',  icon: Database,        group: 'My account' },
+  { id: 'usage',           label: 'My usage',    icon: Receipt,         group: 'My account' },
+  { id: 'keys',            label: 'My keys',     icon: KeyRound,        group: 'My account' },
+  { id: 'customer-users',  label: 'My team',     icon: Users,           group: 'My account', adminOnly: true },
+  { id: 'account',         label: 'My account',  icon: UserCog,         group: 'System' },
+];
+
+export function CustomerSidebar({ active, onSelect, isCustomerAdmin }) {
+  const visualActive = ({
+    'bucket-detail': 'storage',
+    'key-detail':    'keys',
+  })[active] || active;
+
+  const visible = CUSTOMER_NAV.filter((n) => !n.adminOnly || isCustomerAdmin);
+  const groups = visible.reduce((acc, n) => {
+    if (!acc[n.group]) acc[n.group] = [];
+    acc[n.group].push(n);
+    return acc;
+  }, {});
+
+  return (
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 backdrop-blur-sm">
+      <div className="border-b border-ink-800 px-5 py-4">
+        <Logo />
+      </div>
+      <nav className="flex-1 overflow-y-auto px-3 py-4">
+        {Object.entries(groups).map(([group, items]) => (
+          <div key={group} className="mb-4">
+            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-ink-400">
+              {group}
+            </div>
+            <ul className="space-y-0.5">
+              {items.map((n) => {
+                const Icon = n.icon;
+                const isActive = visualActive === n.id;
+                return (
+                  <li key={n.id}>
+                    <button
+                      onClick={() => onSelect(n.id)}
+                      className={cx(
+                        'group flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                        isActive
+                          ? 'bg-bb-red/10 text-ink-100 ring-1 ring-inset ring-bb-red/30'
+                          : 'text-ink-300 hover:bg-ink-800 hover:text-ink-100'
+                      )}
+                    >
+                      <Icon size={16} className={isActive ? 'text-bb-red' : 'text-ink-400 group-hover:text-ink-200'} />
+                      <span className="truncate">{n.label}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+      <SidebarFooter />
+    </aside>
+  );
+}
+
+export function CustomerTopBar({ active }) {
+  const { logout } = useApp();
+  const current = CUSTOMER_NAV.find((n) => n.id === active);
+  const label = current?.label || 'My Portal';
+  return (
+    <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-ink-800 bg-ink-900/70 px-6 backdrop-blur">
+      <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center gap-1.5 text-ink-400">
+          <span>My Portal</span>
+          <ChevronDown size={12} />
+        </div>
+        <span className="text-ink-600">/</span>
+        <span className="font-medium text-ink-100">{label}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <button className="grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100">
+          <Bell size={14} />
+        </button>
+        <button
+          onClick={() => { logout(); }}
+          className="grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100"
+          title="Sign out"
+          aria-label="Sign out"
+        >
+          <LogOut size={14} />
+        </button>
       </div>
     </header>
   );

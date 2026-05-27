@@ -38,19 +38,20 @@ const INDEX_FILES       = true;
 // ---------------------------------------------------------------------------
 
 const stmtUpsertCount = db.prepare(`
-  INSERT INTO object_counts (bucket_id, account_id, bucket_name, object_count, counted_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO object_counts (bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(bucket_id) DO UPDATE SET
     account_id   = excluded.account_id,
     bucket_name  = excluded.bucket_name,
     object_count = excluded.object_count,
+    total_bytes  = excluded.total_bytes,
     counted_at   = excluded.counted_at,
     updated_at   = excluded.updated_at
 `);
 
-function upsertCount(bucketId, accountId, bucketName, objectCount) {
+function upsertCount(bucketId, accountId, bucketName, objectCount, totalBytes) {
   const now = new Date().toISOString();
-  stmtUpsertCount.run(bucketId, accountId, bucketName || bucketId, objectCount, now, now);
+  stmtUpsertCount.run(bucketId, accountId, bucketName || bucketId, objectCount, totalBytes || 0, now, now);
 }
 
 // file_index upsert — called inside a transaction per page to keep writes fast.
@@ -151,6 +152,7 @@ async function b2Post(auth, endpoint, body = {}, { injectAccountId = true } = {}
 // which is the right count for "how many objects are in this bucket".
 async function walkBucket(auth, bucketId) {
   let count        = 0;
+  let totalBytes   = 0;
   let nextFileName = undefined;
   const indexedAt  = new Date().toISOString(); // consistent timestamp for this run
 
@@ -161,6 +163,7 @@ async function walkBucket(auth, bucketId) {
     const page    = await b2Post(auth, 'b2_list_file_names', opts, { injectAccountId: false });
     const files   = page.files || [];
     count        += files.length;
+    for (const f of files) totalBytes += (f.contentLength || 0);
     nextFileName  = page.nextFileName || null;
 
     if (INDEX_FILES && files.length > 0) {
@@ -173,7 +176,7 @@ async function walkBucket(auth, bucketId) {
     stmtPruneStale.run(bucketId, indexedAt);
   }
 
-  return count;
+  return { count, totalBytes };
 }
 
 // ---------------------------------------------------------------------------
@@ -196,11 +199,12 @@ async function processAccount(storedCred) {
   let bucketsProcessed = 0;
   for (const bucket of buckets) {
     try {
-      const count = await walkBucket(auth, bucket.bucketId);
-      upsertCount(bucket.bucketId, accountId, bucket.bucketName, count);
+      const { count, totalBytes } = await walkBucket(auth, bucket.bucketId);
+      upsertCount(bucket.bucketId, accountId, bucket.bucketName, count, totalBytes);
       bucketsProcessed++;
       console.log(
-        `[objectCountJob] ${accountId}/${bucket.bucketName}: ${count.toLocaleString()} objects` +
+        `[objectCountJob] ${accountId}/${bucket.bucketName}: ${count.toLocaleString()} objects, ` +
+        `${(totalBytes / 1e9).toFixed(2)} GB` +
         (INDEX_FILES ? ' (indexed)' : '')
       );
     } catch (e) {
@@ -209,6 +213,14 @@ async function processAccount(storedCred) {
   }
 
   return { accountId, bucketsProcessed };
+}
+
+// Exposed for the per-account refresh endpoint — runs the same per-account
+// walk synchronously so the caller can wait for fresh counts/bytes.
+export async function runForAccount(accountId) {
+  const cred = listCredentials().find((c) => c.account_id === accountId);
+  if (!cred) throw new Error(`No credentials stored for accountId ${accountId}`);
+  return processAccount(cred);
 }
 
 // ---------------------------------------------------------------------------

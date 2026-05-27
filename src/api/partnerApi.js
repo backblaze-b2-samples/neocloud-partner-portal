@@ -16,6 +16,7 @@ import { CUSTOMERS, aggregate } from '../data/customers.js';
 import { GROUPS } from '../data/groups.js';
 import { authorizeAccount, getCustomerUsageFromCsv } from './b2Adapter.js';
 import { api } from '../lib/apiClient.js';
+import { computeBilling, DEFAULT_PLAN_NAME, RESELLER_PLANS } from '../data/resellerPlans.js';
 
 const wait = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
@@ -117,9 +118,10 @@ export async function listGroupMembers({ groupId, maxMemberCount = 5000 } = {}) 
 // and are left null here — the UI's formatters already show '—' for null.
 function memberToCustomer(member, groupId) {
   const stats = member.b2Stats || {};
-  // API may use storageBytes or storedBytes — accept either
-  const storageBytes = stats.storageBytes ?? stats.storedBytes ?? 0;
-  const bucketCount = stats.bucketCount ?? 0;
+  // The real Partner API uses b2BytesStoredCount / b2FilesStoredCount / bucketCount.
+  // Earlier mock data used storageBytes / storedBytes. Accept all.
+  const storageBytes = stats.b2BytesStoredCount ?? stats.storageBytes ?? stats.storedBytes ?? 0;
+  const bucketCount  = stats.bucketCount ?? 0;
 
   // Derive a readable display name from the email local-part.
   // "platform@lumora.ai" → "Platform", "sre_team@co.com" → "Sre Team"
@@ -139,6 +141,7 @@ function memberToCustomer(member, groupId) {
   function inferRegion(email = '') {
     const local = email.split('@')[0].toLowerCase();
     if (local.endsWith('-eu'))   return 'eu-central-003';
+    if (local.endsWith('-ca'))   return 'ca-east-006';
     if (local.endsWith('-east')) return 'us-east-005';
     if (local.endsWith('-west')) return 'us-west-002';
     // Internal accounts: james.rivera → east, everyone else → west
@@ -159,6 +162,7 @@ function memberToCustomer(member, groupId) {
     txnA30d: null,
     txnB30d: null,
     txnC30d: null,
+    txnD30d: null,
     cogs30d: null,          // billing data only
     revenue30d: null,
     health: 'healthy',      // can't derive without CSV trend data
@@ -181,12 +185,10 @@ export async function getCustomers({ groupId } = {}) {
 
   // Live: fetch all groups, then their members in parallel
   const groupsResp = await listGroups();
-  console.log('[partnerApi] listGroups raw response:', JSON.stringify(groupsResp));
   const groups = groupsResp.groups || groupsResp.groupsList || [];
   const targetGroups = groupId
     ? groups.filter((g) => g.groupId === groupId)
     : groups;
-  console.log('[partnerApi] targetGroups:', targetGroups.map(g => g.groupId));
 
   // Fetch stored credentials (contains region) in parallel with group members.
   // Falls back gracefully if the credentials endpoint fails or returns nothing.
@@ -199,11 +201,27 @@ export async function getCustomers({ groupId } = {}) {
     })
     .catch(() => new Map());
 
-  const [perGroup, storedCreds] = await Promise.all([
+  // Fetch all customer metadata so we can (a) merge per-customer overrides and
+  // (b) surface ejected sub-accounts that the Partner API no longer returns.
+  const metadataPromise = api.get('/api/admin/metadata')
+    .then((d) => {
+      const map = new Map();
+      for (const m of d.metadata || []) map.set(m.account_id, m);
+      return map;
+    })
+    .catch(() => new Map());
+
+  const [perGroup, storedCreds, metadata] = await Promise.all([
     Promise.all(
       targetGroups.map(async (g) => {
         // Paginate — Partner API caps maxMemberCount at 100.
         // Real API returns groupMembers (not members) and nextEmail (not nextMemberId).
+        //
+        // Defensive: Backblaze sometimes returns a non-null nextEmail on the
+        // final page; the next call then re-fetches members starting at that
+        // email, producing duplicates. Dedupe by accountId and break if a page
+        // adds no new members.
+        const seen = new Set();
         const members = [];
         let nextEmail = undefined;
         do {
@@ -212,50 +230,135 @@ export async function getCustomers({ groupId } = {}) {
             maxMemberCount: 100,
             ...(nextEmail ? { startEmail: nextEmail } : {}),
           });
-          console.log(`[partnerApi] group ${g.groupId} raw:`, JSON.stringify(data).slice(0, 200));
-          members.push(...(data.groupMembers || data.members || []));
+          const batch = data.groupMembers || data.members || [];
+          let added = 0;
+          for (const m of batch) {
+            if (m?.accountId && !seen.has(m.accountId)) {
+              seen.add(m.accountId);
+              members.push(m);
+              added++;
+            }
+          }
           nextEmail = data.nextEmail || null;
+          if (added === 0) break; // no progress — stop even if nextEmail is set
         } while (nextEmail);
         return members.map((m) => memberToCustomer(m, g.groupId));
       })
     ),
     storedCredsPromise,
+    metadataPromise,
   ]);
 
+  // Map seed region values (us-west, eu-central, us-east) to REGIONS ids.
+  const regionMap = {
+    'us-west':    'us-west-002',
+    'us-east':    'us-east-005',
+    'eu-central': 'eu-central-003',
+    'ca-east':    'ca-east-006',
+  };
+  const normalizeRegion = (r) => regionMap[r] ?? r;
+
   // Merge stored region into each customer (overrides the email-inferred fallback).
+  const liveAccountIds = new Set();
   const customers = perGroup.flat().map((c) => {
+    liveAccountIds.add(c.accountId);
     const stored = storedCreds.get(c.accountId);
     if (stored?.region) {
-      // Map seed region values (us-west, eu-central, us-east) to REGIONS ids.
-      const regionMap = {
-        'us-west':    'us-west-002',
-        'us-east':    'us-east-005',
-        'eu-central': 'eu-central-003',
-      };
-      return { ...c, region: regionMap[stored.region] ?? stored.region };
+      return { ...c, region: normalizeRegion(stored.region) };
     }
     return c;
   });
-  console.log('[partnerApi] total customers:', customers.length);
 
-  // Enrich with CSV-derived usage (storage, egress, transactions).
-  // The Partner API b2_list_group_members b2Stats field is often absent or 0
-  // for sub-accounts; the daily CSV reports are the authoritative source.
-  const csvUsage = await getCustomerUsageFromCsv();
+  // Append stub rows for ejected sub-accounts (active=false). These are no
+  // longer returned by b2_list_group_members, so we synthesize them from the
+  // ejection snapshot stored in customer_metadata.
+  for (const m of metadata.values()) {
+    if (!m.ejected_at) continue;
+    if (liveAccountIds.has(m.account_id)) continue; // shouldn't happen, but guard
+    customers.push({
+      id: m.account_id,
+      accountId: m.account_id,
+      name: m.display_name || m.ejected_email || m.account_id,
+      industry: m.industry || null,
+      region: normalizeRegion(m.ejected_region) || null,
+      plan: m.plan || null,
+      groupId: m.ejected_group_id || null,
+      storageBytes: 0,
+      egressBytes30d: 0,
+      txnA30d: 0,
+      txnB30d: 0,
+      txnC30d: 0,
+      txnD30d: 0,
+      cogs30d: 0,
+      revenue30d: 0,
+      health: 'risk',
+      growth: 0,
+      activeBuckets: 0,
+      contactEmail: m.ejected_email || null,
+      onboarded: null,
+      active: false,
+      ejectedAt: m.ejected_at,
+    });
+  }
+  // Enrich with CSV-derived usage (storage, egress, transactions),
+  // object-count job results, and reseller plan billing. Storage preference order:
+  //   1. CSV daily report   (authoritative for historic billing windows)
+  //   2. object_counts table (real-time after a Sync — bypasses CSV lag)
+  //   3. b2Stats from Partner API (b2BytesStoredCount; updates on its own cadence)
+  //   4. 0 fallback
+  const [csvUsage, objectCounts, plans] = await Promise.all([
+    getCustomerUsageFromCsv(),
+    (await import('./b2Adapter.js')).getObjectCounts().catch(() => new Map()),
+    api.get('/api/admin/reseller-plans').then((d) => d.plans).catch(() => RESELLER_PLANS),
+  ]);
+
+  // Sum object_counts per accountId so we can use it as a per-customer storage source.
+  const bytesByAccount = new Map();
+  for (const [, oc] of objectCounts) {
+    if (!oc?.accountId) continue; // map values now include accountId via the GET response shape
+    bytesByAccount.set(oc.accountId, (bytesByAccount.get(oc.accountId) || 0) + (oc.totalBytes || 0));
+  }
+
   const enriched = customers.map((c) => {
-    const csv = csvUsage.get(c.accountId);
-    const storageBytes   = csv?.storageBytes   > 0 ? csv.storageBytes   : (c.storageBytes   ?? 0);
+    // Ejected sub-accounts are no longer the partner's billing responsibility,
+    // so they roll up as zero everywhere. They still appear on the dedicated
+    // "Inactive" tab via the active=false flag.
+    if (c.active === false) {
+      return { ...c, storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, txnD30d: 0, revenue30d: 0, cogs30d: 0 };
+    }
+    const csv  = csvUsage.get(c.accountId);
+    const objBytes = bytesByAccount.get(c.accountId) || 0;
+    const csvBytes = csv?.storageBytes > 0 ? csv.storageBytes : 0;
+    const apiBytes = c.storageBytes ?? 0;
+    const storageBytes   = csvBytes || objBytes || apiBytes;
     const egressBytes30d = csv?.egressBytes30d > 0 ? csv.egressBytes30d : (c.egressBytes30d ?? 0);
     const txnA30d        = csv?.txnA30d        > 0 ? csv.txnA30d        : (c.txnA30d        ?? 0);
     const txnB30d        = csv?.txnB30d        > 0 ? csv.txnB30d        : (c.txnB30d        ?? 0);
     const txnC30d        = csv?.txnC30d        > 0 ? csv.txnC30d        : (c.txnC30d        ?? 0);
+    const txnD30d        = csv?.txnD30d        > 0 ? csv.txnD30d        : (c.txnD30d        ?? 0);
+
+    // Default-assign a plan to every active customer that doesn't already have one.
+    const plan = c.plan || DEFAULT_PLAN_NAME;
+    const billingInput = {
+      ...c,
+      storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
+      plan,
+    };
+    const { revenue, cogs } = computeBilling(billingInput, plans);
 
     // A customer with no storage is either brand-new or has removed all data —
     // flag as 'attention' so they show up on the watch list.
     // Also catches accounts not in the CSV at all (never had usage data).
     const health = storageBytes === 0 ? 'attention' : (c.health || 'healthy');
 
-    return { ...c, storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, health };
+    return {
+      ...c,
+      plan,
+      storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
+      revenue30d: revenue,
+      cogs30d:    cogs,
+      health,
+    };
   });
 
   return { customers: enriched, totals: aggregate(enriched) };
@@ -354,6 +457,7 @@ export async function createCustomer(payload) {
       txnA30d: 0,
       txnB30d: 0,
       txnC30d: 0,
+      txnD30d: 0,
       cogs30d: 0,
       revenue30d: 0,
       health: 'healthy',
@@ -440,7 +544,7 @@ export async function updateMemberEmail(accountId, newEmail) {
  *
  * Body: { adminAccountId, groupId, accountId, email? }
  */
-export async function removeGroupMember({ accountId, groupId, newEmail } = {}) {
+export async function removeGroupMember({ accountId, groupId, newEmail, email, region } = {}) {
   if (useMocks()) {
     await wait(500);
     const idx = CUSTOMERS.findIndex((x) => x.accountId === accountId);
@@ -451,7 +555,19 @@ export async function removeGroupMember({ accountId, groupId, newEmail } = {}) {
   }
   const body = { groupId, accountId };
   if (newEmail) body.email = newEmail; // B2 updates email as part of eject in one call
-  return callPartner('b2_eject_group_member', body);
+  const result = await callPartner('b2_eject_group_member', body);
+  // Record the ejection in customer_metadata so the account still appears on
+  // the Inactive tab — the Partner API will not return it again.
+  try {
+    await api.post(`/api/admin/metadata/${accountId}/eject`, {
+      email: newEmail || email || null,
+      groupId,
+      region: region || null,
+    });
+  } catch (err) {
+    console.warn('[partnerApi] failed to record ejection metadata:', err);
+  }
+  return result;
 }
 
 // =============================================================================

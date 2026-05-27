@@ -14,7 +14,7 @@ import { useApp } from '../lib/AppContext.jsx';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
-export default function StorageView() {
+export default function StorageView({ lockedAccountId } = {}) {
   const { navigate } = useNav();
   const { isLive } = useApp();
   const [loading, setLoading] = useState(true);
@@ -38,15 +38,28 @@ export default function StorageView() {
     setLoading(true);
     try {
       let raw;
-      if (selectedAccountId === 'master') {
+      if (!isLive) {
+        // Demo mode: serve from mock bucket data directly.
+        const { buckets: mockBuckets } = await b2.listBuckets();
+        raw = mockBuckets;
+        if (lockedAccountId) {
+          raw = raw.filter((b) => b.accountId === lockedAccountId);
+        }
+      } else if (selectedAccountId === 'master') {
         // Master account: use the B2 API (only has the reports bucket).
         const { buckets: apiBuckets } = await b2.listBuckets();
         raw = apiBuckets.map((b) => ({ ...b, storageBytes: b.storageBytes ?? 0, objectCount: b.objectCount ?? 0 }));
+        if (lockedAccountId) {
+          raw = raw.filter((b) => b.accountId === lockedAccountId);
+        }
       } else {
         // Sub-account: derive bucket list + storage directly from the CSV.
         // This avoids needing stored credentials for every sub-account in the DB.
-        const accountId = selectedAccountId === 'all' ? undefined : selectedAccountId;
+        const accountId = lockedAccountId ?? (selectedAccountId === 'all' ? undefined : selectedAccountId);
         raw = await b2.getBucketsFromCsv({ accountId });
+        if (lockedAccountId) {
+          raw = raw.filter((b) => b.accountId === lockedAccountId);
+        }
       }
 
       // Merge in object counts from the 24h background job cache.
@@ -54,8 +67,13 @@ export default function StorageView() {
       // We fire it in parallel with the bucket fetch (both start before await).
       const objectCounts = await b2.getObjectCounts();
       const withCounts = raw.map((bucket) => {
-        const entry = objectCounts.get(bucket.bucketId);
-        return entry?.count != null ? { ...bucket, objectCount: entry.count } : bucket;
+        const oc = objectCounts.get(bucket.bucketId);
+        if (!oc) return bucket;
+        return {
+          ...bucket,
+          objectCount:  oc.count ?? bucket.objectCount,
+          storageBytes: oc.totalBytes || bucket.storageBytes,
+        };
       });
 
       const sorted = [...withCounts].sort((a, b) => a.bucketName.localeCompare(b.bucketName));
@@ -63,7 +81,7 @@ export default function StorageView() {
     } finally {
       setLoading(false);
     }
-  }, [selectedAccountId]);
+  }, [selectedAccountId, isLive, lockedAccountId]);
 
   useEffect(() => { loadBuckets(); }, [loadBuckets]);
 
@@ -122,7 +140,7 @@ export default function StorageView() {
         subtitle="Bucket metadata (encryption, lifecycle, file lock, CORS) is returned by b2_list_buckets in real time. Storage bytes are derived from the daily usage CSV report — the bucket-list endpoint does not return them."
         actions={
           <div className="flex items-center gap-2">
-            {isLive && customers.length > 0 && (
+            {isLive && customers.length > 0 && !lockedAccountId && (
               <AccountSelector
                 customers={customers}
                 value={selectedAccountId}
@@ -135,7 +153,7 @@ export default function StorageView() {
         }
       />
 
-      {selectedAccountId !== 'all' && selectedAccountId !== 'master' && selectedCustomer && (
+      {!lockedAccountId && selectedAccountId !== 'all' && selectedAccountId !== 'master' && selectedCustomer && (
         <div className="-mt-2 text-[11.5px] text-ink-400">
           Viewing sub-account <span className="font-mono text-ink-200">{selectedCustomer.accountId}</span> · {selectedCustomer.contactEmail || selectedCustomer.name}
         </div>

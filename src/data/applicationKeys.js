@@ -43,8 +43,8 @@ export const APPLICATION_KEYS = [
     applicationKeyId: '0093d17b8c4f019',
     keyName: 'northwind-render-batch-rw',
     customerId: 'sub-2c8e44',
-    bucketIds: ['8d2e7f1a3b4c5d6e9f0a8b1c'],
-    bucketName: 'northwind-render-frames-prod',
+    bucketIds: ['8d2e7f1a3b4c5d6e9f0a8b1c', '1a3b5c7d9e0f2a4b6c8d0e1f'],
+    bucketName: 'northwind-render-frames-prod + 1',
     capabilities: ['writeFiles', 'readFiles', 'listFiles', 'deleteFiles'],
     namePrefix: '',
     expirationTimestamp: null,
@@ -69,8 +69,8 @@ export const APPLICATION_KEYS = [
     applicationKeyId: '0188c3f4e5d2a07',
     keyName: 'halcyon-pretrain-readonly-eu',
     customerId: 'sub-4b5c08',
-    bucketIds: ['4d6e8f0a1b3c5d7e9f1a3b5c'],
-    bucketName: 'halcyon-pretrain-corpus',
+    bucketIds: ['3c5d7e9f1a2b4c6d8e0f2a4b', '4d6e8f0a1b3c5d7e9f1a3b5c'],
+    bucketName: 'halcyon-foundation-checkpoints + 1',
     capabilities: ['readFiles', 'listFiles', 'readBucketInfo'],
     namePrefix: '',
     expirationTimestamp: 1798502400000,
@@ -130,6 +130,22 @@ export const APPLICATION_KEYS = [
     createdAt: '2025-09-01T08:30:00Z',
     posture: 'expired',
   },
+  {
+    // Demo state: access logs ENABLED on scoped bucket, but this key ID does
+    // not appear in the sample access log → shows "No activity observed since
+    // logging was enabled." Distinguishes "no telemetry" from "no usage."
+    applicationKeyId: '0501d8f2a3b9c14',
+    keyName: 'tessera-snapshot-reader-new',
+    customerId: 'sub-1a7e63',
+    bucketIds: ['5e7f9a1b2c4d6e8f0a2b4c6d'],
+    bucketName: 'tessera-vector-snapshots',
+    capabilities: ['readFiles', 'listFiles'],
+    namePrefix: '',
+    expirationTimestamp: 1798502400000,
+    expirationDate: '2026-12-04',
+    createdAt: '2026-05-01T14:00:00Z',
+    posture: 'good',
+  },
 ];
 
 // =============================================================================
@@ -144,7 +160,7 @@ export const APPLICATION_KEYS = [
 //      ../api/accessLogParser.js. Docs:
 //        https://www.backblaze.com/docs/cloud-storage-bucket-access-logs
 //
-//   2. Daily Usage CSV — per-bucket per-day Class A/B/C aggregates only.
+//   2. Daily Usage CSV — per-bucket per-day Class A/B/C/D aggregates only.
 //      Useful for activity volume but not per-event detail.
 //
 //   3. Event Notifications — real-time HTTP webhooks fired when objects are

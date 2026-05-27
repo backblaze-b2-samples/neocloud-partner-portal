@@ -7,6 +7,7 @@ import {
   Table, THead, TBody, TR, TH, TD, LoadingState,
 } from '../components/ui.jsx';
 import * as b2 from '../api/b2Adapter.js';
+import { deriveKeyCoverage, coverageToAvailability, coverageStatusBadge, getKeyActivityLabel } from '../api/accessLogCoverage.js';
 import { CUSTOMERS } from '../data/customers.js';
 import { relativeTime } from '../lib/format.js';
 import { useNav } from '../lib/nav.js';
@@ -30,21 +31,29 @@ const POSTURE_TABS = [
   { id: 'expired', label: 'Expired' },
 ];
 
-export default function ApplicationKeysView() {
+export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId } = {}) {
   const { navigate } = useNav();
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState([]);
   const [lastUsed, setLastUsed] = useState(new Map());
+  const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
   const [tab, setTab] = useState('all');
 
   useEffect(() => {
-    Promise.all([b2.listApplicationKeys(), b2.getKeyLastUsed()])
-      .then(([{ keys }, { lastUsed }]) => {
+    Promise.all([
+      b2.listApplicationKeys({ customerId: lockedCustomerId, accountId: lockedAccountId }),
+      b2.getKeyLastUsed(),
+      b2.listBuckets({ customerId: lockedCustomerId, accountId: lockedAccountId }),
+    ])
+      .then(([{ keys }, { lastUsed }, { buckets }]) => {
         setKeys(keys);
         setLastUsed(lastUsed);
+        setBucketStatusMap(new Map(
+          buckets.map((bk) => [bk.bucketId, bk.accessLogging || { status: 'not_configured' }])
+        ));
         setLoading(false);
       });
-  }, []);
+  }, [lockedCustomerId, lockedAccountId]);
 
   if (loading) return <LoadingState label="Listing application keys via b2_list_keys" />;
 
@@ -124,11 +133,12 @@ export default function ApplicationKeysView() {
           <THead>
             <TR hover={false}>
               <TH>Key</TH>
-              <TH>Customer</TH>
+              {!lockedCustomerId && <TH>Customer</TH>}
               <TH>Scope</TH>
               <TH>Capabilities</TH>
               <TH>Expires</TH>
               <TH>Last used</TH>
+              <TH>Log coverage</TH>
               <TH>Posture</TH>
             </TR>
           </THead>
@@ -136,13 +146,22 @@ export default function ApplicationKeysView() {
             {filtered.map((k) => {
               const cust = CUSTOMERS.find((c) => c.id === k.customerId);
               const Posture = POSTURE_STYLES[k.posture];
+              const coverage = deriveKeyCoverage(k, bucketStatusMap);
+              const { availability, label: coverageLabel, detail } = coverageToAvailability(coverage);
+              const badge = coverageStatusBadge(coverage.overallStatus);
+              const badgeToneClasses = {
+                green: 'bg-accent-green/15 text-accent-green ring-accent-green/30',
+                amber: 'bg-accent-amber/15 text-accent-amber ring-accent-amber/30',
+                red:   'bg-bb-red/15 text-bb-red ring-bb-red/30',
+                muted: 'bg-ink-700/50 text-ink-400 ring-ink-600/30',
+              }[badge.tone];
               return (
                 <TR key={k.applicationKeyId} onClick={() => navigate('key-detail', { keyId: k.applicationKeyId })}>
                   <TD>
                     <div className="font-mono text-[12px] text-ink-100">{k.keyName}</div>
                     <div className="font-mono text-[10.5px] text-ink-400">{k.applicationKeyId}</div>
                   </TD>
-                  <TD className="text-ink-300">{cust?.name || '—'}</TD>
+                  {!lockedCustomerId && <TD className="text-ink-300">{cust?.name || '—'}</TD>}
                   <TD>
                     <div className="text-xs text-ink-200">{k.bucketName}</div>
                     {k.namePrefix && (
@@ -166,6 +185,14 @@ export default function ApplicationKeysView() {
                   </TD>
                   <TD className="text-[11.5px] text-ink-300">
                     <LastUsedCell ts={lastUsed.get(k.applicationKeyId)} />
+                  </TD>
+                  <TD>
+                    <span
+                      title={coverageLabel}
+                      className={'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset cursor-help ' + badgeToneClasses}
+                    >
+                      {badge.text}
+                    </span>
                   </TD>
                   <TD>
                     <span
@@ -231,7 +258,7 @@ export default function ApplicationKeysView() {
       <Card>
         <CardHeader
           title="Per-event activity · Backblaze Event Notifications"
-          subtitle="Backblaze does not publish per-request access logs. For real-time per-event activity, configure Event Notifications on your buckets — B2 will POST a JSON webhook to your endpoint each time an object is uploaded, hidden, or deleted."
+          subtitle="Backblaze B2 supports Bucket Access Logs for per-request bucket activity, but they are not enabled by default and are delivered asynchronously on a best-effort basis. For near-real-time object-level events, configure B2 Event Notifications on your bucket; B2 can POST a JSON webhook to your HTTPS endpoint for supported object-created, object-deleted, and hide-marker-created events. Event Notifications do not cover object downloads and use at-least-once delivery."
           icon={<Bell size={16} />}
           action={
             <a

@@ -1,14 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   ShieldCheck, UserPlus, KeyRound, Power, RefreshCcw,
-  AlertTriangle, CheckCircle2, Copy, Loader2,
+  AlertTriangle, CheckCircle2, Copy, Loader2, Lock,
 } from 'lucide-react';
 import { Card, CardHeader, LoadingState } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { api, ApiError } from '../lib/apiClient.js';
 import { cx } from '../lib/format.js';
+import { CUSTOMERS } from '../data/customers.js';
 
-const ROLES = ['admin', 'manager', 'user'];
+const ROLES = ['admin', 'manager', 'user', 'support', 'customer_admin', 'customer_readonly'];
+const ROLE_LABELS = {
+  admin: 'Admin',
+  manager: 'Manager',
+  user: 'User',
+  support: 'Support',
+  customer_admin: 'Customer Admin',
+  customer_readonly: 'Customer Read-only',
+};
 
 export default function UserManagementView() {
   const { isAdmin, user: me } = useApp();
@@ -118,82 +127,116 @@ export default function UserManagementView() {
         </div>
       )}
 
-      <Card padding="p-0">
-        <div className="border-b border-ink-700 px-5 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-ink-100">
-            <ShieldCheck size={14} className="text-accent-green" /> Accounts
-          </div>
-        </div>
-        {users === null ? (
-          <div className="p-5"><LoadingState label="Loading users" /></div>
-        ) : users.length === 0 ? (
-          <div className="p-5 text-xs text-ink-400">No users.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-ink-900/50 text-[10px] uppercase tracking-wider text-ink-400">
-                <tr>
-                  <Th>Email</Th><Th>Role</Th><Th>Status</Th><Th>Created</Th><Th>Last sign-in</Th><Th className="text-right">Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => {
-                  const isMe = u.id === me?.id;
-                  const busy = busyId === u.id;
-                  return (
-                    <tr key={u.id} className="border-t border-ink-800 text-ink-200">
-                      <Td>
-                        <span className="font-medium text-ink-100">{u.email}</span>
-                        {isMe && <span className="ml-2 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet">you</span>}
-                        {u.mustChangePassword && <span className="ml-2 rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>}
-                      </Td>
-                      <Td>
-                        <select
-                          disabled={busy}
-                          value={u.role}
-                          onChange={(e) => onUpdate(u.id, { role: e.target.value })}
-                          className="h-7 rounded border border-ink-700 bg-ink-900 px-1.5 text-xs text-ink-100 focus:outline-none"
-                        >
-                          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                        </select>
-                      </Td>
-                      <Td>
-                        <span className={cx(
-                          'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
-                          u.active
-                            ? 'bg-accent-green/10 text-accent-green ring-accent-green/30'
-                            : 'bg-ink-700 text-ink-300 ring-ink-600'
-                        )}>{u.active ? 'Active' : 'Inactive'}</span>
-                      </Td>
-                      <Td>{new Date(u.createdAt).toLocaleDateString()}</Td>
-                      <Td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</Td>
-                      <Td className="text-right">
-                        {busy && <Loader2 size={12} className="ml-auto animate-spin text-ink-400" />}
-                        {!busy && (
-                          <div className="flex items-center justify-end gap-1.5">
-                            <ActionBtn onClick={() => onUpdate(u.id, { mustChangePassword: !u.mustChangePassword })}>
-                              {u.mustChangePassword ? 'Clear reset flag' : 'Force reset'}
-                            </ActionBtn>
-                            <ActionBtn onClick={() => onResetPassword(u)} icon={<KeyRound size={11} />}>Reset password</ActionBtn>
-                            <ActionBtn
-                              danger={u.active}
-                              onClick={() => onUpdate(u.id, { active: !u.active })}
-                              icon={<Power size={11} />}
-                            >
-                              {u.active ? 'Deactivate' : 'Reactivate'}
-                            </ActionBtn>
-                          </div>
-                        )}
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <UserSection
+        title="Partner staff"
+        icon={<ShieldCheck size={14} className="text-accent-green" />}
+        users={users === null ? null : users.filter((u) => ['admin', 'manager', 'user', 'support'].includes(u.role))}
+        loadingLabel="Loading users"
+        emptyLabel="No partner staff."
+        me={me}
+        busyId={busyId}
+        onUpdate={onUpdate}
+        onResetPassword={onResetPassword}
+      />
+
+      <UserSection
+        title="Customer portal users"
+        icon={<ShieldCheck size={14} className="text-accent-teal" />}
+        users={users === null ? null : users.filter((u) => ['customer_admin', 'customer_readonly'].includes(u.role))}
+        loadingLabel="Loading users"
+        emptyLabel="No customer portal users."
+        me={me}
+        busyId={busyId}
+        onUpdate={onUpdate}
+        onResetPassword={onResetPassword}
+      />
     </div>
+  );
+}
+
+function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId, onUpdate, onResetPassword }) {
+  return (
+    <Card padding="p-0">
+      <div className="border-b border-ink-700 px-5 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink-100">
+          {icon} {title}
+        </div>
+      </div>
+      {users === null ? (
+        <div className="p-5"><LoadingState label={loadingLabel} /></div>
+      ) : users.length === 0 ? (
+        <div className="p-5 text-xs text-ink-400">{emptyLabel}</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-ink-900/50 text-[10px] uppercase tracking-wider text-ink-400">
+              <tr>
+                <Th>Email</Th><Th>Role</Th><Th>Account</Th><Th>Status</Th><Th>Created</Th><Th>Last sign-in</Th><Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => {
+                const isMe = u.id === me?.id;
+                const busy = busyId === u.id;
+                const protected_ = ['klott@backblaze.com', 'demo@backblaze.com'].includes(u.email);
+                return (
+                  <tr key={u.id} className="border-t border-ink-800 text-ink-200">
+                    <Td>
+                      <span className="font-medium text-ink-100">{u.email}</span>
+                      {isMe && <span className="ml-2 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet">you</span>}
+                      {protected_ && <span className="ml-2 inline-flex items-center gap-1 rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 ring-1 ring-ink-600"><Lock size={9} /> protected</span>}
+                      {u.mustChangePassword && <span className="ml-2 rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>}
+                    </Td>
+                    <Td>
+                      <select
+                        disabled={busy || protected_}
+                        value={u.role}
+                        onChange={(e) => onUpdate(u.id, { role: e.target.value })}
+                        className="h-7 rounded border border-ink-700 bg-ink-900 px-1.5 text-xs text-ink-100 focus:outline-none disabled:opacity-50"
+                      >
+                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                      </select>
+                    </Td>
+                    <Td className="font-mono text-[10.5px] text-ink-400">{u.accountId || '—'}</Td>
+                    <Td>
+                      <span className={cx(
+                        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+                        u.active
+                          ? 'bg-accent-green/10 text-accent-green ring-accent-green/30'
+                          : 'bg-ink-700 text-ink-300 ring-ink-600'
+                      )}>{u.active ? 'Active' : 'Inactive'}</span>
+                    </Td>
+                    <Td>{new Date(u.createdAt).toLocaleDateString()}</Td>
+                    <Td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</Td>
+                    <Td className="text-right">
+                      {busy && <Loader2 size={12} className="ml-auto animate-spin text-ink-400" />}
+                      {!busy && !protected_ && (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <ActionBtn onClick={() => onUpdate(u.id, { mustChangePassword: !u.mustChangePassword })}>
+                            {u.mustChangePassword ? 'Clear reset flag' : 'Force reset'}
+                          </ActionBtn>
+                          <ActionBtn onClick={() => onResetPassword(u)} icon={<KeyRound size={11} />}>Reset password</ActionBtn>
+                          <ActionBtn
+                            danger={u.active}
+                            onClick={() => onUpdate(u.id, { active: !u.active })}
+                            icon={<Power size={11} />}
+                          >
+                            {u.active ? 'Deactivate' : 'Reactivate'}
+                          </ActionBtn>
+                        </div>
+                      )}
+                      {!busy && protected_ && (
+                        <span className="text-[10.5px] text-ink-500 italic">protected account</span>
+                      )}
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -239,6 +282,7 @@ function CreateUserCard({ onCreated }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('user');
+  const [accountId, setAccountId] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -248,8 +292,8 @@ function CreateUserCard({ onCreated }) {
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
     setSubmitting(true);
     try {
-      await api.post('/api/admin/users', { email: email.trim(), password, role });
-      setEmail(''); setPassword(''); setRole('user');
+      await api.post('/api/admin/users', { email: email.trim(), password, role, accountId: accountId.trim() || undefined });
+      setEmail(''); setPassword(''); setRole('user'); setAccountId('');
       onCreated?.();
     } catch (err) {
       setError((err instanceof ApiError && err.body?.error) || 'Could not create user.');
@@ -285,7 +329,7 @@ function CreateUserCard({ onCreated }) {
           onChange={(e) => setRole(e.target.value)}
           className="h-9 rounded-md border border-ink-700 bg-ink-900 px-2 text-sm text-ink-100"
         >
-          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+          {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
         </select>
         <button
           type="submit"
@@ -297,6 +341,21 @@ function CreateUserCard({ onCreated }) {
         >
           {submitting ? 'Creating…' : 'Create'}
         </button>
+        {['customer_admin', 'customer_readonly'].includes(role) && (
+          <select
+            required
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            className="h-9 rounded-md border border-ink-700 bg-ink-900 px-2 text-sm text-ink-100 sm:col-span-4 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
+          >
+            <option value="">— Select customer account —</option>
+            {CUSTOMERS.map((c) => (
+              <option key={c.accountId} value={c.accountId}>
+                {c.name} ({c.accountId})
+              </option>
+            ))}
+          </select>
+        )}
         {error && (
           <div role="alert" className="sm:col-span-4 flex items-start gap-2 rounded-md border border-bb-red/30 bg-bb-red/10 px-3 py-2 text-xs text-bb-red">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" /> <span>{error}</span>

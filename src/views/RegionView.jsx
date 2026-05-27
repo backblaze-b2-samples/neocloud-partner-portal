@@ -72,6 +72,7 @@ export default function RegionView() {
               classATxn30d:   null,
               classBTxn30d:   null,
               classCTxn30d:   null,
+              classDTxn30d:   null,
               bucketCount:   null,
               customerCount: count,
               growth30d:     null,
@@ -82,6 +83,31 @@ export default function RegionView() {
             ...regions.map((r) => ({ ...r, customerCount: countByRegion.get(r.regionId) ?? null })),
             ...partnerOnlyRegions,
           ];
+          // Ensure every defined REGION shows up at least once, even with no
+          // customers and no CSV activity — operators want to see all available
+          // placement options on the Regions screen.
+          const present = new Set(finalRegions.map((r) => r.regionId));
+          for (const r of REGIONS) {
+            if (present.has(r.id)) continue;
+            finalRegions.push({
+              regionId: r.id,
+              code: r.code,
+              flag: r.flag,
+              color: r.color,
+              city: r.city,
+              country: r.country,
+              storageBytes: null,
+              egressBytes30d: null,
+              uploadBytes30d: null,
+              classATxn30d: null,
+              classBTxn30d: null,
+              classCTxn30d: null,
+              classDTxn30d: null,
+              bucketCount: null,
+              customerCount: 0,
+              growth30d: null,
+            });
+          }
           finalSource = 'csv-live';
         } else if (countByRegion.size > 0) {
           // CSV unavailable — fall back to partner-derived (shows warning).

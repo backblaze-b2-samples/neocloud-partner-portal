@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft, Database, KeyRound, Activity, Plus, Mail, Hash, Globe, Layers,
   Lock, ShieldCheck, Eye, EyeOff, Clock, Trash2, GitBranch, ChevronRight,
-  Download as DownloadIcon, FileSpreadsheet, Pencil, UserX, RefreshCw,
+  Download as DownloadIcon, FileSpreadsheet, Pencil, UserX, UserMinus, Users,
+  RefreshCcw,
 } from 'lucide-react';
+import { api, ApiError } from '../lib/apiClient.js';
 import { buildCustomerUsageCsv, downloadText } from '../api/csvParser.js';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, HealthPill, Tabs,
@@ -15,7 +17,8 @@ import { REGIONS } from '../data/regions.js';
 import * as partner from '../api/partnerApi.js';
 import * as b2 from '../api/b2Adapter.js';
 import { useNav } from '../lib/nav.js';
-import { bytes, compactNumber, currency, percent, shortDate, relativeTime } from '../lib/format.js';
+import { bytes, compactNumber, currency, percent, shortDate, relativeTime, cx } from '../lib/format.js';
+import { useApp } from '../lib/AppContext.jsx';
 import { LastUsedCell } from './ApplicationKeysView.jsx';
 
 const TABS = [
@@ -24,10 +27,12 @@ const TABS = [
   { id: 'keys',     label: 'Application keys' },
   { id: 'activity', label: 'Activity' },
   { id: 'billing',  label: 'Billing & usage' },
+  { id: 'logins',   label: 'Logins' },
 ];
 
 export default function CustomerDetailView({ customerId }) {
   const { navigate } = useNav();
+  const { isCustomer, canSeeRevenue } = useApp();
   const [loading, setLoading] = useState(true);
   const [customer, setCustomer] = useState(null);
   const [buckets, setBuckets] = useState([]);
@@ -37,8 +42,26 @@ export default function CustomerDetailView({ customerId }) {
   const [showBucketDialog, setShowBucketDialog]       = useState(false);
   const [showEditDialog, setShowEditDialog]           = useState(false);
   const [showTerminateDialog, setShowTerminateDialog] = useState(false);
-  const [refreshingCounts, setRefreshingCounts]       = useState(false);
-  const [countsError, setCountsError]                 = useState(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [, forceTick] = useState(0); // ticks relativeTime display every 30s
+
+  // Re-walk B2 for this customer's buckets (counts + bytes), then re-read all
+  // the data into state. Used by the "Refresh" button — gives the user fresh
+  // storage numbers without waiting for the daily CSV.
+  const refreshWithSync = async () => {
+    const accountId = customer?.accountId;
+    if (!accountId) { refresh(); return; }
+    setSyncing(true);
+    try {
+      await b2.syncAccount(accountId);
+    } catch (e) {
+      console.warn('[CustomerDetailView] syncAccount failed:', e?.message || e);
+    } finally {
+      refresh();
+      setSyncing(false);
+    }
+  };
 
   const refresh = () => {
     partner.getCustomer(customerId).then((c) => {
@@ -61,14 +84,22 @@ export default function CustomerDetailView({ customerId }) {
           const oc = objectCounts.get(b.bucketId);
           return {
             ...b,
-            storageBytes:    csvByBucketId.get(b.bucketId)?.storageBytes ?? b.storageBytes ?? null,
-            objectCount:     oc?.count ?? b.objectCount ?? null,
-            countedAt:       oc?.countedAt ?? null,
+            objectCount:  oc?.count ?? b.objectCount ?? null,
+            // Prefer the object-count job's bytes (real-time after sync) over
+            // the CSV (which lags by a day). Fall back to CSV then API.
+            storageBytes: oc?.totalBytes ?? csvByBucketId.get(b.bucketId)?.storageBytes ?? b.storageBytes ?? null,
+            countedAt:    oc?.countedAt ?? null,
           };
         });
         setBuckets(enriched);
-        setKeys(keys);
+        // Resolve bucket names from the loaded bucket list so KeysTab can display them.
+        const bucketById = new Map(enriched.map((b) => [b.bucketId, b.bucketName]));
+        setKeys(keys.map((k) => ({
+          ...k,
+          bucketName: k.bucketIds?.[0] ? (bucketById.get(k.bucketIds[0]) || k.bucketIds[0]) : null,
+        })));
         setActivity(records);
+        setLastRefreshAt(Date.now());
         setLoading(false);
       });
     });
@@ -76,27 +107,18 @@ export default function CustomerDetailView({ customerId }) {
 
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [customerId]);
 
-  // Trigger an on-demand object-count re-count for this customer's buckets,
-  // then reload so the new counts + timestamps render.
-  async function handleRefreshCounts() {
-    if (!customer?.accountId) return;
-    setRefreshingCounts(true);
-    setCountsError(null);
-    try {
-      await b2.refreshObjectCounts(customer.accountId);
-      refresh();
-    } catch (err) {
-      setCountsError(err?.message || String(err));
-    } finally {
-      setRefreshingCounts(false);
-    }
-  }
+  // Bump every 30s so the "Updated Xm ago" label stays current.
+  useEffect(() => {
+    const id = setInterval(() => forceTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
-  // Newest counted_at across this customer's buckets (or null if none counted).
-  const lastCountedAt = buckets.reduce((acc, b) => {
-    if (!b.countedAt) return acc;
-    return (!acc || b.countedAt > acc) ? b.countedAt : acc;
-  }, null);
+  // Snap back to overview if an ejected customer's selected tab is now hidden.
+  useEffect(() => {
+    if (customer?.active === false && ['buckets', 'keys', 'activity'].includes(tab)) {
+      setTab('overview');
+    }
+  }, [customer, tab]);
 
   if (loading) return <LoadingState label="Loading customer detail" />;
   if (!customer) {
@@ -111,30 +133,79 @@ export default function CustomerDetailView({ customerId }) {
 
   const region = REGIONS.find((r) => r.id === customer.region);
   const margin = (customer.revenue30d - customer.cogs30d) / customer.revenue30d;
-  const groupTabsCount = [
+  const isEjected = customer.active === false;
+  const allTabs = [
     { ...TABS[0] },
     { ...TABS[1], count: buckets.length },
     { ...TABS[2], count: keys.length },
     { ...TABS[3], count: activity.length },
     { ...TABS[4] },
+    { ...TABS[5] },
   ];
+  // Once ejected, buckets/keys/activity cannot be listed via the Partner API —
+  // hide those tabs.
+  const hiddenWhenEjected = new Set(['buckets', 'keys', 'activity']);
+  const groupTabsCount = isEjected
+    ? allTabs.filter((t) => !hiddenWhenEjected.has(t.id))
+    : allTabs;
 
   return (
     <div className="space-y-6">
-      <button
-        onClick={() => navigate('partner')}
-        className="inline-flex items-center gap-1 text-xs text-ink-400 hover:text-ink-100"
-      >
-        <ArrowLeft size={12} /> Back to Customers
-      </button>
+      {!isCustomer && (
+        <button
+          onClick={() => navigate('partner')}
+          className="inline-flex items-center gap-1 text-xs text-ink-400 hover:text-ink-100"
+        >
+          <ArrowLeft size={12} /> Back to Customers
+        </button>
+      )}
+
+      {isEjected && (
+        <div className="flex items-start gap-3 rounded-lg border border-accent-amber/30 bg-accent-amber/5 p-4">
+          <UserMinus size={18} className="mt-0.5 text-accent-amber" />
+          <div className="text-xs">
+            <div className="text-sm font-semibold text-accent-amber">Ejected from partner group</div>
+            <p className="mt-1 text-ink-200">
+              This sub-account was ejected on{' '}
+              <span className="font-mono">{customer.ejectedAt ? shortDate(customer.ejectedAt) : 'an unknown date'}</span>
+              {' '}and is no longer managed by your partner account. Buckets, keys, and activity are unavailable via the Partner API.
+              Once ejected, members cannot be re-added programmatically — re-invitation must be done through the Backblaze Group Management web UI.
+            </p>
+          </div>
+        </div>
+      )}
 
       <PageHeader
         eyebrow={customer.industry ? `Customer · ${customer.industry}` : 'Customer'}
         title={customer.name}
-        subtitle={`Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region?.flag} ${region?.code}`}
+        subtitle={isEjected
+          ? `Account ${customer.accountId} · ejected ${customer.ejectedAt ? shortDate(customer.ejectedAt) : ''}${region?.code ? ` · last region ${region.flag} ${region.code}` : ''}`
+          : `Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region?.flag} ${region?.code}`}
         actions={
           <div className="flex items-center gap-2">
-            <HealthPill status={customer.health} />
+            {isEjected
+              ? <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-ink-700 text-ink-300 ring-1 ring-inset ring-ink-600">
+                  <UserMinus size={10} /> Ejected{customer.ejectedAt ? ` ${shortDate(customer.ejectedAt)}` : ''}
+                </span>
+              : <HealthPill status={customer.health} />}
+            {syncing
+              ? <span className="text-[10.5px] text-accent-teal animate-pulse">
+                  Syncing object counts and storage from B2…
+                </span>
+              : lastRefreshAt && (
+                  <span className="text-[10.5px] text-ink-400" title={new Date(lastRefreshAt).toLocaleString()}>
+                    Updated {relativeTime(lastRefreshAt)}
+                  </span>
+                )}
+            <button
+              onClick={refreshWithSync}
+              disabled={syncing}
+              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800 disabled:opacity-60"
+              title="Re-walk this customer's buckets on B2 to update object counts and storage size"
+            >
+              <RefreshCcw size={12} className={syncing ? 'animate-spin' : undefined} />
+              {syncing ? 'Syncing…' : 'Refresh'}
+            </button>
             <button
               onClick={handleRefreshCounts}
               disabled={refreshingCounts}
@@ -161,26 +232,32 @@ export default function CustomerDetailView({ customerId }) {
             >
               <DownloadIcon size={12} /> Download usage CSV
             </button>
-            <button
-              onClick={() => setShowEditDialog(true)}
-              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800"
-              title="Edit customer metadata and pricing"
-            >
-              <Pencil size={12} /> Edit
-            </button>
-            <button
-              onClick={() => setShowBucketDialog(true)}
-              className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
-            >
-              <Plus size={12} /> Create bucket
-            </button>
-            <button
-              onClick={() => setShowTerminateDialog(true)}
-              className="inline-flex items-center gap-1 rounded-md border border-bb-red/40 bg-bb-red/10 px-3 py-1.5 text-xs font-medium text-bb-red hover:bg-bb-red/20"
-              title="Terminate / eject this customer from the Partner group"
-            >
-              <UserX size={12} /> Terminate
-            </button>
+            {!isCustomer && !isEjected && (
+              <button
+                onClick={() => setShowEditDialog(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800"
+                title="Edit customer metadata and pricing"
+              >
+                <Pencil size={12} /> Edit
+              </button>
+            )}
+            {!isCustomer && !isEjected && (
+              <button
+                onClick={() => setShowBucketDialog(true)}
+                className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
+              >
+                <Plus size={12} /> Create bucket
+              </button>
+            )}
+            {!isCustomer && !isEjected && (
+              <button
+                onClick={() => setShowTerminateDialog(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-bb-red/40 bg-bb-red/10 px-3 py-1.5 text-xs font-medium text-bb-red hover:bg-bb-red/20"
+                title="Terminate / eject this customer from the Partner group"
+              >
+                <UserX size={12} /> Terminate
+              </button>
+            )}
           </div>
         }
       />
@@ -191,7 +268,7 @@ export default function CustomerDetailView({ customerId }) {
         <MetricCard label="Egress (30d)" value={bytes(customer.egressBytes30d)} source="csv" accent="teal" />
         <MetricCard label="Buckets" value={buckets.length} source="api" icon={<Database size={14} />} accent="violet" />
         <MetricCard label="App keys" value={keys.length} source="api" icon={<KeyRound size={14} />} accent="amber" />
-        <MetricCard label="Margin (30d)" value={percent(margin, 1)} source="derived" accent="green" />
+        {canSeeRevenue && <MetricCard label="Margin (30d)" value={percent(margin, 1)} source="derived" accent="green" />}
       </div>
 
       <Tabs tabs={groupTabsCount} value={tab} onChange={setTab} />
@@ -202,9 +279,10 @@ export default function CustomerDetailView({ customerId }) {
       {tab === 'buckets' && (
         <BucketsTab buckets={buckets} customer={customer} onCreate={() => setShowBucketDialog(true)} />
       )}
-      {tab === 'keys' && <KeysTab keys={keys} />}
+      {tab === 'keys' && <KeysTab keys={keys} customerId={customerId} accountId={customer?.accountId} />}
       {tab === 'activity' && <ActivityTab events={activity} />}
       {tab === 'billing' && <BillingTab customer={customer} buckets={buckets} />}
+      {tab === 'logins' && <LoginsTab accountId={customer.accountId} isCustomer={isCustomer} />}
 
       <CreateBucketDialog
         open={showBucketDialog}
@@ -403,7 +481,7 @@ function BucketDetailCard({ bucket, accountId, customerName, customerRegion }) {
   );
 }
 
-function KeysTab({ keys }) {
+function KeysTab({ keys, customerId, accountId }) {
   const { navigate } = useNav();
   if (keys.length === 0) {
     return <EmptyState title="No application keys for this customer" message="Use Application Keys & Security to issue a least-privilege key." />;
@@ -423,7 +501,7 @@ function KeysTab({ keys }) {
         </THead>
         <TBody>
           {keys.map((k) => (
-            <TR key={k.applicationKeyId} onClick={() => navigate('key-detail', { keyId: k.applicationKeyId })}>
+            <TR key={k.applicationKeyId} onClick={() => navigate('key-detail', { keyId: k.applicationKeyId, customerId, accountId })}>
               <TD>
                 <div className="font-mono text-[12px] text-ink-100">{k.keyName}</div>
                 <div className="font-mono text-[10.5px] text-ink-400">{k.applicationKeyId}</div>
@@ -583,11 +661,13 @@ function ActivityTab({ events }) {
 }
 
 function BillingTab({ customer, buckets }) {
+  const { canSeeRevenue } = useApp();
   const txnBarData = [{
     name: 'Last 30 days',
     A: customer.txnA30d,
     B: customer.txnB30d,
     C: customer.txnC30d,
+    D: customer.txnD30d || 0,
   }];
   const margin = customer.revenue30d - customer.cogs30d;
   return (
@@ -599,7 +679,7 @@ function BillingTab({ customer, buckets }) {
           <div>
             <div className="text-sm font-semibold text-ink-100">Download usage CSV</div>
             <p className="mt-0.5 text-[11.5px] text-ink-400">
-              Generate a Backblaze-shaped Usage.csv scoped to {customer.name}. Mirrors the column set of the real <code className="text-ink-200">b2-reports-$ACCOUNTID/YYYY-MM-DD/Usage.csv</code> so anything that reads the real file will read this too.
+              Generate a Backblaze-shaped usage CSV scoped to {customer.name}. Mirrors the column set of the real <code className="text-ink-200">b2-reports-$ACCOUNTID/&lt;YYYY-MM-DD&gt;/</code> so anything that reads the real file will read this too.
             </p>
           </div>
         </div>
@@ -622,29 +702,118 @@ function BillingTab({ customer, buckets }) {
         <StackedBarChart
           data={txnBarData}
           series={[
-            { key: 'A', name: 'Class A (uploads, free)', color: '#3DD9D6', format: compactNumber },
-            { key: 'B', name: 'Class B (downloads)',     color: '#9B7CFF', format: compactNumber },
-            { key: 'C', name: 'Class C (metadata)',      color: '#F5B73E', format: compactNumber },
+            { key: 'A', name: 'Class A (uploads, free)',       color: '#3DD9D6', format: compactNumber },
+            { key: 'B', name: 'Class B (downloads)',           color: '#9B7CFF', format: compactNumber },
+            { key: 'C', name: 'Class C (metadata)',            color: '#F5B73E', format: compactNumber },
+            { key: 'D', name: 'Class D (event notifications)', color: '#F47171', format: compactNumber },
           ]}
           yFormatter={compactNumber}
           height={220}
         />
       </Card>
-      <Card>
-        <CardHeader title="Revenue & margin" action={<SourceBadge source="derived" />} />
-        <dl className="space-y-2 text-sm">
-          <KV label="Revenue (30d)" value={currency(customer.revenue30d)} mono accent="text-ink-100" />
-          <KV label="COGS (30d)" value={currency(customer.cogs30d)} mono accent="text-bb-red" />
-          <hr className="border-ink-700" />
-          <KV label="Gross margin" value={currency(margin)} mono accent="text-accent-green" />
-          <KV label="Margin %" value={percent(margin / customer.revenue30d, 1)} mono accent="text-accent-green" />
-          <hr className="border-ink-700" />
-          <KV label="Annualized revenue" value={currency(customer.revenue30d * 12, { compact: true })} mono />
-          <KV label="Growth (30d)" value={<span className={customer.growth >= 0 ? 'text-accent-green' : 'text-bb-red'}>{customer.growth >= 0 ? '+' : ''}{percent(customer.growth, 1)}</span>} mono />
-        </dl>
-      </Card>
+      {canSeeRevenue && (
+        <Card>
+          <CardHeader title="Revenue & margin" action={<SourceBadge source="derived" />} />
+          <dl className="space-y-2 text-sm">
+            <KV label="Revenue (30d)" value={currency(customer.revenue30d)} mono accent="text-ink-100" />
+            <KV label="COGS (30d)" value={currency(customer.cogs30d)} mono accent="text-bb-red" />
+            <hr className="border-ink-700" />
+            <KV label="Gross margin" value={currency(margin)} mono accent="text-accent-green" />
+            <KV label="Margin %" value={percent(margin / customer.revenue30d, 1)} mono accent="text-accent-green" />
+            <hr className="border-ink-700" />
+            <KV label="Annualized revenue" value={currency(customer.revenue30d * 12, { compact: true })} mono />
+            <KV label="Growth (30d)" value={<span className={customer.growth >= 0 ? 'text-accent-green' : 'text-bb-red'}>{customer.growth >= 0 ? '+' : ''}{percent(customer.growth, 1)}</span>} mono />
+          </dl>
+        </Card>
+      )}
     </div>
     </div>
+  );
+}
+
+function LoginsTab({ accountId, isCustomer }) {
+  const [users, setUsers] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const endpoint = isCustomer ? '/api/customer-admin/users' : '/api/admin/users';
+    api.get(endpoint)
+      .then((data) => {
+        const all = data.users || [];
+        setUsers(isCustomer ? all : all.filter((u) => u.accountId === accountId));
+      })
+      .catch((err) => {
+        setError(err instanceof ApiError && err.status === 403
+          ? 'Admin access is required to view portal logins.'
+          : 'Could not load logins.');
+      });
+  }, [accountId, isCustomer]);
+
+  if (error) return (
+    <Card>
+      <div className="flex items-center gap-2 text-xs text-bb-red">
+        <Users size={14} className="shrink-0" /> {error}
+      </div>
+    </Card>
+  );
+  if (!users) return <LoadingState label="Loading logins" />;
+  if (users.length === 0) return (
+    <EmptyState
+      title="No portal logins"
+      message="No customer portal accounts have been created for this organization yet."
+    />
+  );
+
+  return (
+    <Card padding="p-0">
+      <div className="flex items-center gap-2 border-b border-ink-700 px-5 py-3 text-sm font-semibold text-ink-100">
+        <Users size={14} className="text-accent-teal" /> {users.length} portal {users.length === 1 ? 'login' : 'logins'}
+      </div>
+      <Table>
+        <THead>
+          <TR hover={false}>
+            <TH>Email</TH>
+            <TH>Role</TH>
+            <TH>Status</TH>
+            <TH>Last sign-in</TH>
+            <TH>Created</TH>
+          </TR>
+        </THead>
+        <TBody>
+          {users.map((u) => (
+            <TR key={u.id} hover={false}>
+              <TD>
+                <div className="font-medium text-ink-100">{u.email}</div>
+                {u.mustChangePassword && (
+                  <span className="rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>
+                )}
+              </TD>
+              <TD>
+                <span className="text-xs text-ink-200">
+                  {u.role === 'customer_admin' ? 'Admin' : 'Read-only'}
+                </span>
+              </TD>
+              <TD>
+                <span className={cx(
+                  'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+                  u.active
+                    ? 'bg-accent-green/10 text-accent-green ring-accent-green/30'
+                    : 'bg-ink-700 text-ink-300 ring-ink-600'
+                )}>
+                  {u.active ? 'Active' : 'Inactive'}
+                </span>
+              </TD>
+              <TD className="text-xs text-ink-300">
+                {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
+              </TD>
+              <TD className="text-xs text-ink-300">
+                {new Date(u.createdAt).toLocaleDateString()}
+              </TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+    </Card>
   );
 }
 

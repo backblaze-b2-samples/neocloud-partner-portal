@@ -350,7 +350,7 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
                 {' · '}Download: <span className="font-mono text-accent-teal">${downloadPrice}/GB</span>
               </p>
               <p className="text-ink-500">
-                Backblaze COGS → Storage: $6.95/TB/mo · Download: $0.01/GB · Class A/B/C/D: free
+                Backblaze COGS → Storage: $6.95/TB/mo · Download: $0.01/GB · Class A/B/C: free · Class D: 2,500/day free, then $0.004/10k
               </p>
             </div>
           </div>
@@ -416,6 +416,8 @@ export function TerminateMemberDialog({ open, onClose, onTerminated, customer })
         accountId: customer.accountId,
         groupId:   customer.groupId,
         newEmail:  (isLive && newEmail.trim()) ? newEmail.trim() : undefined,
+        email:     customer.contactEmail || null,   // snapshot for the Inactive tab
+        region:    customer.region || null,         // snapshot for the Inactive tab
       });
 
       setStep('done');
@@ -454,22 +456,35 @@ export function TerminateMemberDialog({ open, onClose, onTerminated, customer })
             </div>
           </div>
 
-          {/* Optional email update */}
-          <div className="rounded-md border border-ink-700 bg-ink-900/60 p-3 space-y-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">
-              Optional: update email before ejecting
-              {!isLive && <span className="ml-1 normal-case font-normal text-ink-500"> — demo mode</span>}
+          {/* Email update — hand-off use case */}
+          <div className="rounded-md border border-accent-teal/30 bg-accent-teal/5 p-4 space-y-2">
+            <p className="text-xs font-semibold text-accent-teal">
+              Update the customer's email at the same time (optional)
             </p>
-            <p className="text-[11px] text-ink-400">
-              Current: <span className="font-mono text-ink-200">{customer?.contactEmail || '—'}</span>
+            <p className="text-[11.5px] text-ink-300">
+              <span className="font-medium text-ink-100">Why:</span>{' '}
+              <span className="text-ink-300">
+                b2_eject_group_member accepts an <span className="font-mono">email</span> field that
+                transfers ownership in the same call — the customer keeps their B2 data and takes
+                over billing directly with Backblaze. Leave blank to keep the current email and let
+                them reset it themselves on first login.
+              </span>
+            </p>
+            <p className="text-[11px] text-ink-400 pt-1">
+              Current contact email: <span className="font-mono text-ink-200">{customer?.contactEmail || '—'}</span>
             </p>
             <Field
-              label="New email (leave blank to keep current)"
+              label="New email (the customer's own address)"
               type="email"
-              placeholder="offboarded@customer.example"
+              placeholder="customer@theirdomain.com"
               value={newEmail}
               onChange={setNewEmail}
             />
+            {!isLive && (
+              <p className="text-[10.5px] text-ink-500 italic">
+                Demo mode — the email change is not actually sent to Backblaze.
+              </p>
+            )}
           </div>
 
           <ModalFooter>
