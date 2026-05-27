@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, Users, Database, Globe, Receipt,
   KeyRound, Terminal, Search, Bell, ChevronDown,
@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
+import { useNav } from '../lib/nav.js';
+import * as partner from '../api/partnerApi.js';
+import * as b2 from '../api/b2Adapter.js';
 
 const ALL_NAV = [
   { id: 'overview',  label: 'Executive overview',  icon: LayoutDashboard, group: 'Insights' },
@@ -197,14 +200,7 @@ export function TopBar({ active, onOpenSettings }) {
         <span className="font-medium text-ink-100">{current?.label || 'Dashboard'}</span>
       </div>
       <div className="flex items-center gap-2">
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
-          <input
-            type="text"
-            placeholder="Search buckets, customers, keys…"
-            className="h-8 w-72 rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-xs text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
-          />
-        </div>
+        <GlobalSearch />
 
         {/* Mode toggle */}
         <div className="flex h-8 items-center overflow-hidden rounded-md ring-1 ring-ink-700">
@@ -251,6 +247,142 @@ export function TopBar({ active, onOpenSettings }) {
         </div>
       </div>
     </header>
+  );
+}
+
+// =============================================================================
+// Global search — filters customers / buckets / app keys
+// =============================================================================
+function GlobalSearch() {
+  const { navigate } = useNav();
+  const [query, setQuery] = useState('');
+  const [open, setOpen]   = useState(false);
+  const [hover, setHover] = useState(0);
+  const [data, setData]   = useState({ customers: [], buckets: [], keys: [] });
+  const [loaded, setLoaded] = useState(false);
+  const boxRef = useRef(null);
+
+  // Lazy-load the searchable set the first time the input is focused.
+  // Cached for the lifetime of the page — re-mount on demo/live switch handles refresh.
+  useEffect(() => {
+    if (!open || loaded) return;
+    let cancelled = false;
+    Promise.all([
+      partner.getCustomers().catch(() => ({ customers: [] })),
+      b2.listBuckets().catch(() => ({ buckets: [] })),
+      b2.listApplicationKeys().catch(() => ({ keys: [] })),
+    ]).then(([c, bk, k]) => {
+      if (cancelled) return;
+      setData({
+        customers: c.customers || [],
+        buckets:   bk.buckets   || [],
+        keys:      k.keys       || [],
+      });
+      setLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [open, loaded]);
+
+  // Close dropdown on outside click.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const matches = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    if (!q) return [];
+    const out = [];
+    for (const c of data.customers) {
+      const hay = `${c.name||''} ${c.contactEmail||''} ${c.accountId||''} ${c.industry||''}`.toLowerCase();
+      if (hay.includes(q)) {
+        out.push({ type: 'customer', label: c.name || c.accountId, sub: c.contactEmail || c.accountId, params: { customerId: c.id } });
+      }
+    }
+    for (const b of data.buckets) {
+      const hay = `${b.bucketName||''} ${b.bucketId||''}`.toLowerCase();
+      if (hay.includes(q)) {
+        out.push({ type: 'bucket', label: b.bucketName, sub: b.bucketId, params: { bucketId: b.bucketId, accountId: b.accountId } });
+      }
+    }
+    for (const k of data.keys) {
+      const hay = `${k.keyName||''} ${k.applicationKeyId||''}`.toLowerCase();
+      if (hay.includes(q)) {
+        out.push({ type: 'key', label: k.keyName, sub: k.applicationKeyId, params: { keyId: k.applicationKeyId } });
+      }
+    }
+    return out.slice(0, 12);
+  }, [query, data]);
+
+  // Reset hover when the match list changes.
+  useEffect(() => { setHover(0); }, [matches]);
+
+  const pick = (m) => {
+    setOpen(false);
+    setQuery('');
+    if (m.type === 'customer') navigate('customer-detail', m.params);
+    else if (m.type === 'bucket') navigate('bucket-detail', m.params);
+    else if (m.type === 'key') navigate('key-detail', m.params);
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') { setOpen(false); return; }
+    if (!matches.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHover((h) => (h + 1) % matches.length); }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); setHover((h) => (h - 1 + matches.length) % matches.length); }
+    if (e.key === 'Enter')     { e.preventDefault(); pick(matches[hover]); }
+  };
+
+  const TYPE_COLOR = {
+    customer: 'text-accent-violet',
+    bucket:   'text-accent-teal',
+    key:      'text-accent-amber',
+  };
+
+  return (
+    <div ref={boxRef} className="relative">
+      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
+      <input
+        type="text"
+        placeholder="Search buckets, customers, keys…"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+        className="h-8 w-72 rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-xs text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
+      />
+      {open && query.trim() && (
+        <div className="absolute right-0 top-9 z-30 w-96 overflow-hidden rounded-md border border-ink-700 bg-ink-900 shadow-xl">
+          {!loaded && (
+            <div className="p-3 text-[11px] text-ink-400">Loading index…</div>
+          )}
+          {loaded && matches.length === 0 && (
+            <div className="p-3 text-[11px] text-ink-400">No matches for “{query}”.</div>
+          )}
+          <div className="max-h-96 overflow-y-auto">
+            {matches.map((m, i) => (
+              <button
+                key={`${m.type}-${m.sub}-${i}`}
+                onMouseDown={(e) => { e.preventDefault(); pick(m); }}
+                onMouseEnter={() => setHover(i)}
+                className={cx(
+                  'flex w-full items-center justify-between gap-3 border-b border-ink-800 px-3 py-2 text-left text-xs last:border-b-0',
+                  i === hover ? 'bg-ink-850' : 'hover:bg-ink-850/60'
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-ink-100">{m.label}</div>
+                  <div className="truncate font-mono text-[10.5px] text-ink-400">{m.sub}</div>
+                </div>
+                <span className={cx('text-[10px] uppercase tracking-wider', TYPE_COLOR[m.type])}>{m.type}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
