@@ -570,6 +570,7 @@ export function CreateBucketDialog({ open, onClose, onCreated, customer }) {
       const newBucket = await b2.createBucket({
         bucketName: form.bucketName,
         bucketType: form.bucketType,
+        accountId: customer?.accountId,
         customerId: customer?.id,
         region: customer?.region,
         encryption: form.encryption,

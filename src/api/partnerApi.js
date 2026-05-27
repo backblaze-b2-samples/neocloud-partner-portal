@@ -400,8 +400,45 @@ function mergeMetadata(customer, meta) {
   };
 }
 
-// POST /b2api/v3/b2_create_account (Partner API; exact endpoint name varies
-// by partner contract). Mock implementation creates a sub-account record.
+// Project a freshly-created customer (return value of createCustomer) into the
+// shape the customer-list views render. Used for optimistic insert so the new
+// row appears instantly while the background getCustomers() refresh runs.
+// Missing usage / billing fields default to 0 / null — they'll be replaced
+// when the refresh completes.
+export function customerRowFromCreated(c) {
+  if (!c?.accountId) return null;
+  return {
+    id:             c.accountId,
+    accountId:      c.accountId,
+    name:           c.name || c.accountId,
+    industry:       c.industry || null,
+    region:         c.region || null,
+    plan:           c.plan || null,
+    groupId:        c.groupId,
+    storageBytes:   0,
+    egressBytes30d: 0,
+    txnA30d:        0,
+    txnB30d:        0,
+    txnC30d:        0,
+    cogs30d:        null,
+    revenue30d:     null,
+    health:         'attention',  // matches getCustomers' rule: storageBytes==0 → 'attention'
+    growth:         null,
+    activeBuckets:  0,
+    contactEmail:   c.contactEmail || null,
+    onboarded:      c.onboarded || new Date().toISOString().slice(0, 10),
+  };
+}
+
+// Create a new sub-account under a Partner group.
+//
+// Live mode calls b2_create_group_member — the only Partner endpoint that
+// returns a usable applicationKey. The server-side proxy intercepts that
+// response and persists the credentials before the secret reaches the browser;
+// without that, every subsequent per-customer call would fail with
+// "no_credentials". After provisioning, the partner-local fields (display
+// name, industry, plan) are saved to our customer_metadata table since B2
+// itself has no concept of them.
 export async function createCustomer(payload) {
   if (useMocks()) {
     await wait(450);
@@ -435,8 +472,45 @@ export async function createCustomer(payload) {
     if (grp) grp.memberCount += 1;
     return newCust;
   }
-  // Real Partner API uses an account-creation endpoint for sub-accounts.
-  return callPartner('b2_create_account', payload);
+
+  // Partner API + credentials table use the short B2 region name
+  // ('us-east', 'us-west', 'eu-central'); our REGIONS data uses the long
+  // numbered id ('us-east-005' etc.). Strip the trailing '-NNN'.
+  const b2Region = String(payload.region || '').replace(/-\d+$/, '');
+
+  const res = await callPartner('b2_create_group_member', {
+    groupId:     payload.groupId,
+    memberEmail: payload.contactEmail,
+    region:      b2Region,
+  });
+  const newAccountId = res?.groupMember?.accountId;
+  if (!newAccountId) {
+    throw new Error('b2_create_group_member returned no accountId — credential storage skipped');
+  }
+
+  // Persist the partner-local fields (display name, industry, plan) keyed on
+  // the new sub-account id. Failure here is non-fatal — the account itself
+  // and its credentials are already provisioned.
+  try {
+    await saveCustomerMeta(newAccountId, {
+      display_name: payload.name,
+      industry:     payload.industry || null,
+      plan:         payload.plan || null,
+    });
+  } catch (metaErr) {
+    console.warn(`[createCustomer] metadata save failed for ${newAccountId}:`, metaErr?.message || metaErr);
+  }
+
+  return {
+    accountId:    newAccountId,
+    name:         payload.name,
+    contactEmail: payload.contactEmail,
+    region:       payload.region,
+    groupId:      payload.groupId,
+    industry:     payload.industry || 'Unspecified',
+    plan:         payload.plan || 'Reseller — Tier 3',
+    onboarded:    new Date().toISOString().slice(0, 10),
+  };
 }
 
 // =============================================================================

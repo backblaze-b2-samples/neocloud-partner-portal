@@ -31,6 +31,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireAuth, requireNotDemo, requireCsrf } from '../middleware/requireAuth.js';
 import { db } from '../db.js';
+import { runForAccount as runObjectCountForAccount } from '../jobs/objectCountJob.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -477,6 +478,30 @@ router.post('/sync-all', requireAuth, requireCsrf, async (_req, res) => {
   } catch (e) {
     console.warn('[masterB2] sync-all failed:', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/master-b2/object-counts/refresh/:accountId
+// Run the object-count job on-demand for one sub-account. Used by the admin
+// "Refresh counts" button so the operator doesn't wait for the next 24h tick.
+// Returns 404 if the account has no stored credentials.
+// Returns { ok: true, bucketsProcessed, elapsedMs } on success.
+// ---------------------------------------------------------------------------
+router.post('/object-counts/refresh/:accountId', requireAuth, async (req, res) => {
+  const { accountId } = req.params;
+  try {
+    const result = await runObjectCountForAccount(accountId);
+    if (result.error) {
+      return res.status(502).json({ error: result.error, ...result });
+    }
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    if (/No stored credentials/i.test(err.message)) {
+      return res.status(404).json({ error: 'no_credentials', message: err.message });
+    }
+    console.error(`[masterB2] refresh object-counts failed for ${accountId}:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

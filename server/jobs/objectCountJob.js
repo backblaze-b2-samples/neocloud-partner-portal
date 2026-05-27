@@ -260,6 +260,27 @@ export async function runObjectCountJob() {
 }
 
 // ---------------------------------------------------------------------------
+// On-demand: process a single account. Used by the admin "Refresh counts"
+// button so the user doesn't wait for the next 24h tick. Throws if the
+// accountId has no stored credentials.
+// ---------------------------------------------------------------------------
+
+export async function runForAccount(accountId) {
+  const cred = getCredential(accountId);
+  if (!cred) throw new Error(`No stored credentials for accountId ${accountId}`);
+  console.log(`[objectCountJob] on-demand refresh requested for ${accountId} (${cred.email})`);
+  const start = Date.now();
+  const result = await processAccount(cred);
+  const ms = Date.now() - start;
+  console.log(
+    `[objectCountJob] on-demand for ${accountId} done — ` +
+    `${result.bucketsProcessed} bucket(s) in ${(ms / 1000).toFixed(1)}s` +
+    (result.error ? ` (error: ${result.error})` : '')
+  );
+  return { ...result, elapsedMs: ms };
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — call once from server/index.js
 // ---------------------------------------------------------------------------
 

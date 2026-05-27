@@ -69,7 +69,11 @@ export default function StorageView({ lockedAccountId } = {}) {
       const withCounts = raw.map((bucket) => {
         const oc = objectCounts.get(bucket.bucketId);
         if (!oc) return bucket;
-        return { ...bucket, objectCount: oc.count, storageBytes: oc.totalBytes || bucket.storageBytes };
+        return {
+          ...bucket,
+          objectCount:  oc.count ?? bucket.objectCount,
+          storageBytes: oc.totalBytes || bucket.storageBytes,
+        };
       });
 
       const sorted = [...withCounts].sort((a, b) => a.bucketName.localeCompare(b.bucketName));

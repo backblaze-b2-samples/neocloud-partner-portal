@@ -198,7 +198,18 @@ export default function PartnerView() {
       <CreateCustomerDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        onCreated={refresh}
+        onCreated={(newCust) => {
+          // Optimistic insert so the row shows up the instant the success
+          // panel is dismissed; the background refresh below reconciles with
+          // B2 (which can take a few seconds for listGroups + per-group
+          // member pagination + CSV usage parsing).
+          const row = partner.customerRowFromCreated(newCust);
+          if (row) {
+            setCustomers((prev) => [row, ...prev.filter((c) => c.accountId !== row.accountId)]);
+            setTab('all');  // make sure it's visible regardless of current filter
+          }
+          refresh();
+        }}
       />
     </div>
   );

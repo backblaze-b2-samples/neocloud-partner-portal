@@ -88,6 +88,7 @@ export default function CustomerDetailView({ customerId }) {
             // Prefer the object-count job's bytes (real-time after sync) over
             // the CSV (which lags by a day). Fall back to CSV then API.
             storageBytes: oc?.totalBytes ?? csvByBucketId.get(b.bucketId)?.storageBytes ?? b.storageBytes ?? null,
+            countedAt:    oc?.countedAt ?? null,
           };
         });
         setBuckets(enriched);
@@ -204,6 +205,25 @@ export default function CustomerDetailView({ customerId }) {
             >
               <RefreshCcw size={12} className={syncing ? 'animate-spin' : undefined} />
               {syncing ? 'Syncing…' : 'Refresh'}
+            </button>
+            <button
+              onClick={handleRefreshCounts}
+              disabled={refreshingCounts}
+              className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs font-medium text-ink-200 hover:bg-ink-800 disabled:opacity-50"
+              title={
+                countsError
+                  ? `Last refresh failed: ${countsError}`
+                  : lastCountedAt
+                    ? `Object counts last updated ${relativeTime(lastCountedAt)} (${lastCountedAt})`
+                    : 'Object counts have not been populated for this customer yet'
+              }
+            >
+              <RefreshCw size={12} className={refreshingCounts ? 'animate-spin' : ''} />
+              {refreshingCounts
+                ? 'Refreshing…'
+                : lastCountedAt
+                  ? `Counts · ${relativeTime(lastCountedAt)}`
+                  : 'Refresh counts'}
             </button>
             <button
               onClick={() => downloadCustomerCsv(customer, buckets)}
