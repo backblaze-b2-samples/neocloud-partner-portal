@@ -196,7 +196,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
                   <TD>
                     <span
                       title={coverageLabel}
-                      className={'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset cursor-help ' + badgeToneClasses}
+                      className={'inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset cursor-help ' + badgeToneClasses}
                     >
                       {badge.text}
                     </span>
@@ -205,7 +205,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
                     <span
                       title={Posture.desc}
                       className={
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset cursor-help ' +
+                        'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset cursor-help ' +
                         Posture.bg + ' ' + Posture.color + ' ' + Posture.ring
                       }
                     >
@@ -343,7 +343,7 @@ function CodeBlock({ children }) {
 export function LastUsedCell({ ts, withBadge = true }) {
   if (!ts) {
     return (
-      <span title="No access log records for this key. Either access logging isn't enabled on its buckets, or the key truly hasn't been used in the retained log window." className="text-ink-400 cursor-help">
+      <span title="No access log records for this key. Either access logging isn't enabled on its buckets, or the key truly hasn't been used in the retained log window." className="whitespace-nowrap text-ink-400 cursor-help">
         — <span className="text-[9px] uppercase tracking-wider">no logs</span>
       </span>
     );
