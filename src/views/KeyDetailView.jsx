@@ -9,11 +9,11 @@ import {
 } from '../components/ui.jsx';
 import { TrendAreaChart, StackedBarChart } from '../components/charts.jsx';
 import { BUCKETS } from '../data/buckets.js';
-import { CUSTOMERS } from '../data/customers.js';
 import * as b2 from '../api/b2Adapter.js';
 import { deriveKeyCoverage, coverageToAvailability, coverageStatusTitle, getKeyActivityLabel } from '../api/accessLogCoverage.js';
 import { useNav } from '../lib/nav.js';
 import { useApp } from '../lib/AppContext.jsx';
+import { useCustomers } from '../lib/useCustomers.js';
 import { compactNumber, shortDate, relativeTime } from '../lib/format.js';
 import { LastUsedCell } from './ApplicationKeysView.jsx';
 
@@ -31,6 +31,7 @@ const POSTURE = {
 export default function KeyDetailView({ keyId, customerId, accountId }) {
   const { navigate } = useNav();
   const { isLive } = useApp();
+  const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
   const [k, setKey] = useState(null);
   const [lastUsedTs, setLastUsedTs] = useState(null);
@@ -70,7 +71,7 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
   }
 
   const Posture = POSTURE[k.posture] || POSTURE.good;
-  const customer = CUSTOMERS.find((c) => c.id === k.customerId);
+  const customer = customers.find((c) => c.id === k.customerId);
   const accessibleBuckets = k.bucketIds.length === 0
     ? BUCKETS.filter((b) => b.customerId === k.customerId)  // master-equivalent
     : BUCKETS.filter((b) => k.bucketIds.includes(b.bucketId));

@@ -18,6 +18,8 @@ import express from 'express';
 import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
 import { db } from '../db.js';
 import { audit } from '../audit.js';
+import { findUsersByAccountId, setActive, CUSTOMER_ROLES } from '../users.js';
+import { destroyAllSessionsFor } from '../auth.js';
 
 const router = express.Router();
 
@@ -143,8 +145,33 @@ router.post('/:accountId/eject', (req, res) => {
     ip: req.ip,
   });
 
-  res.json({ metadata: getRow(accountId) });
+  // Cascade: revoke every customer-portal login tied to this account.
+  // Otherwise an ejected customer could still sign in and see (cached) data
+  // until the next time someone manually deactivated their user row.
+  const affected = cascadeEjectionToUsers(accountId, req.session.user.id, req.ip);
+
+  res.json({ metadata: getRow(accountId), revokedUserIds: affected });
 });
+
+// Helper: deactivate every active customer user on an account and kill their
+// sessions. Returns the list of user ids that were actually changed (so the
+// matching restore handler can flip them back).
+function cascadeEjectionToUsers(accountId, actorId, ip) {
+  const users = findUsersByAccountId(accountId)
+    .filter((u) => CUSTOMER_ROLES.includes(u.role) && u.active);
+  for (const u of users) {
+    setActive(u.id, false);
+    destroyAllSessionsFor(u.id);
+    audit({
+      actorId,
+      action: 'customer_user.deactivated_by_ejection',
+      targetUserId: u.id,
+      details: { accountId },
+      ip,
+    });
+  }
+  return users.map((u) => u.id);
+}
 
 // ---------------------------------------------------------------------------
 // POST /:accountId/restore — clear the ejected flag (re-mark account active).
@@ -166,8 +193,29 @@ router.post('/:accountId/restore', (req, res) => {
     ip: req.ip,
   });
 
-  res.json({ metadata: getRow(accountId) });
+  // Inverse cascade: reactivate the customer logins that ejection knocked out.
+  // We re-enable every inactive customer user on this account — an admin who
+  // disabled a user for unrelated reasons should re-disable them after restore.
+  const reactivated = cascadeRestoreToUsers(accountId, req.session.user.id, req.ip);
+
+  res.json({ metadata: getRow(accountId), reactivatedUserIds: reactivated });
 });
+
+function cascadeRestoreToUsers(accountId, actorId, ip) {
+  const users = findUsersByAccountId(accountId)
+    .filter((u) => CUSTOMER_ROLES.includes(u.role) && !u.active);
+  for (const u of users) {
+    setActive(u.id, true);
+    audit({
+      actorId,
+      action: 'customer_user.reactivated_by_restore',
+      targetUserId: u.id,
+      details: { accountId },
+      ip,
+    });
+  }
+  return users.map((u) => u.id);
+}
 
 // ---------------------------------------------------------------------------
 // DELETE /:accountId

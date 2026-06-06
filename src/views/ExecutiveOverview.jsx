@@ -252,13 +252,23 @@ export default function ExecutiveOverview() {
           Region count: derived — unique regions across filtered customers. getRegionUsage()
             only returns CSV-active regions and misses zero-activity regions. */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
-        <MetricCard label="Active customers" value={customers.length} source="api" icon={<Users size={14} />} accent="amber" />
+        <MetricCard
+          label="Active customers"
+          value={customers.length}
+          source="api"
+          icon={<Users size={14} />}
+          accent="amber"
+          onClick={() => navigate('partner')}
+          title="View all customers"
+        />
         <MetricCard
           label="Active buckets"
           value={customers.reduce((s, c) => s + (c.activeBuckets || 0), 0)}
           source="api"
           icon={<Boxes size={14} />}
           accent="teal"
+          onClick={() => navigate('storage')}
+          title="View all buckets"
         />
         <MetricCard
           label="Active regions"
@@ -266,6 +276,8 @@ export default function ExecutiveOverview() {
           source="derived"
           icon={<Globe size={14} />}
           accent="violet"
+          onClick={() => navigate('regions')}
+          title="View regions"
         />
         {canSeeRevenue && (
           <MetricCard
@@ -274,6 +286,8 @@ export default function ExecutiveOverview() {
             source="derived"
             icon={<TrendingUp size={14} />}
             accent="green"
+            onClick={() => navigate('usage')}
+            title="View usage & billing"
           />
         )}
         {canSeeRevenue && (
@@ -283,6 +297,8 @@ export default function ExecutiveOverview() {
             source="derived"
             icon={<DollarSign size={14} />}
             accent="red"
+            onClick={() => navigate('usage')}
+            title="View usage & billing"
           />
         )}
       </div>

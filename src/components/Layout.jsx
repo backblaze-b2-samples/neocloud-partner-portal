@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, Database, Globe, Receipt,
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
-  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText,
+  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -21,6 +21,7 @@ const ALL_NAV = [
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
   { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requireRole: 'admin' },
   { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
+  { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requireAnyRole: ['admin', 'support'] },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
   { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
   { id: 'account',   label: 'My account',           icon: UserCog,          group: 'System' },
@@ -32,8 +33,9 @@ const ALL_NAV = [
 function navFor(user) {
   if (!user) return [];
   let items = ALL_NAV.filter((n) => {
-    if (!n.requireRole) return true;
-    return n.requireRole === user.role;
+    if (n.requireRole)    return n.requireRole === user.role;
+    if (n.requireAnyRole) return n.requireAnyRole.includes(user.role);
+    return true;
   });
   if (user.role === 'support') {
     items = items.filter((n) => n.id !== 'users' && n.id !== 'settings');

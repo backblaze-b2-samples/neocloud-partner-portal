@@ -190,5 +190,10 @@ addColumnIfMissing('customer_metadata', 'ejected_email',    'TEXT');
 addColumnIfMissing('customer_metadata', 'ejected_group_id', 'TEXT');
 addColumnIfMissing('customer_metadata', 'ejected_region',   'TEXT');
 
+// Migration: support read-only impersonation. When non-null, the session is
+// acting *as* the impersonating_user_id (effective identity); the original
+// sessions.user_id remains the staff actor for audit purposes.
+addColumnIfMissing('sessions', 'impersonating_user_id', 'INTEGER');
+
 // Best-effort sweep of expired sessions on every boot.
 db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(new Date().toISOString());

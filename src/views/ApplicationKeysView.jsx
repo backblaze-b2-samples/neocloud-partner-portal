@@ -8,9 +8,9 @@ import {
 } from '../components/ui.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import { deriveKeyCoverage, coverageToAvailability, coverageStatusBadge, getKeyActivityLabel } from '../api/accessLogCoverage.js';
-import { CUSTOMERS } from '../data/customers.js';
 import { relativeTime } from '../lib/format.js';
 import { useNav } from '../lib/nav.js';
+import { useCustomers } from '../lib/useCustomers.js';
 
 const POSTURE_STYLES = {
   good:      { icon: ShieldCheck, color: 'text-accent-green', bg: 'bg-accent-green/10', ring: 'ring-accent-green/30', label: 'Healthy',
@@ -33,6 +33,7 @@ const POSTURE_TABS = [
 
 export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId } = {}) {
   const { navigate } = useNav();
+  const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState([]);
   const [lastUsed, setLastUsed] = useState(new Map());
@@ -151,7 +152,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
           </THead>
           <TBody>
             {filtered.map((k) => {
-              const cust = CUSTOMERS.find((c) => c.id === k.customerId);
+              const cust = customers.find((c) => c.id === k.customerId);
               const Posture = POSTURE_STYLES[k.posture];
               const coverage = deriveKeyCoverage(k, bucketStatusMap);
               const { availability, label: coverageLabel, detail } = coverageToAvailability(coverage);

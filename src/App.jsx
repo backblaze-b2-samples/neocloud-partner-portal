@@ -1,4 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy, useCallback, useMemo } from 'react';
+import { Eye, X } from 'lucide-react';
 import { Sidebar, TopBar, CustomerSidebar, CustomerTopBar } from './components/Layout.jsx';
 import { LoadingState } from './components/ui.jsx';
 import { AppProvider, useApp } from './lib/AppContext.jsx';
@@ -24,6 +25,7 @@ const Console = lazy(() => import('./views/ApiConsoleView.jsx'));
 const Settings = lazy(() => import('./views/SettingsView.jsx'));
 const ResellerPlans = lazy(() => import('./views/ResellerPlansView.jsx'));
 const Login = lazy(() => import('./views/LoginView.jsx'));
+const Support = lazy(() => import('./views/SupportView.jsx'));
 const Account = lazy(() => import('./views/AccountView.jsx'));
 const UserManagement = lazy(() => import('./views/UserManagementView.jsx'));
 const UserDetail = lazy(() => import('./views/UserDetailView.jsx'));
@@ -49,19 +51,51 @@ const VIEWS = {
   'user-detail': UserDetail,
   audit: AuditLog,
   'customer-users': CustomerUsers,
+  support: Support,
 };
 
 // Routes only an admin may navigate to.
 const ADMIN_ONLY = new Set(['users', 'user-detail', 'audit']);
+// Routes restricted to admin + support staff.
+const SUPPORT_TOOLS = new Set(['support']);
+
+function ImpersonationBanner() {
+  const { impersonator, user, stopImpersonation } = useApp();
+  if (!impersonator) return null;
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-accent-amber/40 bg-accent-amber/15 px-6 py-2 text-xs">
+      <div className="flex min-w-0 items-center gap-2 text-accent-amber">
+        <Eye size={14} className="shrink-0" />
+        <span className="truncate">
+          <span className="font-semibold">Read-only impersonation</span>
+          <span className="mx-1.5 text-accent-amber/70">·</span>
+          viewing as <span className="font-mono">{user?.email}</span>
+          <span className="mx-1.5 text-accent-amber/70">·</span>
+          signed in as <span className="font-mono">{impersonator.email}</span>
+        </span>
+      </div>
+      <button
+        onClick={stopImpersonation}
+        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-accent-amber/40 bg-ink-900/40 px-2.5 text-[11px] font-medium text-accent-amber hover:bg-ink-900/70"
+      >
+        <X size={11} /> Exit impersonation
+      </button>
+    </div>
+  );
+}
 
 function CustomerShell() {
   const { config, user, isCustomerAdmin, customerAccountId, authReady, isAuthenticated } = useApp();
 
-  // Look up the demo customerId from accountId (demo mode only)
-  const customerId = useMemo(() =>
-    CUSTOMERS.find((c) => c.accountId === customerAccountId)?.id || null,
-    [customerAccountId]
-  );
+  // Resolve the customerId used by views and the partner API.
+  // In demo mode that's the hardcoded numeric id from src/data/customers.js;
+  // in live mode the accountId itself doubles as the customer id
+  // (see partnerApi.getCustomer — "In live mode, id IS the accountId").
+  const customerId = useMemo(() => {
+    if (!customerAccountId) return null;
+    if (config.mode === 'live') return customerAccountId;
+    return CUSTOMERS.find((c) => c.accountId === customerAccountId)?.id || null;
+  }, [customerAccountId, config.mode]);
 
   const [active, setActive] = useState('my-overview');
   const [params, setParams] = useState({});
@@ -110,15 +144,18 @@ function CustomerShell() {
 
   return (
     <NavContext.Provider value={{ active, params: viewParams, navigate }}>
-      <div className="flex h-full">
-        <CustomerSidebar active={active} onSelect={(id) => navigate(id)} isCustomerAdmin={isCustomerAdmin} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <CustomerTopBar active={active} />
-          <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
-            <Suspense fallback={<LoadingState label="Loading view" />}>
-              <View key={`${active}-${config.mode}`} {...viewParams} />
-            </Suspense>
-          </main>
+      <div className="flex h-full flex-col">
+        <ImpersonationBanner />
+        <div className="flex min-h-0 flex-1">
+          <CustomerSidebar active={active} onSelect={(id) => navigate(id)} isCustomerAdmin={isCustomerAdmin} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <CustomerTopBar active={active} />
+            <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
+              <Suspense fallback={<LoadingState label="Loading view" />}>
+                <View key={`${active}-${config.mode}`} {...viewParams} />
+              </Suspense>
+            </main>
+          </div>
         </div>
       </div>
     </NavContext.Provider>
@@ -126,7 +163,7 @@ function CustomerShell() {
 }
 
 function Shell() {
-  const { config, isAuthenticated, authReady, isAdmin, isCustomer, user } = useApp();
+  const { config, isAuthenticated, authReady, isAdmin, isSupport, isCustomer, user } = useApp();
   const [active, setActive] = useState('overview');
   const [params, setParams] = useState({});
 
@@ -155,7 +192,8 @@ function Shell() {
   // Redirect away from admin-only views if the user loses admin access.
   useEffect(() => {
     if (ADMIN_ONLY.has(active) && !isAdmin) setActive('overview');
-  }, [active, isAdmin]);
+    if (SUPPORT_TOOLS.has(active) && !isAdmin && !isSupport) setActive('overview');
+  }, [active, isAdmin, isSupport]);
 
   // Force the change-password screen if the server flagged the user.
   const mustChangePassword = !!user?.mustChangePassword;
@@ -187,17 +225,20 @@ function Shell() {
 
   return (
     <NavContext.Provider value={{ active, params, navigate }}>
-      <div className="flex h-full">
-        <Sidebar active={active} onSelect={(id) => navigate(id)} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar active={active} onOpenSettings={() => navigate('settings')} />
-          <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
-            <Suspense fallback={<LoadingState label="Loading view" />}>
-              {/* key includes mode so switching demo↔live fully remounts the
-                  view and re-fires all useEffect data fetches. */}
-              <View key={`${active}-${config.mode}`} {...params} />
-            </Suspense>
-          </main>
+      <div className="flex h-full flex-col">
+        <ImpersonationBanner />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar active={active} onSelect={(id) => navigate(id)} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <TopBar active={active} onOpenSettings={() => navigate('settings')} />
+            <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
+              <Suspense fallback={<LoadingState label="Loading view" />}>
+                {/* key includes mode so switching demo↔live fully remounts the
+                    view and re-fires all useEffect data fetches. */}
+                <View key={`${active}-${config.mode}`} {...params} />
+              </Suspense>
+            </main>
+          </div>
         </div>
       </div>
     </NavContext.Provider>

@@ -161,3 +161,69 @@ describe('GET / lists all', () => {
     expect(r.body.metadata.length).toBeGreaterThan(0);
   });
 });
+
+describe('reconcileCustomerLoginsAgainstEjection', () => {
+  it('deactivates active customer users whose account is already ejected (history backfill)', async () => {
+    // Set up state that pre-dates the cascade: an account is ejected, but the
+    // customer users on it are still active = 1.
+    db.prepare(`INSERT INTO customer_metadata (account_id, ejected_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?)`)
+      .run('recon-acct', '2026-01-01', new Date().toISOString(), new Date().toISOString());
+
+    const stale = createUser({ email: 'recon-stale@test.com', passwordHash: 'h', role: 'customer_admin', accountId: 'recon-acct' });
+    // Sanity-check: created in active state.
+    expect(db.prepare('SELECT active FROM users WHERE id = ?').get(stale.id).active).toBe(1);
+
+    const { reconcileCustomerLoginsAgainstEjection } = await import('../../server/seed.js');
+    const result = reconcileCustomerLoginsAgainstEjection();
+    expect(result.deactivated).toBeGreaterThanOrEqual(1);
+
+    expect(db.prepare('SELECT active FROM users WHERE id = ?').get(stale.id).active).toBe(0);
+
+    // Second run is a no-op (idempotent).
+    const second = reconcileCustomerLoginsAgainstEjection();
+    expect(second.deactivated).toBe(0);
+  });
+});
+
+describe('eject cascade deactivates customer logins', () => {
+  it('eject deactivates customer_admin + customer_readonly users on that account, restore reactivates', async () => {
+    // Seed two customer users on the same account.
+    const ca = createUser({ email: 'casc-adm@test.com',   passwordHash: 'h', role: 'customer_admin',    accountId: 'casc-acct' });
+    const cr = createUser({ email: 'casc-view@test.com',  passwordHash: 'h', role: 'customer_readonly', accountId: 'casc-acct' });
+    // And one customer on a different account — must NOT be touched.
+    const other = createUser({ email: 'casc-other@test.com', passwordHash: 'h', role: 'customer_admin', accountId: 'unrelated' });
+    // And one staff user — also must NOT be touched.
+    const staff = createUser({ email: 'casc-staff@test.com', passwordHash: 'h', role: 'manager' });
+
+    // Give them a session so we can prove eject kills it.
+    const sess = createSession({ userId: ca.id });
+
+    const r = await ap('post', '/api/admin/metadata/casc-acct/eject', {
+      email: 'casc-orig@example.com', groupId: 'g1', region: 'us-west-002',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.revokedUserIds.sort()).toEqual([ca.id, cr.id].sort());
+
+    // Affected users are now inactive.
+    const caAfter = db.prepare('SELECT active FROM users WHERE id = ?').get(ca.id);
+    const crAfter = db.prepare('SELECT active FROM users WHERE id = ?').get(cr.id);
+    expect(caAfter.active).toBe(0);
+    expect(crAfter.active).toBe(0);
+
+    // Untouched users on other accounts / staff remain active.
+    expect(db.prepare('SELECT active FROM users WHERE id = ?').get(other.id).active).toBe(1);
+    expect(db.prepare('SELECT active FROM users WHERE id = ?').get(staff.id).active).toBe(1);
+
+    // The session is gone too.
+    const sessRow = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sess.sid);
+    expect(sessRow).toBeUndefined();
+
+    // Restore reactivates them.
+    const rr = await ap('post', '/api/admin/metadata/casc-acct/restore', {});
+    expect(rr.status).toBe(200);
+    expect(rr.body.reactivatedUserIds.sort()).toEqual([ca.id, cr.id].sort());
+    expect(db.prepare('SELECT active FROM users WHERE id = ?').get(ca.id).active).toBe(1);
+    expect(db.prepare('SELECT active FROM users WHERE id = ?').get(cr.id).active).toBe(1);
+  });
+});

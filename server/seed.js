@@ -7,9 +7,13 @@
 // DEFAULT_ADMIN_PASSWORD) and are never written into committed source,
 // frontend bundles, or HTTP responses.
 
-import { hashPassword } from './auth.js';
+import { hashPassword, destroyAllSessionsFor } from './auth.js';
 import { audit } from './audit.js';
-import { activeAdminCount, createUser, findByEmail, isValidEmail } from './users.js';
+import {
+  activeAdminCount, createUser, findByEmail, isValidEmail,
+  CUSTOMER_ROLES, setActive,
+} from './users.js';
+import { db } from './db.js';
 
 const DEMO_USERS = [
   { email: 'demo@backblaze.com',     role: 'admin',             accountId: null },
@@ -29,6 +33,39 @@ export async function seedDemoUsers() {
     created++;
   }
   return { created };
+}
+
+// One-time reconciliation: for every customer-portal user whose account is
+// currently flagged ejected in customer_metadata, deactivate the user row and
+// kill any live sessions. Idempotent — safe to call on every boot.
+//
+// This handles two cases the per-request cascade doesn't:
+//   (1) accounts ejected BEFORE the cascade was deployed (history),
+//   (2) accounts ejected via direct DB writes that bypass the route.
+export function reconcileCustomerLoginsAgainstEjection() {
+  const stale = db.prepare(`
+    SELECT u.id, u.email, u.account_id
+    FROM users u
+    JOIN customer_metadata m ON m.account_id = u.account_id
+    WHERE u.active = 1
+      AND m.ejected_at IS NOT NULL
+      AND u.role IN (${CUSTOMER_ROLES.map(() => '?').join(',')})
+  `).all(...CUSTOMER_ROLES);
+
+  for (const u of stale) {
+    setActive(u.id, false);
+    destroyAllSessionsFor(u.id);
+    audit({
+      actorId: null,
+      action: 'customer_user.deactivated_by_ejection',
+      targetUserId: u.id,
+      details: { accountId: u.account_id, source: 'boot_reconcile' },
+    });
+  }
+  if (stale.length > 0) {
+    console.log(`[seed] reconciled ${stale.length} customer login(s) on ejected accounts`);
+  }
+  return { deactivated: stale.length };
 }
 
 export async function seedDefaultAdmin() {
