@@ -4,7 +4,7 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
-  Lock, Shield, MapPin, Menu, X, Code2, Plug,
+  Lock, Shield, Menu, X, Code2, Plug,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -49,7 +49,6 @@ const ALL_NAV = [
   { id: 'partner',   label: 'Customers',                 icon: Users,        group: 'Insights' },
   { id: 'storage',   label: 'Storage & buckets',    icon: Database,         group: 'Operations' },
   { id: 'regions',   label: 'Regions & placement',  icon: Globe,            group: 'Operations' },
-  { id: 'residency', label: 'Data residency',       icon: MapPin,           group: 'Operations' },
   { id: 'usage',     label: 'Usage & billing',      icon: Receipt,          group: 'Operations' },
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
   { id: 'immutability', label: 'Ransomware protection', icon: Lock,         group: 'Security' },
