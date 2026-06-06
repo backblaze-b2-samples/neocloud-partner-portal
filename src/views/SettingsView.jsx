@@ -4,9 +4,10 @@ import { PageHeader, Card, CardHeader, Tag, SourceBadge } from '../components/ui
 import { useApp } from '../lib/AppContext.jsx';
 import { testConnection } from '../api/b2Adapter.js';
 import { isDemoEmail } from '../lib/format.js';
+import { api, ApiError } from '../lib/apiClient.js';
 
 export default function SettingsView() {
-  const { config, isLive, hasCreds, setMode, setCredentials, reset, user, trainingMode, setTrainingMode } = useApp();
+  const { config, isLive, hasCreds, setMode, setCredentials, reset, user, trainingMode, setTrainingMode, isAdmin } = useApp();
   const isDemo = isDemoEmail(user?.email);
   const [draft, setDraft] = useState({
     masterKeyId: config.masterKeyId,
@@ -190,6 +191,9 @@ export default function SettingsView() {
         </p>
       </Card>
 
+      {/* Advanced — MCP server (admin only) */}
+      {isAdmin && <McpServerCard />}
+
       {/* Safety disclosure */}
       <Card className="border-bb-red/30 bg-bb-red/5">
         <div className="flex items-start gap-3">
@@ -294,5 +298,156 @@ function SourceRow({ source, desc }) {
       <SourceBadge source={source} />
       <span className="text-ink-300">{desc}</span>
     </li>
+  );
+}
+
+const mcpErr = (e) => (e instanceof ApiError && (e.body?.error || e.message)) || 'Request failed';
+
+function McpServerCard() {
+  const [cfg, setCfg] = useState(null);        // { baseUrl, enabled, hasToken }
+  const [baseUrl, setBaseUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [showToken, setShowToken] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState('');
+  const [test, setTest] = useState(null);
+  const [err, setErr] = useState('');
+  const [tokens, setTokens] = useState([]);
+  const [acct, setAcct] = useState({ accountId: '', label: '', token: '' });
+
+  const load = async () => {
+    setErr('');
+    try {
+      const c = await api.get('/api/admin/mcp/config');
+      setCfg(c.config); setBaseUrl(c.config.baseUrl || ''); setEnabled(!!c.config.enabled);
+      const t = await api.get('/api/admin/mcp/account-tokens');
+      setTokens(t.tokens || []);
+    } catch (e) { setErr(mcpErr(e)); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setBusy(true); setErr(''); setFlash('');
+    try {
+      const body = { baseUrl, enabled };
+      if (token) body.token = token;
+      const r = await api.put('/api/admin/mcp/config', body);
+      setCfg(r.config); setToken('');
+      setFlash('Saved'); setTimeout(() => setFlash(''), 1500);
+    } catch (e) { setErr(mcpErr(e)); } finally { setBusy(false); }
+  };
+
+  const runTest = async () => {
+    setTest(null); setErr('');
+    try {
+      const body = {};
+      if (baseUrl) body.baseUrl = baseUrl;
+      if (token) body.token = token;
+      setTest(await api.post('/api/admin/mcp/test', body));
+    } catch (e) { setTest({ ok: false, error: mcpErr(e) }); }
+  };
+
+  const addToken = async (e) => {
+    e?.preventDefault?.();
+    if (!acct.accountId || !acct.token) { setErr('accountId and token are required'); return; }
+    setErr('');
+    try {
+      await api.put(`/api/admin/mcp/account-tokens/${encodeURIComponent(acct.accountId)}`, { label: acct.label, token: acct.token });
+      setAcct({ accountId: '', label: '', token: '' });
+      await load();
+    } catch (e2) { setErr(mcpErr(e2)); }
+  };
+  const delToken = async (accountId) => {
+    if (!confirm(`Remove MCP token for ${accountId}?`)) return;
+    try { await api.delete(`/api/admin/mcp/account-tokens/${encodeURIComponent(accountId)}`); await load(); }
+    catch (e) { setErr(mcpErr(e)); }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Advanced — MCP server"
+        subtitle="Connect your Backblaze MCP server. Partner staff use the master token (full scope); each customer account uses its own scoped token. Tokens are encrypted at rest and never returned."
+        icon={<KeyRound size={16} />}
+        action={
+          <div className="flex items-center gap-2">
+            {flash && <Tag variant="success">{flash}</Tag>}
+            {cfg && <Tag variant={cfg.enabled && cfg.hasToken ? 'success' : 'default'}>{cfg.enabled && cfg.hasToken ? 'Connected' : 'Off'}</Tag>}
+          </div>
+        }
+      />
+      <div className="space-y-4">
+        <Field
+          label="MCP server URL"
+          placeholder="https://mcp.example.com/mcp"
+          value={baseUrl}
+          onChange={setBaseUrl}
+          help="The Streamable HTTP endpoint of your MCP server."
+          mono
+        />
+        <Field
+          label={cfg?.hasToken ? 'Master bearer token (leave blank to keep current)' : 'Master bearer token'}
+          placeholder={cfg?.hasToken ? '•••••••• (saved)' : 'mcp_xxx…'}
+          value={token}
+          onChange={setToken}
+          help="Sent as 'Authorization: Bearer …' for partner-staff sessions. Full scope."
+          mono
+          secret
+          showSecret={showToken}
+          onToggleSecret={() => setShowToken(!showToken)}
+        />
+        <label className="flex items-center gap-2 text-xs text-ink-200">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 rounded border-ink-700 bg-ink-900" />
+          Enable the MCP console
+        </label>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={save} disabled={busy} className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-2 text-xs font-medium text-white hover:bg-bb-redDim disabled:opacity-60">
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button onClick={runTest} className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-xs font-medium text-ink-200 hover:bg-ink-800">
+            Test connection
+          </button>
+        </div>
+
+        {test && (
+          <div className={'flex items-start gap-3 rounded-lg border p-3 text-xs ' + (test.ok ? 'border-accent-green/30 bg-accent-green/5 text-accent-green' : 'border-bb-red/30 bg-bb-red/5 text-bb-red')}>
+            {test.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+            <div className="font-medium">{test.ok ? `Connected — ${test.toolCount} tool(s) available` : `Failed: ${test.error}`}</div>
+          </div>
+        )}
+        {err && (
+          <div role="alert" className="flex items-start gap-2 rounded-md border border-bb-red/30 bg-bb-red/10 px-3 py-2 text-xs text-bb-red">
+            <ShieldAlert size={14} className="mt-0.5 shrink-0" /> <span>{err}</span>
+          </div>
+        )}
+
+        {/* Per-customer scoped tokens */}
+        <div className="rounded-lg border border-ink-700 bg-ink-900/40 p-3">
+          <div className="mb-2 text-xs font-semibold text-ink-100">Per-customer scoped tokens</div>
+          {tokens.length === 0 ? (
+            <p className="text-[11px] text-ink-400">No scoped tokens yet. Customer-portal users have no MCP access until you add one here.</p>
+          ) : (
+            <ul className="mb-3 space-y-1">
+              {tokens.map((t) => (
+                <li key={t.accountId} className="flex items-center justify-between gap-2 rounded border border-ink-800 bg-ink-900/60 px-2 py-1.5 text-[11px]">
+                  <span className="min-w-0 truncate"><span className="font-mono text-ink-200">{t.accountId}</span>{t.label && <span className="ml-2 text-ink-400">{t.label}</span>}</span>
+                  <button onClick={() => delToken(t.accountId)} className="shrink-0 rounded px-1.5 py-0.5 text-ink-400 hover:bg-bb-red/10 hover:text-bb-red">
+                    <Trash2 size={12} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form onSubmit={addToken} className="grid grid-cols-1 gap-2 sm:grid-cols-[1.3fr,1fr,1.3fr,auto]">
+            <input value={acct.accountId} onChange={(e) => setAcct({ ...acct, accountId: e.target.value })} placeholder="accountId" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
+            <input value={acct.label} onChange={(e) => setAcct({ ...acct, label: e.target.value })} placeholder="label (optional)" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 text-xs text-ink-100" />
+            <input value={acct.token} onChange={(e) => setAcct({ ...acct, token: e.target.value })} placeholder="scoped token" type="password" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
+            <button type="submit" className="inline-flex h-8 items-center justify-center rounded-md border border-ink-700 bg-ink-850 px-3 text-xs font-medium text-ink-200 hover:bg-ink-800">Add</button>
+          </form>
+        </div>
+      </div>
+    </Card>
   );
 }

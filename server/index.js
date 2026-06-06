@@ -23,6 +23,8 @@ import customerB2Router from './routes/customerB2.js';
 import masterB2Router from './routes/masterB2.js';
 import customerAdminRouter from './routes/customerAdmin.js';
 import impersonateRouter from './routes/impersonate.js';
+import mcpRouter from './routes/mcp.js';
+import mcpAdminRouter from './routes/mcpAdmin.js';
 import { seedDefaultAdmin, seedDemoUsers, reconcileCustomerLoginsAgainstEjection } from './seed.js';
 import { scheduleObjectCountJob } from './jobs/objectCountJob.js';
 import { pruneAudit } from './audit.js';
@@ -60,6 +62,8 @@ app.use('/api/customer-b2', customerB2Router);
 app.use('/api/master-b2', masterB2Router);
 app.use('/api/customer-admin', customerAdminRouter);
 app.use('/api/impersonate', impersonateRouter);
+app.use('/api/admin/mcp', mcpAdminRouter);
+app.use('/api/mcp', mcpRouter);
 
 // 404 for unknown /api routes — never fall through to anything else.
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, Database, Globe, Receipt,
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
-  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Code2,
+  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Code2, Plug,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -53,6 +53,7 @@ const ALL_NAV = [
   { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
   { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requireAnyRole: ['admin', 'support'] },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
+  { id: 'mcp',       label: 'MCP console',          icon: Plug,             group: 'Developer' },
   { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
   { id: 'account',   label: 'My account',           icon: UserCog,          group: 'System' },
   { id: 'settings',  label: 'Settings & credentials', icon: SettingsIcon,  group: 'System' },
@@ -430,6 +431,7 @@ const CUSTOMER_NAV = [
   { id: 'usage',           label: 'My usage',    icon: Receipt,         group: 'My account' },
   { id: 'keys',            label: 'My keys',     icon: KeyRound,        group: 'My account' },
   { id: 'customer-users',  label: 'My team',     icon: Users,           group: 'My account', adminOnly: true },
+  { id: 'mcp',             label: 'MCP console', icon: Plug,            group: 'Developer' },
   { id: 'account',         label: 'My account',  icon: UserCog,         group: 'System' },
 ];
 

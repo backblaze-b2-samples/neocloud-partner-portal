@@ -13,51 +13,21 @@
 // genuinely need it (e.g. seeding scripts authorizing as a sub-account).
 // =============================================================================
 
-import crypto from 'node:crypto';
 import { db } from './db.js';
+import { encryptSecret, decryptSecret } from './secretbox.js';
 
 // ---------------------------------------------------------------------------
-// Encryption helpers
+// Encryption helpers — thin adapters over secretbox keeping the column names
+// this module already uses.
 // ---------------------------------------------------------------------------
-
-function deriveKey() {
-  const raw = process.env.CREDENTIAL_ENCRYPTION_KEY;
-  if (!raw || raw.length < 32) {
-    throw new Error(
-      'CREDENTIAL_ENCRYPTION_KEY must be set and at least 32 characters. ' +
-      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"'
-    );
-  }
-  // SHA-256 the env value to always get a 32-byte AES key, regardless of input length.
-  return crypto.createHash('sha256').update(raw, 'utf8').digest();
-}
 
 function encrypt(plaintext) {
-  const key = deriveKey();
-  const iv  = crypto.randomBytes(12); // 96-bit IV recommended for GCM
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag(); // 128-bit auth tag
-  return {
-    encryptedApplicationKey: ciphertext.toString('base64'),
-    keyIv:  iv.toString('base64'),
-    keyTag: tag.toString('base64'),
-  };
+  const { ciphertext, iv, tag } = encryptSecret(plaintext);
+  return { encryptedApplicationKey: ciphertext, keyIv: iv, keyTag: tag };
 }
 
 function decrypt(encryptedApplicationKey, keyIv, keyTag) {
-  const key = deriveKey();
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    key,
-    Buffer.from(keyIv, 'base64')
-  );
-  decipher.setAuthTag(Buffer.from(keyTag, 'base64'));
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(encryptedApplicationKey, 'base64')),
-    decipher.final(),
-  ]);
-  return plaintext.toString('utf8');
+  return decryptSecret(encryptedApplicationKey, keyIv, keyTag);
 }
 
 // ---------------------------------------------------------------------------
