@@ -4,6 +4,7 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
+  Lock, Activity, Shield, MapPin,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -14,12 +15,16 @@ import * as b2 from '../api/b2Adapter.js';
 const ALL_NAV = [
   { id: 'overview',  label: 'Executive overview',  icon: LayoutDashboard, group: 'Insights' },
   { id: 'cockpit',   label: 'Business cockpit',     icon: Wallet,          group: 'Insights' },
+  { id: 'pulse',     label: 'Live pulse',           icon: Activity,        group: 'Insights' },
   { id: 'groups',    label: 'Groups',               icon: FolderTree,      group: 'Insights' },
   { id: 'partner',   label: 'Customers',                 icon: Users,        group: 'Insights' },
   { id: 'storage',   label: 'Storage & buckets',    icon: Database,         group: 'Operations' },
   { id: 'regions',   label: 'Regions & placement',  icon: Globe,            group: 'Operations' },
+  { id: 'residency', label: 'Data residency',       icon: MapPin,           group: 'Operations' },
   { id: 'usage',     label: 'Usage & billing',      icon: Receipt,          group: 'Operations' },
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
+  { id: 'immutability', label: 'Ransomware protection', icon: Lock,         group: 'Security' },
+  { id: 'trust',     label: 'Trust Center',         icon: Shield,           group: 'Security' },
   { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requireRole: 'admin' },
   { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
   { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requireAnyRole: ['admin', 'support'] },
