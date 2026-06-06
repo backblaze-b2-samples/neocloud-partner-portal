@@ -99,6 +99,7 @@ function CustomerShell() {
 
   const [active, setActive] = useState('my-overview');
   const [params, setParams] = useState({});
+  const [navOpen, setNavOpen] = useState(false);
 
   configureAdapter({
     mode: config.mode,
@@ -115,6 +116,7 @@ function CustomerShell() {
   const navigate = useCallback((view, p = {}) => {
     setActive(view);
     setParams(p);
+    setNavOpen(false);
     document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -147,10 +149,10 @@ function CustomerShell() {
       <div className="flex h-full flex-col">
         <ImpersonationBanner />
         <div className="flex min-h-0 flex-1">
-          <CustomerSidebar active={active} onSelect={(id) => navigate(id)} isCustomerAdmin={isCustomerAdmin} />
+          <CustomerSidebar active={active} onSelect={(id) => navigate(id)} isCustomerAdmin={isCustomerAdmin} mobileOpen={navOpen} onMobileClose={() => setNavOpen(false)} />
           <div className="flex min-w-0 flex-1 flex-col">
-            <CustomerTopBar active={active} />
-            <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
+            <CustomerTopBar active={active} onMenu={() => setNavOpen(true)} />
+            <main className="flex-1 overflow-y-auto px-4 py-6 pb-safe-b sm:px-6 lg:px-10 lg:py-8">
               <Suspense fallback={<LoadingState label="Loading view" />}>
                 <View key={`${active}-${config.mode}`} {...viewParams} />
               </Suspense>
@@ -166,6 +168,7 @@ function Shell() {
   const { config, isAuthenticated, authReady, isAdmin, isSupport, isCustomer, user } = useApp();
   const [active, setActive] = useState('overview');
   const [params, setParams] = useState({});
+  const [navOpen, setNavOpen] = useState(false);
 
   // Configure adapters synchronously during render — NOT in a useEffect.
   // If this were a useEffect, child effects (view data fetches) would fire
@@ -186,6 +189,7 @@ function Shell() {
   const navigate = useCallback((view, p = {}) => {
     setActive(view);
     setParams(p);
+    setNavOpen(false);
     document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -228,10 +232,10 @@ function Shell() {
       <div className="flex h-full flex-col">
         <ImpersonationBanner />
         <div className="flex min-h-0 flex-1">
-          <Sidebar active={active} onSelect={(id) => navigate(id)} />
+          <Sidebar active={active} onSelect={(id) => navigate(id)} mobileOpen={navOpen} onMobileClose={() => setNavOpen(false)} />
           <div className="flex min-w-0 flex-1 flex-col">
-            <TopBar active={active} onOpenSettings={() => navigate('settings')} />
-            <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
+            <TopBar active={active} onOpenSettings={() => navigate('settings')} onMenu={() => setNavOpen(true)} />
+            <main className="flex-1 overflow-y-auto px-4 py-6 pb-safe-b sm:px-6 lg:px-10 lg:py-8">
               <Suspense fallback={<LoadingState label="Loading view" />}>
                 {/* key includes mode so switching demo↔live fully remounts the
                     view and re-fires all useEffect data fetches. */}

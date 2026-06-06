@@ -3,7 +3,7 @@ import {
   ShieldCheck, UserPlus, KeyRound, Power, RefreshCcw,
   AlertTriangle, CheckCircle2, Copy, Loader2, Lock,
 } from 'lucide-react';
-import { Card, CardHeader, LoadingState } from '../components/ui.jsx';
+import { Card, CardHeader, LoadingState, MobileCardRow } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { useNav } from '../lib/nav.js';
 import { api, ApiError } from '../lib/apiClient.js';
@@ -157,6 +157,59 @@ export default function UserManagementView() {
 
 function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId, onUpdate, onResetPassword }) {
   const { navigate } = useNav();
+
+  // Cell renderers shared between the desktop table and the mobile card list.
+  const emailCell = (u) => {
+    const isMe = u.id === me?.id;
+    return (
+      <>
+        <button
+          onClick={() => navigate('user-detail', { userId: u.id })}
+          className="font-medium text-ink-100 hover:text-bb-red focus:outline-none"
+          title="View user detail + activity"
+        >
+          {u.email}
+        </button>
+        {isMe && <span className="ml-2 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet">you</span>}
+        {u.protected && <span className="ml-2 inline-flex items-center gap-1 rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 ring-1 ring-ink-600"><Lock size={9} /> protected</span>}
+        {u.mustChangePassword && <span className="ml-2 rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>}
+      </>
+    );
+  };
+  const roleSelect = (u) => (
+    <select
+      disabled={busyId === u.id || !!u.protected}
+      value={u.role}
+      onChange={(e) => onUpdate(u.id, { role: e.target.value })}
+      className="h-8 rounded border border-ink-700 bg-ink-900 px-1.5 text-xs text-ink-100 focus:outline-none disabled:opacity-50 lg:h-7"
+    >
+      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+    </select>
+  );
+  const statusBadge = (u) => (
+    <span className={cx(
+      'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+      u.active
+        ? 'bg-accent-green/10 text-accent-green ring-accent-green/30'
+        : 'bg-ink-700 text-ink-300 ring-ink-600'
+    )}>{u.active ? 'Active' : 'Inactive'}</span>
+  );
+  const actionButtons = (u) => (
+    <>
+      <ActionBtn onClick={() => onUpdate(u.id, { mustChangePassword: !u.mustChangePassword })}>
+        {u.mustChangePassword ? 'Clear reset flag' : 'Force reset'}
+      </ActionBtn>
+      <ActionBtn onClick={() => onResetPassword(u)} icon={<KeyRound size={11} />}>Reset password</ActionBtn>
+      <ActionBtn
+        danger={u.active}
+        onClick={() => onUpdate(u.id, { active: !u.active })}
+        icon={<Power size={11} />}
+      >
+        {u.active ? 'Deactivate' : 'Reactivate'}
+      </ActionBtn>
+    </>
+  );
+
   return (
     <Card padding="p-0">
       <div className="border-b border-ink-700 px-5 py-3">
@@ -169,82 +222,74 @@ function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId,
       ) : users.length === 0 ? (
         <div className="p-5 text-xs text-ink-400">{emptyLabel}</div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-ink-900/50 text-[10px] uppercase tracking-wider text-ink-400">
-              <tr>
-                <Th>Email</Th><Th>Role</Th><Th>Account</Th><Th>Status</Th><Th>Created</Th><Th>Last sign-in</Th><Th className="text-right">Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => {
-                const isMe = u.id === me?.id;
-                const busy = busyId === u.id;
-                const protected_ = !!u.protected;
-                return (
-                  <tr key={u.id} className="border-t border-ink-800 text-ink-200">
-                    <Td>
-                      <button
-                        onClick={() => navigate('user-detail', { userId: u.id })}
-                        className="font-medium text-ink-100 hover:text-bb-red focus:outline-none"
-                        title="View user detail + activity"
-                      >
-                        {u.email}
-                      </button>
-                      {isMe && <span className="ml-2 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet">you</span>}
-                      {protected_ && <span className="ml-2 inline-flex items-center gap-1 rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 ring-1 ring-ink-600"><Lock size={9} /> protected</span>}
-                      {u.mustChangePassword && <span className="ml-2 rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>}
-                    </Td>
-                    <Td>
-                      <select
-                        disabled={busy || protected_}
-                        value={u.role}
-                        onChange={(e) => onUpdate(u.id, { role: e.target.value })}
-                        className="h-7 rounded border border-ink-700 bg-ink-900 px-1.5 text-xs text-ink-100 focus:outline-none disabled:opacity-50"
-                      >
-                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                      </select>
-                    </Td>
-                    <Td className="font-mono text-[10.5px] text-ink-400">{u.accountId || '—'}</Td>
-                    <Td>
-                      <span className={cx(
-                        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
-                        u.active
-                          ? 'bg-accent-green/10 text-accent-green ring-accent-green/30'
-                          : 'bg-ink-700 text-ink-300 ring-ink-600'
-                      )}>{u.active ? 'Active' : 'Inactive'}</span>
-                    </Td>
-                    <Td>{shortDate(u.createdAt)}</Td>
-                    <Td title={u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : ''}>
-                      {u.lastLoginAt ? relativeTime(u.lastLoginAt) : '—'}
-                    </Td>
-                    <Td className="text-right">
-                      {busy && <Loader2 size={12} className="ml-auto animate-spin text-ink-400" />}
-                      {!busy && !protected_ && (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <ActionBtn onClick={() => onUpdate(u.id, { mustChangePassword: !u.mustChangePassword })}>
-                            {u.mustChangePassword ? 'Clear reset flag' : 'Force reset'}
-                          </ActionBtn>
-                          <ActionBtn onClick={() => onResetPassword(u)} icon={<KeyRound size={11} />}>Reset password</ActionBtn>
-                          <ActionBtn
-                            danger={u.active}
-                            onClick={() => onUpdate(u.id, { active: !u.active })}
-                            icon={<Power size={11} />}
-                          >
-                            {u.active ? 'Deactivate' : 'Reactivate'}
-                          </ActionBtn>
-                        </div>
-                      )}
-                      {!busy && protected_ && (
-                        <span className="text-[10.5px] text-ink-500 italic">protected account</span>
-                      )}
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {/* Desktop: full table */}
+          <div className="hidden overflow-x-auto lg:block">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-ink-900/50 text-[10px] uppercase tracking-wider text-ink-400">
+                <tr>
+                  <Th>Email</Th><Th>Role</Th><Th>Account</Th><Th>Status</Th><Th>Created</Th><Th>Last sign-in</Th><Th className="text-right">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => {
+                  const busy = busyId === u.id;
+                  const protected_ = !!u.protected;
+                  return (
+                    <tr key={u.id} className="border-t border-ink-800 text-ink-200">
+                      <Td>{emailCell(u)}</Td>
+                      <Td>{roleSelect(u)}</Td>
+                      <Td className="font-mono text-[10.5px] text-ink-400">{u.accountId || '—'}</Td>
+                      <Td>{statusBadge(u)}</Td>
+                      <Td>{shortDate(u.createdAt)}</Td>
+                      <Td title={u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : ''}>
+                        {u.lastLoginAt ? relativeTime(u.lastLoginAt) : '—'}
+                      </Td>
+                      <Td className="text-right">
+                        {busy && <Loader2 size={12} className="ml-auto animate-spin text-ink-400" />}
+                        {!busy && !protected_ && (
+                          <div className="flex items-center justify-end gap-1.5">{actionButtons(u)}</div>
+                        )}
+                        {!busy && protected_ && (
+                          <span className="text-[10.5px] text-ink-500 italic">protected account</span>
+                        )}
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile: stacked cards */}
+          <div className="space-y-3 p-3 lg:hidden">
+            {users.map((u) => {
+              const busy = busyId === u.id;
+              const protected_ = !!u.protected;
+              return (
+                <div key={u.id} className="rounded-lg border border-ink-800 bg-ink-900/40 p-3 text-xs text-ink-200">
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div className="min-w-0">{emailCell(u)}</div>
+                    {statusBadge(u)}
+                  </div>
+                  <MobileCardRow label="Role">{roleSelect(u)}</MobileCardRow>
+                  <MobileCardRow label="Account"><span className="font-mono text-[10.5px] text-ink-400">{u.accountId || '—'}</span></MobileCardRow>
+                  <MobileCardRow label="Created">{shortDate(u.createdAt)}</MobileCardRow>
+                  <MobileCardRow label="Last sign-in">{u.lastLoginAt ? relativeTime(u.lastLoginAt) : '—'}</MobileCardRow>
+                  <div className="mt-2 border-t border-ink-800 pt-2">
+                    {busy && <Loader2 size={14} className="animate-spin text-ink-400" />}
+                    {!busy && !protected_ && (
+                      <div className="flex flex-wrap items-center gap-1.5">{actionButtons(u)}</div>
+                    )}
+                    {!busy && protected_ && (
+                      <span className="text-[10.5px] text-ink-500 italic">protected account</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </Card>
   );

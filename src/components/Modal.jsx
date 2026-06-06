@@ -19,10 +19,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = 'md' })
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    // Bottom sheet on phones (items-end), centered dialog on sm and up.
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm" onClick={onClose} />
       <div className={cx(
-        'relative w-full rounded-xl border border-ink-700 bg-ink-900 shadow-2xl',
+        'relative flex max-h-[90vh] w-full flex-col rounded-t-2xl border border-ink-700 bg-ink-900 pb-safe-b shadow-2xl sm:max-h-[85vh] sm:rounded-xl sm:pb-0',
         sizes[size]
       )}>
         <div className="flex items-start justify-between border-b border-ink-700 px-5 py-4">
@@ -32,12 +33,12 @@ export function Modal({ open, onClose, title, subtitle, children, size = 'md' })
           </div>
           <button
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-md text-ink-400 hover:bg-ink-800 hover:text-ink-100"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-ink-400 hover:bg-ink-800 hover:text-ink-100 sm:h-7 sm:w-7"
           >
             <X size={14} />
           </button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto p-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
       </div>
     </div>
   );

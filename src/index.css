@@ -10,6 +10,19 @@ html, body, #root {
   height: 100%;
 }
 
+/* Use the dynamic viewport height on mobile so the collapsing iOS Safari
+   toolbar doesn't crop the layout. Falls back to 100% where dvh is unsupported. */
+@supports (height: 100dvh) {
+  html, body, #root {
+    height: 100dvh;
+  }
+}
+
+/* Kill the iOS rubber-band overscroll glow on the app shell. */
+#root {
+  overscroll-behavior-y: none;
+}
+
 body {
   font-feature-settings: 'cv11', 'ss01', 'ss03';
   background:
