@@ -11,6 +11,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, ApiError } from './apiClient.js';
 import { isDemoEmail } from './format.js';
+import { setTrainingEnabled } from './apiTrace.js';
 
 const STORAGE_KEY = 'bb-neocloud-config';
 
@@ -21,6 +22,7 @@ const defaultConfig = {
   proxyUrl: '',
   reportsBucketName: '',   // e.g. "b2-reports-357e9d54ce31" — auto-discovered when blank
   defaultGroupId: 'neocloud-internal',
+  trainingMode: false,     // when on, surface the real B2 API call behind each action
 };
 
 function load() {
@@ -55,6 +57,11 @@ export function AppProvider({ children }) {
     persist(config);
   }, [config]);
 
+  // Keep the framework-agnostic trace recorder in sync with the toggle.
+  useEffect(() => {
+    setTrainingEnabled(!!config.trainingMode);
+  }, [config.trainingMode]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -77,6 +84,10 @@ export function AppProvider({ children }) {
 
   const setCredentials = useCallback((creds) => {
     setConfig((c) => ({ ...c, ...creds }));
+  }, []);
+
+  const setTrainingMode = useCallback((on) => {
+    setConfig((c) => ({ ...c, trainingMode: !!on }));
   }, []);
 
   const reset = useCallback(() => setConfig(defaultConfig), []);
@@ -136,6 +147,8 @@ export function AppProvider({ children }) {
     isLive,
     hasCreds,
     canGoLive,
+    trainingMode: !!config.trainingMode,
+    setTrainingMode,
     setMode,
     setCredentials,
     reset,

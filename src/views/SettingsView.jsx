@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, KeyRound, ShieldAlert, FlaskConical, Zap, Eye, EyeOff, Trash2, CheckCircle2, XCircle, Info } from 'lucide-react';
+import { Settings as SettingsIcon, KeyRound, ShieldAlert, FlaskConical, Zap, Eye, EyeOff, Trash2, CheckCircle2, XCircle, Info, Code2 } from 'lucide-react';
 import { PageHeader, Card, CardHeader, Tag, SourceBadge } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { testConnection } from '../api/b2Adapter.js';
 import { isDemoEmail } from '../lib/format.js';
 
 export default function SettingsView() {
-  const { config, isLive, hasCreds, setMode, setCredentials, reset, user } = useApp();
+  const { config, isLive, hasCreds, setMode, setCredentials, reset, user, trainingMode, setTrainingMode } = useApp();
   const isDemo = isDemoEmail(user?.email);
   const [draft, setDraft] = useState({
     masterKeyId: config.masterKeyId,
@@ -160,6 +160,34 @@ export default function SettingsView() {
             </div>
           )}
         </form>
+      </Card>
+
+      {/* Developer / training mode */}
+      <Card>
+        <CardHeader
+          title="Training mode"
+          subtitle="Surface the real B2 API call behind each action — method, URL, request/response — so the portal doubles as a self-documenting reference. Authorization headers are masked and secrets (application keys, tokens) are redacted before display."
+          icon={<Code2 size={16} />}
+          action={
+            <button
+              type="button"
+              role="switch"
+              aria-checked={trainingMode}
+              onClick={() => setTrainingMode(!trainingMode)}
+              className={
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors ' +
+                (trainingMode ? 'bg-bb-red' : 'bg-ink-700')
+              }
+            >
+              <span className={'inline-block h-4 w-4 transform rounded-full bg-white transition-transform ' + (trainingMode ? 'translate-x-6' : 'translate-x-1')} />
+            </button>
+          }
+        />
+        <p className="text-xs text-ink-300">
+          When on, a <span className="font-medium text-ink-100">B2 API activity</span> button appears in the top bar.
+          In <span className="text-accent-violet">demo mode</span> it shows representative example calls; in{' '}
+          <span className="text-accent-green">live mode</span> it captures the actual requests this portal makes.
+        </p>
       </Card>
 
       {/* Safety disclosure */}
