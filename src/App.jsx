@@ -37,7 +37,6 @@ const CustomerUsers = lazy(() => import('./views/CustomerUsersView.jsx'));
 const Immutability = lazy(() => import('./views/ImmutabilityView.jsx'));
 const TrustCenter = lazy(() => import('./views/TrustCenterView.jsx'));
 const Residency = lazy(() => import('./views/ResidencyView.jsx'));
-const Pulse = lazy(() => import('./views/PulseView.jsx'));
 
 const VIEWS = {
   overview: Overview,
@@ -64,7 +63,6 @@ const VIEWS = {
   immutability: Immutability,
   trust: TrustCenter,
   residency: Residency,
-  pulse: Pulse,
 };
 
 // Routes only an admin may navigate to.

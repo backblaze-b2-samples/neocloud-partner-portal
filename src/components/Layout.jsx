@@ -4,7 +4,7 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
-  Lock, Activity, Shield, MapPin, Menu, X, Code2, Plug,
+  Lock, Shield, MapPin, Menu, X, Code2, Plug,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -45,7 +45,6 @@ function ApiActivityButton() {
 const ALL_NAV = [
   { id: 'overview',  label: 'Executive overview',  icon: LayoutDashboard, group: 'Insights' },
   { id: 'cockpit',   label: 'Business cockpit',     icon: Wallet,          group: 'Insights' },
-  { id: 'pulse',     label: 'Live pulse',           icon: Activity,        group: 'Insights' },
   { id: 'groups',    label: 'Groups',               icon: FolderTree,      group: 'Insights' },
   { id: 'partner',   label: 'Customers',                 icon: Users,        group: 'Insights' },
   { id: 'storage',   label: 'Storage & buckets',    icon: Database,         group: 'Operations' },
