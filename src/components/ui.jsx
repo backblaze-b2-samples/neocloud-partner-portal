@@ -298,7 +298,7 @@ export function Tag({ children, variant = 'default', className }) {
   }[variant];
   return (
     <span className={cx(
-      'inline-flex items-center rounded-md px-1.5 py-0.5 text-[10.5px] font-medium ring-1 ring-inset',
+      'inline-flex items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10.5px] font-medium ring-1 ring-inset',
       styles, className
     )}>
       {children}
