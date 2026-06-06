@@ -31,6 +31,14 @@ export default {
           green: '#2BD68A',
         },
       },
+      spacing: {
+        // iOS safe-area insets (notch / home indicator). Requires
+        // viewport-fit=cover on the viewport meta tag to resolve to non-zero.
+        'safe-t': 'env(safe-area-inset-top)',
+        'safe-b': 'env(safe-area-inset-bottom)',
+        'safe-l': 'env(safe-area-inset-left)',
+        'safe-r': 'env(safe-area-inset-right)',
+      },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],

@@ -4,7 +4,7 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
-  Lock, Activity, Shield, MapPin,
+  Lock, Activity, Shield, MapPin, Menu, X,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -72,22 +72,11 @@ function Logo() {
   );
 }
 
-export function Sidebar({ active, onSelect }) {
-  const { user } = useApp();
-  // Treat detail views as part of their parent tab visually.
-  const visualActive = ({
-    'customer-detail': 'partner',
-    'bucket-detail':   'storage',
-    'key-detail':      'keys',
-  })[active] || active;
-  const visible = navFor(user);
-  const groups = visible.reduce((acc, n) => {
-    if (!acc[n.group]) acc[n.group] = [];
-    acc[n.group].push(n);
-    return acc;
-  }, {});
+// Shared sidebar body — Logo + grouped nav + footer. Rendered both in the
+// static desktop <aside> and inside the mobile slide-in drawer.
+function SidebarInner({ groups, visualActive, onSelect }) {
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 backdrop-blur-sm">
+    <>
       <div className="border-b border-ink-800 px-5 py-4">
         <Logo />
       </div>
@@ -106,7 +95,9 @@ export function Sidebar({ active, onSelect }) {
                     <button
                       onClick={() => onSelect(n.id)}
                       className={cx(
-                        'group flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                        // py-2.5 base for a comfortable touch target in the drawer;
+                        // lg:py-2 restores the tighter desktop spacing.
+                        'group flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm transition-colors lg:py-2',
                         isActive
                           ? 'bg-bb-red/10 text-ink-100 ring-1 ring-inset ring-bb-red/30'
                           : 'text-ink-300 hover:bg-ink-800 hover:text-ink-100'
@@ -123,7 +114,69 @@ export function Sidebar({ active, onSelect }) {
         ))}
       </nav>
       <SidebarFooter />
-    </aside>
+    </>
+  );
+}
+
+// Slide-in navigation drawer for < lg screens. Always mounted so it can
+// animate; pointer-events are disabled while closed.
+function MobileDrawer({ open, onClose, children }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  return (
+    <div
+      className={cx('fixed inset-0 z-40 lg:hidden', !open && 'pointer-events-none')}
+      aria-hidden={!open}
+    >
+      <div
+        onClick={onClose}
+        className={cx(
+          'absolute inset-0 bg-ink-950/70 backdrop-blur-sm transition-opacity duration-200',
+          open ? 'opacity-100' : 'opacity-0'
+        )}
+      />
+      <aside
+        className={cx(
+          'absolute inset-y-0 left-0 flex w-72 max-w-[82%] flex-col border-r border-ink-800 bg-ink-900 pb-safe-b pl-safe-l pt-safe-t shadow-2xl transition-transform duration-200 ease-out',
+          open ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        {children}
+      </aside>
+    </div>
+  );
+}
+
+export function Sidebar({ active, onSelect, mobileOpen = false, onMobileClose }) {
+  const { user } = useApp();
+  // Treat detail views as part of their parent tab visually.
+  const visualActive = ({
+    'customer-detail': 'partner',
+    'bucket-detail':   'storage',
+    'key-detail':      'keys',
+  })[active] || active;
+  const visible = navFor(user);
+  const groups = visible.reduce((acc, n) => {
+    if (!acc[n.group]) acc[n.group] = [];
+    acc[n.group].push(n);
+    return acc;
+  }, {});
+  // In the drawer, selecting an item also dismisses it.
+  const selectAndClose = (id) => { onSelect(id); onMobileClose?.(); };
+  return (
+    <>
+      <aside className="hidden h-full w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 backdrop-blur-sm lg:flex">
+        <SidebarInner groups={groups} visualActive={visualActive} onSelect={onSelect} />
+      </aside>
+      <MobileDrawer open={mobileOpen} onClose={onMobileClose}>
+        <SidebarInner groups={groups} visualActive={visualActive} onSelect={selectAndClose} />
+      </MobileDrawer>
+    </>
   );
 }
 
@@ -195,20 +248,27 @@ function ModePill({ isLive }) {
   );
 }
 
-export function TopBar({ active, onOpenSettings }) {
+export function TopBar({ active, onOpenSettings, onMenu }) {
   const { isLive, hasCreds, setMode, canGoLive } = useApp();
   const current = NAV.find((n) => n.id === active);
   return (
-    <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-ink-800 bg-ink-900/70 px-6 backdrop-blur">
-      <div className="flex items-center gap-3 text-xs">
-        <div className="flex items-center gap-1.5 text-ink-400">
+    <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-2 border-b border-ink-800 bg-ink-900/70 px-4 backdrop-blur sm:px-6">
+      <div className="flex min-w-0 items-center gap-2 text-xs sm:gap-3">
+        <button
+          onClick={onMenu}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-ink-300 hover:bg-ink-800 hover:text-ink-100 lg:hidden"
+          aria-label="Open navigation menu"
+        >
+          <Menu size={18} />
+        </button>
+        <div className="hidden items-center gap-1.5 text-ink-400 sm:flex">
           <span>Partner Portal</span>
           <ChevronDown size={12} />
         </div>
-        <span className="text-ink-600">/</span>
-        <span className="font-medium text-ink-100">{current?.label || 'Dashboard'}</span>
+        <span className="hidden text-ink-600 sm:inline">/</span>
+        <span className="truncate font-medium text-ink-100">{current?.label || 'Dashboard'}</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         <GlobalSearch />
 
         {/* Mode toggle */}
@@ -240,14 +300,15 @@ export function TopBar({ active, onOpenSettings }) {
           </button>
         </div>
 
+        {/* Gear is redundant with the nav on mobile; show only on desktop. */}
         <button
           onClick={onOpenSettings}
-          className="grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100"
+          className="hidden h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 lg:grid"
           title="Settings & credentials"
         >
           <SettingsIcon size={14} />
         </button>
-        <button className="grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100">
+        <button className="hidden h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:grid sm:h-8 sm:w-8">
           <Bell size={14} />
         </button>
         <div className="hidden h-8 items-center gap-2 rounded-md border border-ink-700 bg-ink-850 px-2 text-[11px] text-ink-300 md:inline-flex">
@@ -269,7 +330,9 @@ function GlobalSearch() {
   const [hover, setHover] = useState(0);
   const [data, setData]   = useState({ customers: [], buckets: [], keys: [] });
   const [loaded, setLoaded] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false); // full-width search bar on phones
   const boxRef = useRef(null);
+  const mobileBoxRef = useRef(null);
 
   // Lazy-load the searchable set the first time the input is focused.
   // Cached for the lifetime of the page — re-mount on demo/live switch handles refresh.
@@ -292,10 +355,14 @@ function GlobalSearch() {
     return () => { cancelled = true; };
   }, [open, loaded]);
 
-  // Close dropdown on outside click.
+  // Close dropdown on outside click (checks both the desktop and mobile inputs).
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onDoc = (e) => {
+      const inDesktop = boxRef.current && boxRef.current.contains(e.target);
+      const inMobile  = mobileBoxRef.current && mobileBoxRef.current.contains(e.target);
+      if (!inDesktop && !inMobile) setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
@@ -350,48 +417,88 @@ function GlobalSearch() {
     key:      'text-accent-amber',
   };
 
+  // Results panel — shared between the desktop inline input and the mobile bar.
+  const dropdown = open && query.trim() && (
+    <div className="absolute right-0 top-full z-30 mt-1 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-ink-700 bg-ink-900 shadow-xl">
+      {!loaded && (
+        <div className="p-3 text-[11px] text-ink-400">Loading index…</div>
+      )}
+      {loaded && matches.length === 0 && (
+        <div className="p-3 text-[11px] text-ink-400">No matches for “{query}”.</div>
+      )}
+      <div className="max-h-96 overflow-y-auto">
+        {matches.map((m, i) => (
+          <button
+            key={`${m.type}-${m.sub}-${i}`}
+            onMouseDown={(e) => { e.preventDefault(); pick(m); }}
+            onMouseEnter={() => setHover(i)}
+            className={cx(
+              'flex w-full items-center justify-between gap-3 border-b border-ink-800 px-3 py-2.5 text-left text-xs last:border-b-0',
+              i === hover ? 'bg-ink-850' : 'hover:bg-ink-850/60'
+            )}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium text-ink-100">{m.label}</div>
+              <div className="truncate font-mono text-[10.5px] text-ink-400">{m.sub}</div>
+            </div>
+            <span className={cx('text-[10px] uppercase tracking-wider', TYPE_COLOR[m.type])}>{m.type}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
-    <div ref={boxRef} className="relative">
-      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
-      <input
-        type="text"
-        placeholder="Search buckets, customers, keys…"
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={onKeyDown}
-        className="h-8 w-40 rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-xs text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40 sm:w-56 md:w-72"
-      />
-      {open && query.trim() && (
-        <div className="absolute right-0 top-9 z-30 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-ink-700 bg-ink-900 shadow-xl">
-          {!loaded && (
-            <div className="p-3 text-[11px] text-ink-400">Loading index…</div>
-          )}
-          {loaded && matches.length === 0 && (
-            <div className="p-3 text-[11px] text-ink-400">No matches for “{query}”.</div>
-          )}
-          <div className="max-h-96 overflow-y-auto">
-            {matches.map((m, i) => (
-              <button
-                key={`${m.type}-${m.sub}-${i}`}
-                onMouseDown={(e) => { e.preventDefault(); pick(m); }}
-                onMouseEnter={() => setHover(i)}
-                className={cx(
-                  'flex w-full items-center justify-between gap-3 border-b border-ink-800 px-3 py-2 text-left text-xs last:border-b-0',
-                  i === hover ? 'bg-ink-850' : 'hover:bg-ink-850/60'
-                )}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium text-ink-100">{m.label}</div>
-                  <div className="truncate font-mono text-[10.5px] text-ink-400">{m.sub}</div>
-                </div>
-                <span className={cx('text-[10px] uppercase tracking-wider', TYPE_COLOR[m.type])}>{m.type}</span>
-              </button>
-            ))}
+    <>
+      {/* Desktop / tablet: inline input (md and up) */}
+      <div ref={boxRef} className="relative hidden md:block">
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
+        <input
+          type="text"
+          placeholder="Search buckets, customers, keys…"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          className="h-8 w-56 rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-xs text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40 md:w-72"
+        />
+        {dropdown}
+      </div>
+
+      {/* Mobile: icon trigger that expands a full-width search bar */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="grid h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 md:hidden"
+        aria-label="Search"
+      >
+        <Search size={16} />
+      </button>
+      {mobileOpen && (
+        <div className="absolute inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-ink-900 px-4 md:hidden">
+          <div ref={mobileBoxRef} className="relative flex-1">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
+            <input
+              type="text"
+              autoFocus
+              placeholder="Search buckets, customers, keys…"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+              onFocus={() => setOpen(true)}
+              onKeyDown={onKeyDown}
+              className="h-10 w-full rounded-md border border-ink-700 bg-ink-850 pl-8 pr-3 text-sm text-ink-100 placeholder:text-ink-400 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
+            />
+            {dropdown}
           </div>
+          <button
+            onClick={() => { setMobileOpen(false); setOpen(false); setQuery(''); }}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-ink-300 hover:bg-ink-800 hover:text-ink-100"
+            aria-label="Close search"
+          >
+            <X size={18} />
+          </button>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -408,7 +515,7 @@ const CUSTOMER_NAV = [
   { id: 'account',         label: 'My account',  icon: UserCog,         group: 'System' },
 ];
 
-export function CustomerSidebar({ active, onSelect, isCustomerAdmin }) {
+export function CustomerSidebar({ active, onSelect, isCustomerAdmin, mobileOpen = false, onMobileClose }) {
   const visualActive = ({
     'bucket-detail': 'storage',
     'key-detail':    'keys',
@@ -420,69 +527,48 @@ export function CustomerSidebar({ active, onSelect, isCustomerAdmin }) {
     acc[n.group].push(n);
     return acc;
   }, {});
+  const selectAndClose = (id) => { onSelect(id); onMobileClose?.(); };
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 backdrop-blur-sm">
-      <div className="border-b border-ink-800 px-5 py-4">
-        <Logo />
-      </div>
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
-        {Object.entries(groups).map(([group, items]) => (
-          <div key={group} className="mb-4">
-            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-ink-400">
-              {group}
-            </div>
-            <ul className="space-y-0.5">
-              {items.map((n) => {
-                const Icon = n.icon;
-                const isActive = visualActive === n.id;
-                return (
-                  <li key={n.id}>
-                    <button
-                      onClick={() => onSelect(n.id)}
-                      className={cx(
-                        'group flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                        isActive
-                          ? 'bg-bb-red/10 text-ink-100 ring-1 ring-inset ring-bb-red/30'
-                          : 'text-ink-300 hover:bg-ink-800 hover:text-ink-100'
-                      )}
-                    >
-                      <Icon size={16} className={isActive ? 'text-bb-red' : 'text-ink-400 group-hover:text-ink-200'} />
-                      <span className="truncate">{n.label}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-      </nav>
-      <SidebarFooter />
-    </aside>
+    <>
+      <aside className="hidden h-full w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 backdrop-blur-sm lg:flex">
+        <SidebarInner groups={groups} visualActive={visualActive} onSelect={onSelect} />
+      </aside>
+      <MobileDrawer open={mobileOpen} onClose={onMobileClose}>
+        <SidebarInner groups={groups} visualActive={visualActive} onSelect={selectAndClose} />
+      </MobileDrawer>
+    </>
   );
 }
 
-export function CustomerTopBar({ active }) {
+export function CustomerTopBar({ active, onMenu }) {
   const { logout } = useApp();
   const current = CUSTOMER_NAV.find((n) => n.id === active);
   const label = current?.label || 'My Portal';
   return (
-    <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-ink-800 bg-ink-900/70 px-6 backdrop-blur">
-      <div className="flex items-center gap-3 text-xs">
-        <div className="flex items-center gap-1.5 text-ink-400">
+    <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-2 border-b border-ink-800 bg-ink-900/70 px-4 backdrop-blur sm:px-6">
+      <div className="flex min-w-0 items-center gap-2 text-xs sm:gap-3">
+        <button
+          onClick={onMenu}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-ink-300 hover:bg-ink-800 hover:text-ink-100 lg:hidden"
+          aria-label="Open navigation menu"
+        >
+          <Menu size={18} />
+        </button>
+        <div className="hidden items-center gap-1.5 text-ink-400 sm:flex">
           <span>My Portal</span>
           <ChevronDown size={12} />
         </div>
-        <span className="text-ink-600">/</span>
-        <span className="font-medium text-ink-100">{label}</span>
+        <span className="hidden text-ink-600 sm:inline">/</span>
+        <span className="truncate font-medium text-ink-100">{label}</span>
       </div>
       <div className="flex items-center gap-2">
-        <button className="grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100">
+        <button className="hidden h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:grid sm:h-8 sm:w-8">
           <Bell size={14} />
         </button>
         <button
           onClick={() => { logout(); }}
-          className="grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100"
+          className="grid h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 lg:h-8 lg:w-8"
           title="Sign out"
           aria-label="Sign out"
         >

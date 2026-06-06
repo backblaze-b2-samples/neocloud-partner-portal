@@ -341,5 +341,17 @@ export function TD({ children, className }) {
   return <td className={cx('px-4 py-3 align-middle text-ink-200', className)}>{children}</td>;
 }
 
+// Label:value row used to build the mobile card layout that replaces a data
+// table on small screens. Pair with `hidden lg:block` on the table and
+// `lg:hidden` on the card list. Omit `label` for a full-width row.
+export function MobileCardRow({ label, children, className }) {
+  return (
+    <div className={cx('flex items-start justify-between gap-3 py-1 text-xs', className)}>
+      {label && <span className="shrink-0 text-ink-400">{label}</span>}
+      <span className="min-w-0 text-right text-ink-200">{children}</span>
+    </div>
+  );
+}
+
 // Helper: render compact byte / number values
 export { compactNumber, currency };

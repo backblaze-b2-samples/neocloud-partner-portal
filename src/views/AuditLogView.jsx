@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, Download, Filter, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   PageHeader, Card, SourceBadge, LoadingState, ErrorState,
-  Table, THead, TBody, TR, TH, TD,
+  Table, THead, TBody, TR, TH, TD, MobileCardRow,
 } from '../components/ui.jsx';
 import { api, ApiError } from '../lib/apiClient.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -151,54 +151,59 @@ export default function AuditLogView() {
             No audit entries match your filters.
           </div>
         ) : (
-          <Table>
-            <THead>
-              <TR hover={false}>
-                <TH>When</TH>
-                <TH>Actor</TH>
-                <TH>Action</TH>
-                <TH>Target</TH>
-                <TH>IP</TH>
-                <TH>Details</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {entries.map((e) => (
-                <TR key={e.id} hover={false}>
-                  <TD title={new Date(e.created_at).toLocaleString()} className="whitespace-nowrap text-ink-200">
-                    {relativeTime(e.created_at)}
-                  </TD>
-                  <TD>
-                    {e.actor_email ? (
-                      <button
-                        onClick={() => navigate('user-detail', { userId: e.actor_id })}
-                        className="text-ink-100 hover:text-bb-red focus:outline-none"
-                      >
-                        {e.actor_email}
-                      </button>
-                    ) : (
-                      <span className="text-ink-500 italic">system</span>
-                    )}
-                  </TD>
-                  <TD><ActionTag action={e.action} /></TD>
-                  <TD className="text-ink-300">
-                    {e.target_email ? (
-                      <button
-                        onClick={() => navigate('user-detail', { userId: e.target_user_id })}
-                        className="hover:text-bb-red focus:outline-none"
-                      >
-                        {e.target_email}
-                      </button>
-                    ) : (e.target_user_id ? `user #${e.target_user_id}` : '—')}
-                  </TD>
-                  <TD className="font-mono text-[11px] text-ink-400">{e.ip || '—'}</TD>
-                  <TD className="max-w-md">
-                    <DetailsCell raw={e.details} />
-                  </TD>
+          <>
+            {/* Desktop: full table */}
+            <Table className="hidden lg:block">
+              <THead>
+                <TR hover={false}>
+                  <TH>When</TH>
+                  <TH>Actor</TH>
+                  <TH>Action</TH>
+                  <TH>Target</TH>
+                  <TH>IP</TH>
+                  <TH>Details</TH>
                 </TR>
+              </THead>
+              <TBody>
+                {entries.map((e) => (
+                  <TR key={e.id} hover={false}>
+                    <TD title={new Date(e.created_at).toLocaleString()} className="whitespace-nowrap text-ink-200">
+                      {relativeTime(e.created_at)}
+                    </TD>
+                    <TD>{actorNode(e, navigate)}</TD>
+                    <TD><ActionTag action={e.action} /></TD>
+                    <TD className="text-ink-300">{targetNode(e, navigate)}</TD>
+                    <TD className="font-mono text-[11px] text-ink-400">{e.ip || '—'}</TD>
+                    <TD className="max-w-md">
+                      <DetailsCell raw={e.details} />
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+
+            {/* Mobile: stacked cards */}
+            <div className="space-y-3 p-3 lg:hidden">
+              {entries.map((e) => (
+                <div key={e.id} className="rounded-lg border border-ink-800 bg-ink-900/40 p-3 text-xs">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <ActionTag action={e.action} />
+                    <span className="shrink-0 whitespace-nowrap text-[11px] text-ink-400" title={new Date(e.created_at).toLocaleString()}>
+                      {relativeTime(e.created_at)}
+                    </span>
+                  </div>
+                  <MobileCardRow label="Actor">{actorNode(e, navigate)}</MobileCardRow>
+                  <MobileCardRow label="Target">{targetNode(e, navigate)}</MobileCardRow>
+                  <MobileCardRow label="IP"><span className="font-mono text-[11px] text-ink-400">{e.ip || '—'}</span></MobileCardRow>
+                  {e.details && (
+                    <div className="mt-2 break-words border-t border-ink-800 pt-2">
+                      <DetailsCell raw={e.details} />
+                    </div>
+                  )}
+                </div>
               ))}
-            </TBody>
-          </Table>
+            </div>
+          </>
         )}
 
         {entries !== null && entries.length > 0 && (
@@ -227,6 +232,32 @@ export default function AuditLogView() {
   );
 }
 
+// Actor / target cells — shared between the desktop table and mobile cards.
+function actorNode(e, navigate) {
+  if (!e.actor_email) return <span className="text-ink-500 italic">system</span>;
+  return (
+    <button
+      onClick={() => navigate('user-detail', { userId: e.actor_id })}
+      className="text-ink-100 hover:text-bb-red focus:outline-none"
+    >
+      {e.actor_email}
+    </button>
+  );
+}
+function targetNode(e, navigate) {
+  if (e.target_email) {
+    return (
+      <button
+        onClick={() => navigate('user-detail', { userId: e.target_user_id })}
+        className="hover:text-bb-red focus:outline-none"
+      >
+        {e.target_email}
+      </button>
+    );
+  }
+  return <>{e.target_user_id ? `user #${e.target_user_id}` : '—'}</>;
+}
+
 function ActionTag({ action }) {
   // Color action prefixes so categories are visually distinct.
   const family = action.split('.')[0];
@@ -240,6 +271,7 @@ function ActionTag({ action }) {
     reseller_plan:  'text-ink-200       ring-ink-600          bg-ink-700',
     authz:          'text-bb-red        ring-bb-red/30        bg-bb-red/10',
     admin:          'text-accent-violet ring-accent-violet/30 bg-accent-violet/10',
+    impersonation:  'text-accent-amber  ring-accent-amber/30  bg-accent-amber/10',
   };
   const cls = colors[family] || 'text-ink-300 ring-ink-700 bg-ink-800';
   return (
