@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, Database, Globe, Receipt,
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
-  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText,
+  LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Wallet,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -13,6 +13,7 @@ import * as b2 from '../api/b2Adapter.js';
 
 const ALL_NAV = [
   { id: 'overview',  label: 'Executive overview',  icon: LayoutDashboard, group: 'Insights' },
+  { id: 'cockpit',   label: 'Business cockpit',     icon: Wallet,          group: 'Insights' },
   { id: 'groups',    label: 'Groups',               icon: FolderTree,      group: 'Insights' },
   { id: 'partner',   label: 'Customers',                 icon: Users,        group: 'Insights' },
   { id: 'storage',   label: 'Storage & buckets',    icon: Database,         group: 'Operations' },
