@@ -127,13 +127,39 @@ const router = express.Router();
 router.use(requireAuth, requireNotDemo);
 
 const ALLOWED_ENDPOINTS = new Set([
+  // reads
   'b2_list_buckets',
   'b2_list_keys',
   'b2_list_file_names',
   'b2_list_file_versions',
   'b2_get_file_info',
+  // writes (gated to customer_admin / partner staff by requireCustomerWrite)
   'b2_create_bucket',
+  'b2_update_bucket',
+  'b2_delete_bucket',
+  'b2_create_key',
+  'b2_delete_key',
+  'b2_delete_file_version',
+  'b2_hide_file',
 ]);
+
+// State-changing endpoints: audited, and require write access (a
+// customer_readonly user can read but never mutate — see requireCustomerWrite).
+const MUTATING = new Set([
+  'b2_create_bucket',
+  'b2_update_bucket',
+  'b2_delete_bucket',
+  'b2_create_key',
+  'b2_delete_key',
+  'b2_delete_file_version',
+  'b2_hide_file',
+]);
+
+// Write access = partner staff (accountId null) OR customer_admin.
+// customer_readonly is explicitly excluded.
+function canWrite(user) {
+  return !!user && (!user.accountId || user.role === 'customer_admin');
+}
 
 // Endpoints that are semantically reads even though B2's API uses POST.
 // During read-only impersonation these must still work so the staff agent
@@ -192,6 +218,17 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
     return res.status(400).json({ error: `Endpoint '${endpoint}' not allowed via customer proxy.` });
   }
 
+  // Read-only customers may list/read but never mutate.
+  if (MUTATING.has(endpoint) && !canWrite(req.session.user)) {
+    audit({
+      actorId: req.session.user.id,
+      action:  'authz.denied',
+      details: { route: 'customer-b2', accountId, endpoint, reason: 'read_only' },
+      ip:      req.ip,
+    });
+    return res.status(403).json({ error: 'read_only', message: 'Read-only access — bucket, file, and key changes require an account admin.' });
+  }
+
   let auth;
   try {
     auth = await getSubAccountAuth(accountId);
@@ -206,7 +243,7 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
 
   const targetUrl = `${auth.apiUrl}/b2api/v4/${endpoint}`;
   // Only inject accountId for endpoints that require it; file-listing endpoints don't accept it.
-  const NEEDS_ACCOUNT_ID = new Set(['b2_list_buckets', 'b2_list_keys', 'b2_create_bucket']);
+  const NEEDS_ACCOUNT_ID = new Set(['b2_list_buckets', 'b2_list_keys', 'b2_create_bucket', 'b2_create_key', 'b2_update_bucket', 'b2_delete_bucket']);
   const body = NEEDS_ACCOUNT_ID.has(endpoint)
     ? { accountId: auth.accountId, ...req.body }
     : { ...req.body };
@@ -233,14 +270,21 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
       error: b2Res.ok ? undefined : text,
     });
 
-    // Audit only mutating endpoints. Read-only listings (b2_list_*,
-    // b2_get_file_info) fire on every page load and would flood the table.
-    const MUTATING = new Set(['b2_create_bucket']);
+    // Audit mutating endpoints (the MUTATING set is module-level). Read-only
+    // listings fire on every page load and would flood the table.
     if (b2Res.ok && MUTATING.has(endpoint)) {
       audit({
         actorId: req.session.user.id,
         action:  `customer_b2.${endpoint}`,
-        details: { accountId, bucketName: req.body?.bucketName ?? null },
+        details: {
+          accountId,
+          bucketName: req.body?.bucketName ?? null,
+          bucketId: req.body?.bucketId ?? null,
+          applicationKeyId: req.body?.applicationKeyId ?? null,
+          keyName: req.body?.keyName ?? null,
+          fileName: req.body?.fileName ?? null,
+          fileId: req.body?.fileId ?? null,
+        },
         ip:      req.ip,
       });
     }

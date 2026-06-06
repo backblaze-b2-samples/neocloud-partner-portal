@@ -27,6 +27,7 @@ const app = makeApp();
 
 let partnerSid, partnerCsrf;
 let customerSid, customerCsrf, customerAccountId;
+let readonlySid, readonlyCsrf;
 
 beforeAll(() => {
   db.prepare('DELETE FROM audit_log').run();
@@ -44,6 +45,13 @@ beforeAll(() => {
   });
   const c = createSession({ userId: customer.id });
   customerSid = c.sid; customerCsrf = c.csrf;
+
+  const readonly = createUser({
+    email: 'b2-readonly@test.com', passwordHash: 'h',
+    role: 'customer_readonly', accountId: customerAccountId,
+  });
+  const ro = createSession({ userId: readonly.id });
+  readonlySid = ro.sid; readonlyCsrf = ro.csrf;
 });
 
 // Helpers — cookies only, no CSRF header
@@ -147,8 +155,43 @@ describe('bucketName / bucketRegion validation (SSRF surface)', () => {
 
 describe('endpoint allow-list', () => {
   it('rejects disallowed B2 endpoints', async () => {
-    const r = await post(partnerSid, partnerCsrf)(`/api/customer-b2/${customerAccountId}/b2_delete_bucket`);
+    const r = await post(partnerSid, partnerCsrf)(`/api/customer-b2/${customerAccountId}/b2_cancel_large_file`);
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/not allowed/);
+  });
+
+  it('allows the new CRUD write endpoints past the allow-list', async () => {
+    for (const ep of ['b2_update_bucket', 'b2_delete_bucket', 'b2_create_key', 'b2_delete_key', 'b2_delete_file_version']) {
+      const r = await post(partnerSid, partnerCsrf)(`/api/customer-b2/${customerAccountId}/${ep}`);
+      // Not blocked by the allow-list (400 "not allowed"); fails later at cred lookup.
+      expect(r.body.error || '').not.toMatch(/not allowed/);
+    }
+  });
+});
+
+describe('write role gate (customer_readonly cannot mutate)', () => {
+  const writeEndpoints = ['b2_create_bucket', 'b2_update_bucket', 'b2_delete_bucket', 'b2_create_key', 'b2_delete_key', 'b2_delete_file_version'];
+
+  it('customer_readonly: 403 read_only on every write endpoint (own account)', async () => {
+    for (const ep of writeEndpoints) {
+      const r = await post(readonlySid, readonlyCsrf)(`/api/customer-b2/${customerAccountId}/${ep}`);
+      expect(r.status).toBe(403);
+      expect(r.body.error).toBe('read_only');
+    }
+  });
+
+  it('customer_readonly: reads are still allowed past the gate', async () => {
+    const r = await post(readonlySid, readonlyCsrf)(`/api/customer-b2/${customerAccountId}/b2_list_buckets`);
+    expect(r.status).not.toBe(403); // may 404 on cred lookup, but not gated
+  });
+
+  it('customer_admin: write endpoints pass the gate (own account)', async () => {
+    const r = await post(customerSid, customerCsrf)(`/api/customer-b2/${customerAccountId}/b2_create_bucket`);
+    expect(r.status).not.toBe(403);
+  });
+
+  it('partner staff: write endpoints pass the gate', async () => {
+    const r = await post(partnerSid, partnerCsrf)(`/api/customer-b2/${customerAccountId}/b2_create_bucket`);
+    expect(r.status).not.toBe(403);
   });
 });
