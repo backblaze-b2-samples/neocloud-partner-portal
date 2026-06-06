@@ -42,14 +42,22 @@ const insertSession = db.prepare(`
   INSERT INTO sessions (id, user_id, csrf_token, created_at, expires_at, ip, user_agent)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
+// Session lookup. LEFT JOINs the impersonation target so a single query
+// returns both the staff actor (u) and the effective user (t) when active.
 const selectSession = db.prepare(`
-  SELECT s.id, s.user_id, s.csrf_token, s.expires_at,
-         u.id AS uid, u.email, u.role, u.account_id, u.active, u.must_change_password
-  FROM sessions s JOIN users u ON u.id = s.user_id
+  SELECT s.id, s.user_id, s.csrf_token, s.expires_at, s.impersonating_user_id,
+         u.id AS uid, u.email, u.role, u.account_id, u.active, u.must_change_password,
+         t.id  AS tid, t.email AS t_email, t.role AS t_role, t.account_id AS t_account_id,
+         t.active AS t_active, t.must_change_password AS t_must_change_password
+  FROM sessions s
+  JOIN users u ON u.id = s.user_id
+  LEFT JOIN users t ON t.id = s.impersonating_user_id
   WHERE s.id = ? AND s.expires_at > ?
 `);
 const deleteSession = db.prepare(`DELETE FROM sessions WHERE id = ?`);
 const deleteUserSessions = db.prepare(`DELETE FROM sessions WHERE user_id = ?`);
+const setImpersonationStmt   = db.prepare(`UPDATE sessions SET impersonating_user_id = ? WHERE id = ?`);
+const clearImpersonationStmt = db.prepare(`UPDATE sessions SET impersonating_user_id = NULL WHERE id = ?`);
 
 export function createSession({ userId, ip, userAgent }) {
   const sid = randomToken(32);
@@ -65,6 +73,31 @@ export function getSession(sid) {
   const row = selectSession.get(sid, new Date().toISOString());
   if (!row) return null;
   if (!row.active) return null;
+
+  // If the staff session is impersonating a customer, the *effective* user
+  // (role + accountId everything else checks against) is the target.
+  // The original staff identity is exposed as `impersonator` so the audit
+  // log can attribute actions back to the real person.
+  if (row.impersonating_user_id && row.tid && row.t_active) {
+    return {
+      sid:  row.id,
+      csrf: row.csrf_token,
+      user: {
+        id: row.tid,
+        email: row.t_email,
+        role: row.t_role,
+        accountId: row.t_account_id || null,
+        active: !!row.t_active,
+        mustChangePassword: !!row.t_must_change_password,
+      },
+      impersonator: {
+        id: row.uid,
+        email: row.email,
+        role: row.role,
+      },
+    };
+  }
+
   return {
     sid: row.id,
     csrf: row.csrf_token,
@@ -77,6 +110,13 @@ export function getSession(sid) {
       mustChangePassword: !!row.must_change_password,
     },
   };
+}
+
+export function setImpersonation(sid, targetUserId) {
+  setImpersonationStmt.run(targetUserId, sid);
+}
+export function clearImpersonation(sid) {
+  clearImpersonationStmt.run(sid);
 }
 
 export function destroySession(sid) {

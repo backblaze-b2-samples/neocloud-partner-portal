@@ -22,7 +22,8 @@ import b2partnerRouter from './routes/b2partner.js';
 import customerB2Router from './routes/customerB2.js';
 import masterB2Router from './routes/masterB2.js';
 import customerAdminRouter from './routes/customerAdmin.js';
-import { seedDefaultAdmin, seedDemoUsers } from './seed.js';
+import impersonateRouter from './routes/impersonate.js';
+import { seedDefaultAdmin, seedDemoUsers, reconcileCustomerLoginsAgainstEjection } from './seed.js';
 import { scheduleObjectCountJob } from './jobs/objectCountJob.js';
 import { pruneAudit } from './audit.js';
 
@@ -58,6 +59,7 @@ app.use('/api/b2-partner', b2partnerRouter);
 app.use('/api/customer-b2', customerB2Router);
 app.use('/api/master-b2', masterB2Router);
 app.use('/api/customer-admin', customerAdminRouter);
+app.use('/api/impersonate', impersonateRouter);
 
 // 404 for unknown /api routes — never fall through to anything else.
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -74,6 +76,7 @@ app.use((err, req, res, _next) => {
   try {
     await seedDefaultAdmin();
     await seedDemoUsers();
+    reconcileCustomerLoginsAgainstEjection();
   } catch (e) {
     console.error('[seed] failed:', e?.message || e);
   }

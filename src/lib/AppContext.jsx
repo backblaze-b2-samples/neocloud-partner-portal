@@ -48,6 +48,7 @@ const AppContext = createContext(null);
 export function AppProvider({ children }) {
   const [config, setConfig] = useState(load);
   const [user, setUser] = useState(null);
+  const [impersonator, setImpersonator] = useState(null);
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
@@ -59,9 +60,9 @@ export function AppProvider({ children }) {
     (async () => {
       try {
         const me = await api.get('/api/auth/me');
-        if (!cancelled) setUser(me.user);
+        if (!cancelled) { setUser(me.user); setImpersonator(me.impersonator || null); }
       } catch {
-        if (!cancelled) setUser(null);
+        if (!cancelled) { setUser(null); setImpersonator(null); }
       } finally {
         if (!cancelled) setAuthReady(true);
       }
@@ -96,17 +97,27 @@ export function AppProvider({ children }) {
   const logout = useCallback(async () => {
     try { await api.post('/api/auth/logout'); } catch { /* ignore */ }
     setUser(null);
+    setImpersonator(null);
   }, []);
 
   const refreshUser = useCallback(async () => {
     try {
       const me = await api.get('/api/auth/me');
       setUser(me.user);
+      setImpersonator(me.impersonator || null);
       return me.user;
     } catch {
       setUser(null);
+      setImpersonator(null);
       return null;
     }
+  }, []);
+
+  // Start/stop impersonation. Reloading the page forces the right shell
+  // (CustomerShell vs Shell) to mount based on the new effective role.
+  const stopImpersonation = useCallback(async () => {
+    try { await api.post('/api/impersonate/stop'); } catch { /* ignore */ }
+    window.location.assign('/');
   }, []);
 
   const isLive = config.mode === 'live';
@@ -142,6 +153,9 @@ export function AppProvider({ children }) {
     login,
     logout,
     refreshUser,
+    impersonator,
+    isImpersonating: !!impersonator,
+    stopImpersonation,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

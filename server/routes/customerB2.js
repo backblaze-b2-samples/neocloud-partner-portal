@@ -134,6 +134,24 @@ const ALLOWED_ENDPOINTS = new Set([
   'b2_create_bucket',
 ]);
 
+// Endpoints that are semantically reads even though B2's API uses POST.
+// During read-only impersonation these must still work so the staff agent
+// can see the customer's data.
+const READ_ENDPOINTS = new Set([
+  'b2_list_buckets',
+  'b2_list_keys',
+  'b2_list_file_names',
+  'b2_list_file_versions',
+  'b2_get_file_info',
+]);
+
+// Pre-CSRF middleware: flag reads so requireCsrf's impersonation gate lets
+// them through.
+function allowReadDuringImpersonation(req, _res, next) {
+  if (READ_ENDPOINTS.has(req.params.endpoint)) req.allowDuringImpersonation = true;
+  next();
+}
+
 // Auth token cache: accountId → { token, apiUrl, expiresAt }
 const _authCache = new Map();
 
@@ -165,7 +183,7 @@ async function getSubAccountAuth(accountId) {
   return entry;
 }
 
-router.post('/:accountId/:endpoint', requireCsrf, async (req, res) => {
+router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, async (req, res) => {
   if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId, endpoint } = req.params;
 

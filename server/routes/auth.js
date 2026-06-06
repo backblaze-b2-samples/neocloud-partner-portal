@@ -13,8 +13,20 @@ import { loginLimiter } from '../rateLimit.js';
 import { requireAuth, requireCsrf, isDemoEmail } from '../middleware/requireAuth.js';
 import {
   findByEmail, findById, isValidEmail, isStrongPassword,
-  recordLogin, selfUser, setPasswordHash,
+  recordLogin, selfUser, setPasswordHash, CUSTOMER_ROLES,
 } from '../users.js';
+import { db } from '../db.js';
+
+// Returns true when the customer account behind this user is currently
+// marked ejected. Partner staff (accountId null) are never blocked.
+function isAccountEjected(userRow) {
+  if (!userRow?.account_id) return false;
+  if (!CUSTOMER_ROLES.includes(userRow.role)) return false;
+  const row = db.prepare(
+    'SELECT ejected_at FROM customer_metadata WHERE account_id = ?'
+  ).get(userRow.account_id);
+  return !!row?.ejected_at;
+}
 
 const router = express.Router();
 
@@ -42,6 +54,20 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
+  // Defensive check: if the customer's account was ejected out of band
+  // (direct DB edit, race with the metadata cascade), refuse the login here
+  // too. The response is the same generic message so we don't leak account
+  // state to whoever's at the keyboard.
+  if (isAccountEjected(row)) {
+    audit({
+      actorId: row.id,
+      action:  'auth.login.failed',
+      details: { reason: 'account_ejected', accountId: row.account_id },
+      ip:      req.ip,
+    });
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
   const sess = createSession({
     userId: row.id,
     ip: req.ip,
@@ -66,7 +92,7 @@ router.post('/logout', requireCsrf, (req, res) => {
 
 router.get('/me', requireAuth, (req, res) => {
   const u = findById(req.session.user.id);
-  res.json({ user: selfUser(u) });
+  res.json({ user: selfUser(u), impersonator: req.session.impersonator || null });
 });
 
 router.post('/change-password', requireAuth, requireCsrf, async (req, res) => {

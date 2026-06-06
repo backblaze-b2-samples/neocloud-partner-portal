@@ -7,9 +7,9 @@ import {
 import { TrendAreaChart, StackedBarChart, Heatmap } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import { parseDailyUsageCsv, rollupBy, estimateCost, PRICING, loadSampleCsv } from '../api/csvParser.js';
-import { CUSTOMERS } from '../data/customers.js';
 import { bytes, compactNumber, currency, percent } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
+import { useCustomers } from '../lib/useCustomers.js';
 
 const RANGES = [
   { id: 'd7', label: 'Last 7 days', days: 7 },
@@ -19,6 +19,7 @@ const RANGES = [
 
 export default function UsageBillingView() {
   const { isLive, canSeeRevenue } = useApp();
+  const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
   const [usage, setUsage] = useState([]);
   const [usageSource, setUsageSource] = useState(null);
@@ -328,7 +329,7 @@ export default function UsageBillingView() {
           </THead>
           <TBody>
             {perCustomer.map((row) => {
-              const cust = CUSTOMERS.find((c) => c.accountId === row.sub_account_id);
+              const cust = customers.find((c) => c.accountId === row.sub_account_id);
               return (
                 <TR key={row.sub_account_id} hover={false}>
                   <TD className="font-mono text-[11.5px] text-ink-200">{row.sub_account_id}</TD>

@@ -8,7 +8,7 @@ import { useApp } from '../lib/AppContext.jsx';
 import { useNav } from '../lib/nav.js';
 import { api, ApiError } from '../lib/apiClient.js';
 import { cx, shortDate, relativeTime } from '../lib/format.js';
-import { CUSTOMERS } from '../data/customers.js';
+import { useCustomers } from '../lib/useCustomers.js';
 
 const ROLES = ['admin', 'manager', 'user', 'support', 'customer_admin', 'customer_readonly'];
 const ROLE_LABELS = {
@@ -295,6 +295,7 @@ function CreateUserCard({ onCreated }) {
   const [accountId, setAccountId] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const { customers, loading: loadingCustomers } = useCustomers();
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -358,8 +359,10 @@ function CreateUserCard({ onCreated }) {
             onChange={(e) => setAccountId(e.target.value)}
             className="h-9 rounded-md border border-ink-700 bg-ink-900 px-2 text-sm text-ink-100 sm:col-span-4 focus:border-bb-red/50 focus:outline-none focus:ring-1 focus:ring-bb-red/40"
           >
-            <option value="">— Select customer account —</option>
-            {CUSTOMERS.map((c) => (
+            <option value="">
+              {loadingCustomers ? 'Loading customer accounts…' : '— Select customer account —'}
+            </option>
+            {customers.map((c) => (
               <option key={c.accountId} value={c.accountId}>
                 {c.name} ({c.accountId})
               </option>

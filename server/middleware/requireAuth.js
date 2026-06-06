@@ -6,6 +6,18 @@
 //   Cookie value must match X-CSRF-Token header.
 
 import { getSession, SESSION_COOKIE, CSRF_COOKIE } from '../auth.js';
+import { audit } from '../audit.js';
+
+// During a read-only impersonation, writes are 403-blocked at the CSRF
+// chokepoint — except for the routes that *end* impersonation or the session
+// entirely. Matched against originalUrl (sans query string).
+const IMPERSONATION_WRITE_ALLOWLIST = new Set([
+  '/api/impersonate/stop',
+  '/api/auth/logout',
+  // /start is allowlisted so its handler runs and can return a specific
+  // 409 ("already impersonating") instead of a generic readonly 403.
+  '/api/impersonate/start',
+]);
 
 export function attachSession(req, _res, next) {
   const sid = req.cookies?.[SESSION_COOKIE];
@@ -33,7 +45,11 @@ export const isDemoEmail = (email) =>
   typeof email === 'string' && (email.endsWith('@demo.com') || DEMO_EMAILS.has(email));
 
 export function requireNotDemo(req, res, next) {
-  if (isDemoEmail(req.session?.user?.email)) {
+  // When impersonating, judge by the *actor* — a real admin viewing as a
+  // demo customer should still be able to reach partner endpoints. The
+  // read-only block in requireCsrf still prevents any mutation.
+  const actorEmail = req.session?.impersonator?.email || req.session?.user?.email;
+  if (isDemoEmail(actorEmail)) {
     return res.status(403).json({ error: 'Not available for demo accounts.' });
   }
   next();
@@ -45,6 +61,30 @@ export function requireCsrf(req, res, next) {
   const headerToken = req.get('X-CSRF-Token');
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
     return res.status(403).json({ error: 'Bad CSRF token' });
+  }
+  // Block every write while impersonating, except the routes that end the
+  // impersonation (or the whole session). This is the single chokepoint that
+  // makes "view as customer" guaranteed read-only — no per-route checks needed.
+  //
+  // A few B2 endpoints use POST as a transport for read operations
+  // (e.g. b2_list_buckets). Those routes set req.allowDuringImpersonation in
+  // a middleware that runs *before* requireCsrf — and we let them through.
+  if (req.session?.impersonator) {
+    const urlPath = (req.originalUrl || '').split('?')[0];
+    const allowed = IMPERSONATION_WRITE_ALLOWLIST.has(urlPath) || req.allowDuringImpersonation === true;
+    if (!allowed) {
+      audit({
+        actorId: req.session.impersonator.id,
+        action:  'impersonation.write_blocked',
+        targetUserId: req.session.user.id,
+        details: { method: req.method, path: urlPath },
+        ip:      req.ip,
+      });
+      return res.status(403).json({
+        error: 'impersonating_readonly',
+        message: 'Read-only impersonation — write operations are blocked. Exit impersonation to make changes.',
+      });
+    }
   }
   next();
 }
