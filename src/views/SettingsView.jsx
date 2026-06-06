@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, KeyRound, ShieldAlert, FlaskConical, Zap, Eye, EyeOff, Trash2, CheckCircle2, XCircle, Info, Code2 } from 'lucide-react';
 import { PageHeader, Card, CardHeader, Tag, SourceBadge } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
