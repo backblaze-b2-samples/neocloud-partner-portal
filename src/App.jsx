@@ -1,5 +1,6 @@
 import React, { useState, useEffect, Suspense, lazy, useCallback, useMemo } from 'react';
 import { Sidebar, TopBar, CustomerSidebar, CustomerTopBar } from './components/Layout.jsx';
+import { CommandPalette } from './components/CommandPalette.jsx';
 import { LoadingState } from './components/ui.jsx';
 import { AppProvider, useApp } from './lib/AppContext.jsx';
 import { NavContext } from './lib/nav.js';
@@ -29,6 +30,10 @@ const UserManagement = lazy(() => import('./views/UserManagementView.jsx'));
 const UserDetail = lazy(() => import('./views/UserDetailView.jsx'));
 const AuditLog = lazy(() => import('./views/AuditLogView.jsx'));
 const CustomerUsers = lazy(() => import('./views/CustomerUsersView.jsx'));
+const Immutability = lazy(() => import('./views/ImmutabilityView.jsx'));
+const TrustCenter = lazy(() => import('./views/TrustCenterView.jsx'));
+const Residency = lazy(() => import('./views/ResidencyView.jsx'));
+const Pulse = lazy(() => import('./views/PulseView.jsx'));
 
 const VIEWS = {
   overview: Overview,
@@ -49,6 +54,10 @@ const VIEWS = {
   'user-detail': UserDetail,
   audit: AuditLog,
   'customer-users': CustomerUsers,
+  immutability: Immutability,
+  trust: TrustCenter,
+  residency: Residency,
+  pulse: Pulse,
 };
 
 // Routes only an admin may navigate to.
@@ -187,6 +196,7 @@ function Shell() {
 
   return (
     <NavContext.Provider value={{ active, params, navigate }}>
+      <CommandPalette />
       <div className="flex h-full">
         <Sidebar active={active} onSelect={(id) => navigate(id)} />
         <div className="flex min-w-0 flex-1 flex-col">
