@@ -12,6 +12,7 @@ import { CUSTOMERS } from './data/customers.js';
 export { useNav } from './lib/nav.js';
 
 const Overview = lazy(() => import('./views/ExecutiveOverview.jsx'));
+const Cockpit = lazy(() => import('./views/CockpitView.jsx'));
 const Groups = lazy(() => import('./views/GroupsView.jsx'));
 const Partner = lazy(() => import('./views/PartnerView.jsx'));
 const CustomerDetail = lazy(() => import('./views/CustomerDetailView.jsx'));
@@ -34,6 +35,7 @@ const CustomerUsers = lazy(() => import('./views/CustomerUsersView.jsx'));
 
 const VIEWS = {
   overview: Overview,
+  cockpit: Cockpit,
   groups: Groups,
   partner: Partner,
   'customer-detail': CustomerDetail,
