@@ -4,13 +4,43 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
-  Lock, Activity, Shield, MapPin, Menu, X,
+  Lock, Activity, Shield, MapPin, Menu, X, Code2, Plug,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
 import { useNav } from '../lib/nav.js';
 import * as partner from '../api/partnerApi.js';
 import * as b2 from '../api/b2Adapter.js';
+import { subscribe as subscribeTrace } from '../lib/apiTrace.js';
+import { ApiActivityDrawer } from './ApiActivityDrawer.jsx';
+
+// Training-mode affordance: a button (with live call count) that opens the
+// B2 API activity drawer. Renders nothing unless training mode is on.
+function ApiActivityButton() {
+  const { trainingMode } = useApp();
+  const [open, setOpen] = useState(false);
+  const [count, setCount] = useState(0);
+  useEffect(() => subscribeTrace((b) => setCount(b.length)), []);
+  if (!trainingMode) return null;
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="relative grid h-8 w-8 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100"
+        title="B2 API activity (training mode)"
+        aria-label="Show B2 API activity"
+      >
+        <Code2 size={14} />
+        {count > 0 && (
+          <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-bb-red px-1 text-[9px] font-semibold text-white">
+            {count > 99 ? '99+' : count}
+          </span>
+        )}
+      </button>
+      <ApiActivityDrawer open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
 
 const ALL_NAV = [
   { id: 'overview',  label: 'Executive overview',  icon: LayoutDashboard, group: 'Insights' },
@@ -29,6 +59,7 @@ const ALL_NAV = [
   { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
   { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requireAnyRole: ['admin', 'support'] },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
+  { id: 'mcp',       label: 'MCP console',          icon: Plug,             group: 'Developer' },
   { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
   { id: 'account',   label: 'My account',           icon: UserCog,          group: 'System' },
   { id: 'settings',  label: 'Settings & credentials', icon: SettingsIcon,  group: 'System' },
@@ -300,6 +331,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
           </button>
         </div>
 
+        <ApiActivityButton />
         {/* Gear is redundant with the nav on mobile; show only on desktop. */}
         <button
           onClick={onOpenSettings}
@@ -512,6 +544,7 @@ const CUSTOMER_NAV = [
   { id: 'usage',           label: 'My usage',    icon: Receipt,         group: 'My account' },
   { id: 'keys',            label: 'My keys',     icon: KeyRound,        group: 'My account' },
   { id: 'customer-users',  label: 'My team',     icon: Users,           group: 'My account', adminOnly: true },
+  { id: 'mcp',             label: 'MCP console', icon: Plug,            group: 'Developer' },
   { id: 'account',         label: 'My account',  icon: UserCog,         group: 'System' },
 ];
 
@@ -563,6 +596,7 @@ export function CustomerTopBar({ active, onMenu }) {
         <span className="truncate font-medium text-ink-100">{label}</span>
       </div>
       <div className="flex items-center gap-2">
+        <ApiActivityButton />
         <button className="hidden h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:grid sm:h-8 sm:w-8">
           <Bell size={14} />
         </button>

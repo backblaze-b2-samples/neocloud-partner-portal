@@ -89,6 +89,33 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_meta_account ON customer_metadata(account_id);
 
+  -- MCP server connection (single partner-level row, id always 1). Used by
+  -- partner staff = full scope. The bearer token is encrypted at rest.
+  CREATE TABLE IF NOT EXISTS mcp_config (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    base_url        TEXT NOT NULL DEFAULT '',
+    enabled         INTEGER NOT NULL DEFAULT 0,
+    encrypted_token TEXT,
+    token_iv        TEXT,
+    token_tag       TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+
+  -- Per-customer scoped MCP tokens. A customer-portal session resolves to its
+  -- own account's token; absence => MCP access denied (fail closed).
+  CREATE TABLE IF NOT EXISTS mcp_account_tokens (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT NOT NULL UNIQUE,
+    label           TEXT,
+    encrypted_token TEXT NOT NULL,
+    token_iv        TEXT NOT NULL,
+    token_tag       TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_mcp_tokens_account ON mcp_account_tokens(account_id);
+
   -- Object counts: cached per-bucket file counts from b2_list_file_names.
   -- Written by the 24-hour background job (server/jobs/objectCountJob.js).
   -- Page loads read this table directly — no B2 API call needed at request time.

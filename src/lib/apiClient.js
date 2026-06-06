@@ -11,6 +11,8 @@
 //   account exists.
 // =============================================================================
 
+import { isTrainingEnabled, recordMany } from './apiTrace.js';
+
 export class ApiError extends Error {
   constructor(message, status, body) {
     super(message);
@@ -34,6 +36,10 @@ async function request(method, path, body) {
     if (token) headers['X-CSRF-Token'] = token;
   }
 
+  // Ask server proxy routes to include the underlying B2 API call(s) so the
+  // training view can surface them. Server only honors this when training is on.
+  if (isTrainingEnabled()) headers['X-Training-Mode'] = '1';
+
   const res = await fetch(path, {
     method,
     headers,
@@ -46,6 +52,9 @@ async function request(method, path, body) {
   if (ct.includes('application/json')) {
     try { data = await res.json(); } catch { /* ignore */ }
   }
+
+  // Lift any server-side B2 API calls into the training trace.
+  if (data && Array.isArray(data._apiCalls)) recordMany(data._apiCalls, 'server');
 
   if (!res.ok) {
     const msg = (data && data.error) || res.statusText || 'Request failed';

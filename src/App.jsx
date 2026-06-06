@@ -24,6 +24,7 @@ const Usage = lazy(() => import('./views/UsageBillingView.jsx'));
 const Keys = lazy(() => import('./views/ApplicationKeysView.jsx'));
 const KeyDetail = lazy(() => import('./views/KeyDetailView.jsx'));
 const Console = lazy(() => import('./views/ApiConsoleView.jsx'));
+const Mcp = lazy(() => import('./views/McpConsoleView.jsx'));
 const Settings = lazy(() => import('./views/SettingsView.jsx'));
 const ResellerPlans = lazy(() => import('./views/ResellerPlansView.jsx'));
 const Login = lazy(() => import('./views/LoginView.jsx'));
@@ -51,6 +52,7 @@ const VIEWS = {
   keys: Keys,
   'key-detail': KeyDetail,
   console: Console,
+  mcp: Mcp,
   settings: Settings,
   plans: ResellerPlans,
   account: Account,
@@ -150,6 +152,7 @@ function CustomerShell() {
     usage: Usage,
     keys: Keys,
     'customer-users': CustomerUsers,
+    mcp: Mcp,
     account: Account,
   };
 

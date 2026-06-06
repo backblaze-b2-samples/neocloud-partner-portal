@@ -21,6 +21,7 @@ import { createHmac, createHash } from 'crypto';
 import { requireAuth, requireNotDemo, requireCsrf, canAccessAccount } from '../middleware/requireAuth.js';
 import { getCredential, getDecryptedApplicationKey } from '../credentials.js';
 import { audit } from '../audit.js';
+import { traceCollector } from '../lib/apiTrace.js';
 import { REGIONS } from '../../src/data/regions.js';
 
 // B2 bucket name rules: 6–63 chars, lowercase a-z, 0-9, hyphen, no leading/trailing
@@ -210,7 +211,9 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
     ? { accountId: auth.accountId, ...req.body }
     : { ...req.body };
 
+  const trace = traceCollector(req);
   try {
+    const t0 = Date.now();
     const b2Res = await fetch(targetUrl, {
       method: 'POST',
       headers: {
@@ -220,6 +223,15 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
       body: JSON.stringify(body),
     });
     const text = await b2Res.text();
+    let parsedForTrace;
+    try { parsedForTrace = JSON.parse(text); } catch { /* non-JSON */ }
+    trace.add({
+      label: endpoint, method: 'POST', url: targetUrl,
+      requestHeaders: { Authorization: auth.token, 'Content-Type': 'application/json' },
+      requestBody: body, status: b2Res.status, durationMs: Date.now() - t0,
+      responseBody: b2Res.ok ? parsedForTrace : undefined,
+      error: b2Res.ok ? undefined : text,
+    });
 
     // Audit only mutating endpoints. Read-only listings (b2_list_*,
     // b2_get_file_info) fire on every page load and would flood the table.
@@ -249,10 +261,15 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
             parsed._apiHost = apiHost;
           }
         }
-        return res.status(b2Res.status).json(parsed);
+        return res.status(b2Res.status).json(trace.decorate(parsed));
       } catch (_) { /* fall through to raw send */ }
     }
 
+    // When training mode asked for the underlying calls, return JSON (with the
+    // _apiCalls array) instead of the raw passthrough text.
+    if (trace.on && parsedForTrace !== undefined) {
+      return res.status(b2Res.status).json(trace.decorate(parsedForTrace));
+    }
     res.status(b2Res.status).set('Content-Type', 'application/json').send(text);
   } catch (err) {
     console.error(`[customerB2] fetch failed for ${accountId}/${endpoint}:`, err.message);

@@ -31,6 +31,9 @@ import { DAILY_USAGE, REGION_USAGE, ACTIVITY_HEATMAP } from '../data/usageMetric
 import { REGIONS, resolveRegion } from '../data/regions.js';
 import { FILES_BY_BUCKET } from '../data/files.js';
 import { parseDailyUsageCsv, activityFromCsv, loadSampleCsv, parseBackblazeGroupUsageCsv, parseStandardUsageCsv } from './csvParser.js';
+import { record as traceCall, isTrainingEnabled } from '../lib/apiTrace.js';
+
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 const MOCK_DELAY = 220;
 const wait = (ms = MOCK_DELAY) => new Promise((r) => setTimeout(r, ms));
@@ -70,16 +73,25 @@ async function ensureAuth() {
   // the forwarding server-side — avoids CORS without requiring manual config.
   const effectiveProxy = runtimeConfig.proxyUrl ||
     `${window.location.origin}/b2-proxy`;
-  const res = await fetch(`${effectiveProxy}/b2api/v4/b2_authorize_account`, {
-    headers: {
-      Authorization: 'Basic ' + btoa(`${runtimeConfig.masterKeyId}:${runtimeConfig.masterApplicationKey}`),
-    },
-  });
+  const authUrl = `${effectiveProxy}/b2api/v4/b2_authorize_account`;
+  const basicHeader = 'Basic ' + btoa(`${runtimeConfig.masterKeyId}:${runtimeConfig.masterApplicationKey}`);
+  const _t0 = now();
+  const res = await fetch(authUrl, { headers: { Authorization: basicHeader } });
   if (!res.ok) {
     const err = await res.text();
+    if (isTrainingEnabled()) traceCall({
+      source: 'client', label: 'b2_authorize_account', method: 'GET', url: authUrl,
+      requestHeaders: { Authorization: basicHeader }, status: res.status,
+      durationMs: Math.round(now() - _t0), error: err,
+    });
     throw new Error(`b2_authorize_account ${res.status}: ${err}`);
   }
   const body = await res.json();
+  if (isTrainingEnabled()) traceCall({
+    source: 'client', label: 'b2_authorize_account', method: 'GET', url: authUrl,
+    requestHeaders: { Authorization: basicHeader }, status: res.status,
+    durationMs: Math.round(now() - _t0), responseBody: body,
+  });
   // B2 API v4 nests apiUrl/downloadUrl/s3ApiUrl under apiInfo.storageApi
   // instead of at the top level (as v2/v3 did). Normalize to top-level so
   // the rest of the adapter and rewriteHostsThroughProxy work unchanged.
@@ -134,19 +146,35 @@ async function callB2(endpoint, body, { skipAccountId = false } = {}) {
   const payload = skipAccountId
     ? body
     : { accountId: auth.accountId, ...body };
-  const res = await fetch(`${auth.apiUrl}/b2api/v4/${endpoint}`, {
-    method: 'POST',
-    headers: {
-      Authorization: auth.authorizationToken,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`${endpoint} ${res.status}: ${err}`);
+  const url = `${auth.apiUrl}/b2api/v4/${endpoint}`;
+  const t0 = now();
+  let res, json, errText, status;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: auth.authorizationToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    status = res.status;
+    if (res.ok) json = await res.json();
+    else errText = await res.text();
+  } finally {
+    if (isTrainingEnabled()) {
+      traceCall({
+        source: 'client', label: endpoint, method: 'POST', url,
+        requestHeaders: { Authorization: auth.authorizationToken, 'Content-Type': 'application/json' },
+        requestBody: payload, status, durationMs: Math.round(now() - t0),
+        responseBody: json, error: errText,
+      });
+    }
   }
-  return res.json();
+  if (!res.ok) {
+    throw new Error(`${endpoint} ${res.status}: ${errText}`);
+  }
+  return json;
 }
 
 // =============================================================================
