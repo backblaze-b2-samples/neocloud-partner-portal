@@ -195,7 +195,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
                   </TD>
                   {!lockedCustomerId && <TD className="text-ink-300">{cust?.name || '—'}</TD>}
                   <TD>
-                    <div className="text-xs text-ink-200">{k.bucketName}</div>
+                    <div className="text-xs text-ink-200">{scopeSummary(k, bucketList)}</div>
                     {k.namePrefix && (
                       <div className="font-mono text-[10.5px] text-accent-violet">prefix: {k.namePrefix}</div>
                     )}
@@ -386,6 +386,16 @@ X-Bz-Event-Notification-Signature-Sha256: <hmac>
       </Card>
     </div>
   );
+}
+
+// Resolve a key's bucket scope to human names using the live bucket list.
+// b2_list_keys returns bucketIds (array) but no names; empty = account-wide.
+export function scopeSummary(k, buckets = []) {
+  const ids = k.bucketIds || [];
+  if (ids.length === 0) return 'All buckets (account-wide)';
+  const names = ids.map((id) => buckets.find((b) => b.bucketId === id)?.bucketName || (id.slice(0, 10) + '…'));
+  if (names.length <= 2) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
 }
 
 function CodeBlock({ children }) {

@@ -10,7 +10,7 @@ import {
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart } from '../components/charts.jsx';
-import { FileUploadDialog, DeleteFileDialog } from '../components/bucketDialogs.jsx';
+import { FileUploadDialog, DeleteFileDialog, FileProtectionDialog, BucketNotificationsDialog } from '../components/bucketDialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import { CUSTOMERS } from '../data/customers.js';
 import * as b2 from '../api/b2Adapter.js';
@@ -248,6 +248,7 @@ function FilesTab({ bucket, accountId, regionId, canManage, onStats }) {
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteFileTarget, setDeleteFileTarget] = useState(null);
+  const [protectFileTarget, setProtectFileTarget] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const reload = () => setReloadToken((t) => t + 1);
 
@@ -554,6 +555,7 @@ function FilesTab({ bucket, accountId, regionId, canManage, onStats }) {
                   canManage={canManage}
                   onDownload={() => b2.downloadFile({ accountId, bucket: bucket.bucketName, region: regionId, key: f.fileName })}
                   onDelete={() => setDeleteFileTarget(f)}
+                  onProtect={() => setProtectFileTarget(f)}
                 />
               ))}
             </TBody>
@@ -633,6 +635,16 @@ function FilesTab({ bucket, accountId, regionId, canManage, onStats }) {
           accountId={accountId}
         />
       )}
+      {canManage && protectFileTarget && (
+        <FileProtectionDialog
+          open={!!protectFileTarget}
+          onClose={() => setProtectFileTarget(null)}
+          onDone={() => reload()}
+          file={protectFileTarget}
+          bucket={bucket}
+          accountId={accountId}
+        />
+      )}
     </div>
   );
 }
@@ -640,7 +652,7 @@ function FilesTab({ bucket, accountId, regionId, canManage, onStats }) {
 // ============================================================================
 // FileRow — a single file row with an expandable version history panel
 // ============================================================================
-function FileRow({ f, bucket, regionId, accountId, canManage, onDownload, onDelete }) {
+function FileRow({ f, bucket, regionId, accountId, canManage, onDownload, onDelete, onProtect }) {
   const bucketId = bucket.bucketId;
   const [expanded, setExpanded] = useState(false);
   const [versions, setVersions] = useState(null); // null = not loaded yet
@@ -711,13 +723,22 @@ function FileRow({ f, bucket, regionId, accountId, canManage, onDownload, onDele
               <Download size={12} className={downloading ? 'animate-pulse' : ''} />
             </button>
             {canManage && (
-              <button
-                onClick={onDelete}
-                title="Delete file"
-                className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-bb-red"
-              >
-                <Trash2 size={12} />
-              </button>
+              <>
+                <button
+                  onClick={onProtect}
+                  title="Object Lock — legal hold / retention"
+                  className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-accent-violet"
+                >
+                  <Lock size={12} />
+                </button>
+                <button
+                  onClick={onDelete}
+                  title="Delete file"
+                  className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-bb-red"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </>
             )}
           </div>
         </TD>
@@ -897,6 +918,7 @@ function RuleStat({ icon, title, value, desc }) {
 
 // ============================================================================
 function AccessTab({ bucket, region, accountId, canManage }) {
+  const [notifOpen, setNotifOpen] = useState(false);
   const codeAuth = `Authorization: <auth_token>
 GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
 
@@ -944,10 +966,35 @@ GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
         )}
       </Card>
 
+      {/* Event notifications */}
+      <Card>
+        <CardHeader title="Event notifications" subtitle="Webhook POSTs on object created / deleted / hidden events" icon={<ScrollText size={16} />} />
+        {canManage ? (
+          <button
+            onClick={() => setNotifOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
+          >
+            Configure notification rules
+          </button>
+        ) : (
+          <p className="text-xs text-ink-400">Per-object event webhooks. Ask an account admin to configure rules.</p>
+        )}
+      </Card>
+
       {/* Access Logs — full width */}
       <div className="lg:col-span-2">
         <AccessLogsPanel bucket={bucket} region={region} accountId={accountId} canManage={canManage} />
       </div>
+
+      {canManage && notifOpen && (
+        <BucketNotificationsDialog
+          open={notifOpen}
+          onClose={() => setNotifOpen(false)}
+          onSaved={() => setNotifOpen(false)}
+          bucket={bucket}
+          accountId={accountId}
+        />
+      )}
     </div>
   );
 }

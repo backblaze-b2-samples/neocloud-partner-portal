@@ -439,8 +439,10 @@ export async function updateBucket(payload) {
       b.publicAccess = payload.bucketType === 'allPublic';
     }
     if (payload.lifecycleRules !== undefined) b.lifecycleRules = payload.lifecycleRules;
-    if (payload.cors !== undefined) b.cors = payload.cors;
+    if (payload.corsRules !== undefined) b.cors = payload.corsRules.map((r) => r.allowedOrigins?.[0] || '*');
     if (payload.encryption !== undefined) b.encryption = payload.encryption;
+    if (payload.defaultRetention !== undefined) b.defaultRetention = payload.defaultRetention;
+    if (payload.bucketInfo !== undefined) b.bucketInfo = payload.bucketInfo;
     b.lastModified = new Date().toISOString();
     return { ...b };
   }
@@ -449,9 +451,14 @@ export async function updateBucket(payload) {
   if (payload.bucketType) b2Body.bucketType = payload.bucketType;
   if (payload.lifecycleRules !== undefined) b2Body.lifecycleRules = payload.lifecycleRules;
   if (payload.corsRules !== undefined) b2Body.corsRules = payload.corsRules;
+  if (payload.bucketInfo !== undefined) b2Body.bucketInfo = payload.bucketInfo;
+  // defaultRetention requires Object Lock (fileLockEnabled) on the bucket.
+  // Shape: { mode: 'governance'|'compliance', period: { duration, unit } } or
+  // { mode: 'none' } to clear. Pass through as built by the dialog.
+  if (payload.defaultRetention !== undefined) b2Body.defaultRetention = payload.defaultRetention;
   if (payload.encryption !== undefined) {
-    b2Body.defaultServerSideEncryption = payload.encryption && payload.encryption !== 'none'
-      ? { mode: payload.encryption, algorithm: 'AES256' }
+    b2Body.defaultServerSideEncryption = payload.encryption === 'SSE-B2'
+      ? { mode: 'SSE-B2', algorithm: 'AES256' }
       : { mode: 'none' };
   }
 
@@ -739,6 +746,65 @@ export async function deleteFile({ accountId, bucket, region, key, bucketId } = 
   });
   if (!res.ok) throw new Error(`Delete failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   return res.json();
+}
+
+// ===== Object Lock: per-file legal hold & retention =========================
+// b2_update_file_legal_hold { fileName, fileId, legalHold: 'on'|'off' }
+export async function setFileLegalHold({ accountId, fileName, fileId, legalHold } = {}) {
+  if (useMocks()) { await wait(280); return { fileName, fileId, legalHold }; }
+  const body = { fileName, fileId, legalHold };
+  if (accountId) {
+    const d = await callAsCustomer(accountId, 'b2_update_file_legal_hold', body);
+    if (d === null) throw new Error(`No stored credentials for account ${accountId}`);
+    return d;
+  }
+  return callB2('b2_update_file_legal_hold', body);
+}
+
+// b2_update_file_retention { fileName, fileId, fileRetention: { mode, retainUntilTimestamp }, bypassGovernance? }
+// mode 'none' clears retention (sent as { mode: null }).
+export async function setFileRetention({ accountId, fileName, fileId, mode, retainUntilTimestamp, bypassGovernance } = {}) {
+  if (useMocks()) { await wait(280); return { fileName, fileId, mode, retainUntilTimestamp }; }
+  const fileRetention = mode === 'none' || !mode
+    ? { mode: null }
+    : { mode, retainUntilTimestamp };
+  const body = { fileName, fileId, fileRetention };
+  if (bypassGovernance) body.bypassGovernance = true;
+  if (accountId) {
+    const d = await callAsCustomer(accountId, 'b2_update_file_retention', body);
+    if (d === null) throw new Error(`No stored credentials for account ${accountId}`);
+    return d;
+  }
+  return callB2('b2_update_file_retention', body);
+}
+
+// ===== Event Notification rules =============================================
+// b2_get_bucket_notification_rules / b2_set_bucket_notification_rules
+export async function getBucketNotificationRules({ accountId, bucketId } = {}) {
+  if (useMocks()) { await wait(160); const b = BUCKETS.find((x) => x.bucketId === bucketId); return { eventNotificationRules: b?.eventNotificationRules || [] }; }
+  if (accountId) {
+    const d = await callAsCustomer(accountId, 'b2_get_bucket_notification_rules', { bucketId });
+    if (d === null) return { eventNotificationRules: [], _noCredentials: true };
+    return { eventNotificationRules: d.eventNotificationRules || [] };
+  }
+  const d = await callB2('b2_get_bucket_notification_rules', { bucketId });
+  return { eventNotificationRules: d.eventNotificationRules || [] };
+}
+
+export async function setBucketNotificationRules({ accountId, bucketId, eventNotificationRules } = {}) {
+  if (useMocks()) {
+    await wait(360);
+    const b = BUCKETS.find((x) => x.bucketId === bucketId);
+    if (b) b.eventNotificationRules = eventNotificationRules;
+    return { eventNotificationRules };
+  }
+  const body = { bucketId, eventNotificationRules };
+  if (accountId) {
+    const d = await callAsCustomer(accountId, 'b2_set_bucket_notification_rules', body);
+    if (d === null) throw new Error(`No stored credentials for account ${accountId}`);
+    return d;
+  }
+  return callB2('b2_set_bucket_notification_rules', body);
 }
 
 // ===== Activity (Bucket Access Logs — REAL per-event records) ===============

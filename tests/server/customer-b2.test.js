@@ -170,7 +170,7 @@ describe('endpoint allow-list', () => {
 });
 
 describe('write role gate (customer_readonly cannot mutate)', () => {
-  const writeEndpoints = ['b2_create_bucket', 'b2_update_bucket', 'b2_delete_bucket', 'b2_create_key', 'b2_delete_key', 'b2_delete_file_version'];
+  const writeEndpoints = ['b2_create_bucket', 'b2_update_bucket', 'b2_delete_bucket', 'b2_create_key', 'b2_delete_key', 'b2_delete_file_version', 'b2_update_file_legal_hold', 'b2_update_file_retention', 'b2_set_bucket_notification_rules'];
 
   it('customer_readonly: 403 read_only on every write endpoint (own account)', async () => {
     for (const ep of writeEndpoints) {

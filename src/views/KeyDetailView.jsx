@@ -16,7 +16,7 @@ import { useNav } from '../lib/nav.js';
 import { useApp } from '../lib/AppContext.jsx';
 import { useCustomers } from '../lib/useCustomers.js';
 import { compactNumber, shortDate, relativeTime } from '../lib/format.js';
-import { LastUsedCell } from './ApplicationKeysView.jsx';
+import { LastUsedCell, scopeSummary } from './ApplicationKeysView.jsx';
 
 const POSTURE = {
   good:      { Icon: ShieldCheck,  label: 'Healthy',   tone: 'green',
@@ -35,6 +35,7 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
   const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
   const [k, setKey] = useState(null);
+  const [allBuckets, setAllBuckets] = useState([]);
   const [lastUsedTs, setLastUsedTs] = useState(null);
   const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
   const [error, setError] = useState(null);
@@ -53,6 +54,7 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
     ]).then(([{ keys }, { lastUsed }, { buckets }]) => {
       const found = keys.find((x) => x.applicationKeyId === keyId) || null;
       setKey(found);
+      setAllBuckets(buckets || []);
       setLastUsedTs(lastUsed.get(keyId) || null);
       setBucketStatusMap(new Map(
         buckets.map((bk) => [bk.bucketId, bk.accessLogging || { status: 'not_configured' }])
@@ -77,9 +79,13 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
 
   const Posture = POSTURE[k.posture] || POSTURE.good;
   const customer = customers.find((c) => c.id === k.customerId);
+  // Resolve from the live bucket list (b2_list_keys returns no names, and in
+  // live mode k.customerId is null). Fall back to demo BUCKETS only if the
+  // fetch returned nothing.
+  const bucketSource = allBuckets.length ? allBuckets : BUCKETS;
   const accessibleBuckets = k.bucketIds.length === 0
-    ? BUCKETS.filter((b) => b.customerId === k.customerId)  // master-equivalent
-    : BUCKETS.filter((b) => k.bucketIds.includes(b.bucketId));
+    ? bucketSource  // account-wide → every bucket in the sub-account
+    : bucketSource.filter((b) => k.bucketIds.includes(b.bucketId));
 
   const writeCaps = k.capabilities.filter((c) => c.startsWith('write') || c.startsWith('delete'));
   const readCaps = k.capabilities.filter((c) => c.startsWith('read') || c.startsWith('list') || c === 'shareFiles');
@@ -328,7 +334,7 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
           <CardHeader title="Scope" icon={<Database size={16} />} />
           <dl className="space-y-1.5 text-xs">
             <KV label="Bucket scope" value={k.bucketIds.length === 0 ? 'account-wide (master-equivalent)' : `${k.bucketIds.length} bucket(s)`} />
-            <KV label="Buckets" value={k.bucketName} />
+            <KV label="Buckets" value={scopeSummary(k, allBuckets)} />
             <KV label="Name prefix" value={k.namePrefix || '(none — entire bucket namespace)'} mono />
             <KV label="Created" value={shortDate(k.createdAt)} />
             <KV label="Expires" value={k.expirationDate || <Tag variant="warn">no expiration set</Tag>} />

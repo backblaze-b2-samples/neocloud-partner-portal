@@ -6,10 +6,10 @@
 // These are gated by the caller — render them only when canManage is true.
 // CreateBucketDialog already lives in ./dialogs.jsx and is reused as-is.
 
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   CheckCircle2, AlertTriangle, Copy, Trash2, UploadCloud, KeyRound, ShieldAlert,
-  ShieldCheck, Eye, EyeOff, File as FileIcon, X,
+  ShieldCheck, Eye, EyeOff, File as FileIcon, X, Lock, Bell,
 } from 'lucide-react';
 import { Modal, ModalFooter } from './Modal.jsx';
 import { Tag } from './ui.jsx';
@@ -115,6 +115,26 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
       daysFromHidingToDeleting: r.daysFromHidingToDeleting ?? '',
     }))
   );
+  // CORS rules
+  const [corsRules, setCorsRules] = useState(() =>
+    (bucket?.corsRules || []).map((r) => ({
+      corsRuleName: r.corsRuleName || '',
+      allowedOrigins: (r.allowedOrigins || []).join(', '),
+      allowedOperations: new Set(r.allowedOperations || []),
+      maxAgeSeconds: r.maxAgeSeconds ?? 3600,
+    }))
+  );
+  // Object Lock default retention — only settable when the bucket has File Lock.
+  const lockEnabled = (bucket?.fileLock && bucket.fileLock !== 'none') || bucket?.isObjectLockEnabled
+    || bucket?.fileLockConfiguration?.value?.isFileLockEnabled;
+  const existingRet = bucket?.fileLockConfiguration?.value?.defaultRetention || bucket?.defaultRetention || null;
+  const [retMode, setRetMode] = useState(existingRet?.mode && existingRet.mode !== 'none' ? existingRet.mode : 'none');
+  const [retDuration, setRetDuration] = useState(existingRet?.period?.duration ?? '');
+  const [retUnit, setRetUnit] = useState(existingRet?.period?.unit || 'days');
+  // bucketInfo (custom key/value metadata)
+  const [info, setInfo] = useState(() =>
+    Object.entries(bucket?.bucketInfo || {}).map(([k, v]) => ({ k, v: String(v) }))
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -125,6 +145,21 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
   function removeRule(i) { setRules((rs) => rs.filter((_, idx) => idx !== i)); }
   function patchRule(i, patch) { setRules((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r))); }
 
+  function addCors() { setCorsRules((cs) => [...cs, { corsRuleName: '', allowedOrigins: '*', allowedOperations: new Set(['s3_get', 's3_head']), maxAgeSeconds: 3600 }]); }
+  function removeCors(i) { setCorsRules((cs) => cs.filter((_, idx) => idx !== i)); }
+  function patchCors(i, patch) { setCorsRules((cs) => cs.map((c, idx) => (idx === i ? { ...c, ...patch } : c))); }
+  function toggleCorsOp(i, op) {
+    setCorsRules((cs) => cs.map((c, idx) => {
+      if (idx !== i) return c;
+      const s = new Set(c.allowedOperations);
+      if (s.has(op)) s.delete(op); else s.add(op);
+      return { ...c, allowedOperations: s };
+    }));
+  }
+  function addInfo() { setInfo((x) => [...x, { k: '', v: '' }]); }
+  function removeInfo(i) { setInfo((x) => x.filter((_, idx) => idx !== i)); }
+  function patchInfo(i, patch) { setInfo((x) => x.map((r, idx) => (idx === i ? { ...r, ...patch } : r))); }
+
   async function submit(e) {
     e.preventDefault();
     setSubmitting(true);
@@ -134,14 +169,30 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
       daysFromUploadingToHiding: r.daysFromUploadingToHiding === '' ? null : Number(r.daysFromUploadingToHiding),
       daysFromHidingToDeleting: r.daysFromHidingToDeleting === '' ? null : Number(r.daysFromHidingToDeleting),
     }));
+    const builtCors = corsRules.map((c) => ({
+      corsRuleName: (c.corsRuleName || '').trim() || `rule${Math.floor(Math.random() * 1e6)}`,
+      allowedOrigins: c.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean),
+      allowedOperations: [...c.allowedOperations],
+      allowedHeaders: ['*'],
+      maxAgeSeconds: Number(c.maxAgeSeconds) || 0,
+    }));
+    const bucketInfo = Object.fromEntries(info.filter((r) => r.k.trim()).map((r) => [r.k.trim(), r.v]));
+    const payload = {
+      accountId,
+      bucketId: bucket.bucketId,
+      bucketType,
+      encryption,
+      lifecycleRules,
+      corsRules: builtCors,
+      bucketInfo,
+    };
+    if (lockEnabled) {
+      payload.defaultRetention = retMode === 'none'
+        ? { mode: 'none' }
+        : { mode: retMode, period: { duration: Number(retDuration) || 1, unit: retUnit } };
+    }
     try {
-      const updated = await b2.updateBucket({
-        accountId,
-        bucketId: bucket.bucketId,
-        bucketType,
-        encryption,
-        lifecycleRules,
-      });
+      const updated = await b2.updateBucket(payload);
       setSaved(true);
       onSaved?.(updated);
     } catch (err) {
@@ -150,6 +201,8 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
       setSubmitting(false);
     }
   }
+
+  const CORS_OPS = ['s3_get', 's3_head', 's3_put', 's3_post', 's3_delete', 'b2_download_file_by_name', 'b2_download_file_by_id', 'b2_upload_file', 'b2_upload_part'];
 
   return (
     <Modal
@@ -216,6 +269,81 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
                 <button type="button" onClick={() => removeRule(i)} className="grid place-items-center rounded-md px-2 text-ink-400 hover:bg-ink-800 hover:text-bb-red" title="Remove rule">
                   <Trash2 size={13} />
                 </button>
+              </div>
+            ))}
+          </div>
+
+          {/* CORS rules */}
+          <div className="space-y-2 rounded-md border border-ink-700 bg-ink-900/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">CORS rules</p>
+              <button type="button" onClick={addCors} className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800">+ Add rule</button>
+            </div>
+            <p className="text-[11px] text-ink-400">Allow browser-based (cross-origin) clients to call this bucket directly. Each rule lists origins + the operations they may perform.</p>
+            {corsRules.length === 0 && <p className="py-1 text-[11px] text-ink-500">No CORS rules. Cross-origin browser requests will be blocked.</p>}
+            {corsRules.map((c, i) => (
+              <div key={i} className="space-y-2 rounded-md bg-ink-900/60 p-2.5 ring-1 ring-ink-700">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.4fr_auto_auto]">
+                  <input value={c.corsRuleName} onChange={(e) => patchCors(i, { corsRuleName: e.target.value })} placeholder="rule name"
+                    className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                  <input value={c.allowedOrigins} onChange={(e) => patchCors(i, { allowedOrigins: e.target.value })} placeholder="https://app.example.com, * "
+                    className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                  <input value={c.maxAgeSeconds} onChange={(e) => patchCors(i, { maxAgeSeconds: e.target.value.replace(/\D/g, '') })} placeholder="maxAge (s)" title="maxAgeSeconds"
+                    className="w-24 rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                  <button type="button" onClick={() => removeCors(i)} className="grid place-items-center rounded-md px-2 text-ink-400 hover:bg-ink-800 hover:text-bb-red" title="Remove rule"><Trash2 size={13} /></button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {CORS_OPS.map((op) => {
+                    const on = c.allowedOperations.has(op);
+                    return (
+                      <button key={op} type="button" onClick={() => toggleCorsOp(i, op)}
+                        className={'rounded border px-1.5 py-0.5 font-mono text-[10px] transition ' + (on ? 'border-accent-teal/40 bg-accent-teal/10 text-accent-teal' : 'border-ink-700 bg-ink-900 text-ink-400 hover:text-ink-200')}>
+                        {op}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Object Lock default retention */}
+          {lockEnabled ? (
+            <div className="space-y-2 rounded-md border border-ink-700 bg-ink-900/60 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">Object Lock · default retention</p>
+              <p className="text-[11px] text-ink-400">Applied to new objects automatically. <strong>compliance</strong> cannot be shortened or removed by anyone until it expires; <strong>governance</strong> can be bypassed with <code className="font-mono">bypassGovernance</code>.</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <Select label="Mode" value={retMode} onChange={setRetMode} options={[
+                  { value: 'none', label: 'No default' },
+                  { value: 'governance', label: 'governance' },
+                  { value: 'compliance', label: 'compliance' },
+                ]} />
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-ink-200">Duration</div>
+                  <input value={retDuration} onChange={(e) => setRetDuration(e.target.value.replace(/\D/g, ''))} disabled={retMode === 'none'} placeholder="30"
+                    className="w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none disabled:opacity-40" />
+                </label>
+                <Select label="Unit" value={retUnit} onChange={setRetUnit} options={[{ value: 'days', label: 'days' }, { value: 'years', label: 'years' }]} />
+              </div>
+            </div>
+          ) : (
+            <p className="text-[11px] text-ink-500">Object Lock is not enabled on this bucket, so a default retention period can't be set (Object Lock can only be enabled at bucket creation).</p>
+          )}
+
+          {/* bucketInfo metadata */}
+          <div className="space-y-2 rounded-md border border-ink-700 bg-ink-900/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">Bucket info (custom metadata)</p>
+              <button type="button" onClick={addInfo} className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800">+ Add</button>
+            </div>
+            {info.length === 0 && <p className="py-1 text-[11px] text-ink-500">No custom metadata.</p>}
+            {info.map((r, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                <input value={r.k} onChange={(e) => patchInfo(i, { k: e.target.value })} placeholder="key"
+                  className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                <input value={r.v} onChange={(e) => patchInfo(i, { v: e.target.value })} placeholder="value"
+                  className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                <button type="button" onClick={() => removeInfo(i)} className="grid place-items-center rounded-md px-2 text-ink-400 hover:bg-ink-800 hover:text-bb-red" title="Remove"><Trash2 size={13} /></button>
               </div>
             ))}
           </div>
@@ -913,6 +1041,223 @@ export function DeleteFileDialog({ open, onClose, onDeleted, file, bucket, regio
           </button>
         </ModalFooter>
       </div>
+    </Modal>
+  );
+}
+
+// =============================================================================
+// File protection — Object Lock legal hold + retention for a single object
+// (b2_update_file_legal_hold + b2_update_file_retention)
+// =============================================================================
+function fileLegalHoldValue(f) { return f?.legalHold?.value ?? f?.legalHold ?? 'off'; }
+function fileRetentionMode(f) { return f?.fileRetention?.value?.mode ?? f?.fileRetention?.mode ?? 'none'; }
+
+export function FileProtectionDialog({ open, onClose, onDone, file, bucket, accountId }) {
+  const { isLive } = useApp();
+  const [legalHold, setLegalHold] = useState(fileLegalHoldValue(file) === 'on');
+  const [retMode, setRetMode] = useState(fileRetentionMode(file) || 'none');
+  const [retUntil, setRetUntil] = useState('');
+  const [bypass, setBypass] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await b2.setFileLegalHold({ accountId, fileName: file.fileName, fileId: file.fileId, legalHold: legalHold ? 'on' : 'off' });
+      const payload = { accountId, fileName: file.fileName, fileId: file.fileId, mode: retMode, bypassGovernance: bypass };
+      if (retMode !== 'none') {
+        if (!retUntil) throw new Error('Choose a "retain until" date.');
+        payload.retainUntilTimestamp = Date.parse(retUntil + 'T00:00:00Z');
+      }
+      await b2.setFileRetention(payload);
+      setSaved(true);
+      onDone?.();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Object Lock protection" subtitle={isLive ? 'b2_update_file_legal_hold + b2_update_file_retention' : 'Demo mode — simulated.'} size="md">
+      {saved ? (
+        <SuccessPanel title="Protection updated" desc={`Lock settings saved for ${file?.fileName}.`} onAck={onClose} />
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-md border border-ink-700 bg-ink-900/60 p-3 text-xs text-ink-300">
+            <span className="font-mono text-ink-100 break-all">{file?.fileName}</span>
+            <p className="mt-1 text-[11px] text-ink-400">Requires Object Lock enabled on <span className="font-mono">{bucket?.bucketName}</span>. B2 returns an error otherwise.</p>
+          </div>
+
+          <label className="flex items-center gap-2 text-xs text-ink-200">
+            <input type="checkbox" checked={legalHold} onChange={(e) => setLegalHold(e.target.checked)} className="accent-bb-red" />
+            <Lock size={12} /> Legal hold — indefinite, version-level protection (independent of retention)
+          </label>
+
+          <div className="space-y-2 rounded-md border border-ink-700 bg-ink-900/60 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">Retention</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Select label="Mode" value={retMode} onChange={setRetMode} options={[
+                { value: 'none', label: 'None' },
+                { value: 'governance', label: 'governance' },
+                { value: 'compliance', label: 'compliance' },
+              ]} />
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-ink-200">Retain until</div>
+                <input type="date" value={retUntil} onChange={(e) => setRetUntil(e.target.value)} disabled={retMode === 'none'}
+                  className="w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-ink-100 focus:border-bb-red/50 focus:outline-none disabled:opacity-40" />
+              </label>
+            </div>
+            {fileRetentionMode(file) === 'governance' && (
+              <label className="flex items-center gap-2 text-[11px] text-accent-amber">
+                <input type="checkbox" checked={bypass} onChange={(e) => setBypass(e.target.checked)} className="accent-bb-red" />
+                bypassGovernance — required to shorten/remove an existing governance lock
+              </label>
+            )}
+            {retMode === 'compliance' && (
+              <p className="text-[11px] text-bb-red">compliance retention cannot be shortened or removed by anyone (including the account owner) until it expires.</p>
+            )}
+          </div>
+
+          {error && <ErrorBanner message={error} />}
+          <ModalFooter>
+            <CancelButton onClick={onClose} />
+            <PrimaryButton type="button" disabled={submitting} onClick={save}>{submitting ? 'Saving…' : 'Save protection'}</PrimaryButton>
+          </ModalFooter>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// =============================================================================
+// Event Notification rules — webhook config per bucket
+// (b2_get_bucket_notification_rules / b2_set_bucket_notification_rules)
+// =============================================================================
+const EVENT_TYPES = [
+  'b2:ObjectCreated:*', 'b2:ObjectCreated:Upload', 'b2:ObjectCreated:MultipartUpload', 'b2:ObjectCreated:Copy',
+  'b2:ObjectDeleted:*', 'b2:ObjectDeleted:Delete', 'b2:ObjectDeleted:LifecycleRule',
+  'b2:HideMarkerCreated:*',
+];
+
+export function BucketNotificationsDialog({ open, onClose, onSaved, bucket, accountId }) {
+  const { isLive } = useApp();
+  const [rules, setRules] = useState(null); // null = loading
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setRules(null); setError(null); setSaved(false);
+    b2.getBucketNotificationRules({ accountId, bucketId: bucket.bucketId })
+      .then((r) => setRules((r.eventNotificationRules || []).map(fromApiRule)))
+      .catch((e) => { setError(String(e.message || e)); setRules([]); });
+  }, [open, accountId, bucket?.bucketId]);
+
+  function fromApiRule(r) {
+    return {
+      name: r.name || '',
+      eventTypes: new Set(r.eventTypes || ['b2:ObjectCreated:*']),
+      objectNamePrefix: r.objectNamePrefix || '',
+      url: r.targetConfiguration?.url || '',
+      hmac: r.targetConfiguration?.hmacSha256SigningSecret || '',
+      isEnabled: r.isEnabled !== false,
+    };
+  }
+  function addRule() { setRules((rs) => [...rs, { name: '', eventTypes: new Set(['b2:ObjectCreated:*']), objectNamePrefix: '', url: '', hmac: '', isEnabled: true }]); }
+  function removeRule(i) { setRules((rs) => rs.filter((_, idx) => idx !== i)); }
+  function patchRule(i, patch) { setRules((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r))); }
+  function toggleEvent(i, ev) {
+    setRules((rs) => rs.map((r, idx) => {
+      if (idx !== i) return r;
+      const s = new Set(r.eventTypes);
+      if (s.has(ev)) s.delete(ev); else s.add(ev);
+      return { ...r, eventTypes: s };
+    }));
+  }
+
+  async function save() {
+    setSubmitting(true); setError(null);
+    try {
+      const eventNotificationRules = rules.map((r) => ({
+        name: (r.name || '').trim() || `rule${Math.floor(Math.random() * 1e6)}`,
+        eventTypes: [...r.eventTypes],
+        objectNamePrefix: r.objectNamePrefix || '',
+        isEnabled: r.isEnabled,
+        targetConfiguration: {
+          targetType: 'webhook',
+          url: r.url,
+          ...(r.hmac ? { hmacSha256SigningSecret: r.hmac } : {}),
+        },
+      }));
+      await b2.setBucketNotificationRules({ accountId, bucketId: bucket.bucketId, eventNotificationRules });
+      setSaved(true);
+      onSaved?.();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Event notifications · ${bucket?.bucketName}`} subtitle={isLive ? 'POSTs a JSON webhook on object events.' : 'Demo mode — stored locally.'} size="lg">
+      {saved ? (
+        <SuccessPanel title="Notification rules saved" desc="B2 will POST to your webhook on matching events." onAck={onClose} />
+      ) : rules === null ? (
+        <p className="py-6 text-center text-xs text-ink-400">Loading rules…</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] text-ink-400">B2 delivers at-least-once; downloads are not covered. Sign with an HMAC secret to verify authenticity.</p>
+            <button type="button" onClick={addRule} className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800">+ Add rule</button>
+          </div>
+          {rules.length === 0 && <p className="py-2 text-center text-[11px] text-ink-500">No notification rules.</p>}
+          {rules.map((r, i) => (
+            <div key={i} className="space-y-2 rounded-md border border-ink-700 bg-ink-900/60 p-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+                <input value={r.name} onChange={(e) => patchRule(i, { name: e.target.value })} placeholder="rule name"
+                  className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-[11px] text-ink-300">
+                    <input type="checkbox" checked={r.isEnabled} onChange={(e) => patchRule(i, { isEnabled: e.target.checked })} className="accent-bb-red" /> enabled
+                  </label>
+                  <button type="button" onClick={() => removeRule(i)} className="grid place-items-center rounded-md px-2 py-1 text-ink-400 hover:bg-ink-800 hover:text-bb-red" title="Remove"><Trash2 size={13} /></button>
+                </div>
+              </div>
+              <input value={r.url} onChange={(e) => patchRule(i, { url: e.target.value })} placeholder="https://events.example.com/b2"
+                className="w-full rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <input value={r.objectNamePrefix} onChange={(e) => patchRule(i, { objectNamePrefix: e.target.value })} placeholder="objectNamePrefix (blank = all)"
+                  className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                <input value={r.hmac} onChange={(e) => patchRule(i, { hmac: e.target.value })} placeholder="HMAC SHA-256 signing secret (optional)"
+                  className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {EVENT_TYPES.map((ev) => {
+                  const on = r.eventTypes.has(ev);
+                  return (
+                    <button key={ev} type="button" onClick={() => toggleEvent(i, ev)}
+                      className={'rounded border px-1.5 py-0.5 font-mono text-[10px] transition ' + (on ? 'border-accent-violet/40 bg-accent-violet/10 text-accent-violet' : 'border-ink-700 bg-ink-900 text-ink-400 hover:text-ink-200')}>
+                      {ev}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {error && <ErrorBanner message={error} />}
+          <ModalFooter>
+            <CancelButton onClick={onClose} />
+            <PrimaryButton type="button" disabled={submitting} onClick={save}><Bell size={12} /> {submitting ? 'Saving…' : 'Save rules'}</PrimaryButton>
+          </ModalFooter>
+        </div>
+      )}
     </Modal>
   );
 }

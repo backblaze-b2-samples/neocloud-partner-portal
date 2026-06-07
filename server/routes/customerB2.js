@@ -145,6 +145,10 @@ const ALLOWED_ENDPOINTS = new Set([
   'b2_delete_key',
   'b2_delete_file_version',
   'b2_hide_file',
+  'b2_update_file_legal_hold',
+  'b2_update_file_retention',
+  'b2_get_bucket_notification_rules',
+  'b2_set_bucket_notification_rules',
 ]);
 
 // State-changing endpoints: audited, and require write access (a
@@ -157,6 +161,9 @@ const MUTATING = new Set([
   'b2_delete_key',
   'b2_delete_file_version',
   'b2_hide_file',
+  'b2_update_file_legal_hold',
+  'b2_update_file_retention',
+  'b2_set_bucket_notification_rules',
 ]);
 
 // Write access = partner staff (accountId null) OR customer_admin.
