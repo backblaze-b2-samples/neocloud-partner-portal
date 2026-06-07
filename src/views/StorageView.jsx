@@ -10,6 +10,7 @@ import { EditBucketDialog, DeleteBucketDialog } from '../components/bucketDialog
 import * as b2 from '../api/b2Adapter.js';
 import * as partner from '../api/partnerApi.js';
 import { REGIONS } from '../data/regions.js';
+import { CUSTOMERS } from '../data/customers.js';
 import { bytes, compactNumber } from '../lib/format.js';
 import { useNav } from '../lib/nav.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -49,11 +50,14 @@ export default function StorageView({ lockedAccountId } = {}) {
     try {
       let raw;
       if (!isLive) {
-        // Demo mode: serve from mock bucket data directly.
+        // Demo mode: serve from mock bucket data directly. Mock buckets carry a
+        // customerId (e.g. 'sub-7f3a91'); newly-created ones also carry accountId.
+        // Match on either so the customer console shows their seeded buckets.
         const { buckets: mockBuckets } = await b2.listBuckets();
         raw = mockBuckets;
         if (lockedAccountId) {
-          raw = raw.filter((b) => b.accountId === lockedAccountId);
+          const cust = CUSTOMERS.find((c) => c.accountId === lockedAccountId);
+          raw = raw.filter((b) => b.accountId === lockedAccountId || (cust && b.customerId === cust.id));
         }
       } else if (selectedAccountId === 'master') {
         // Master account: use the B2 API (only has the reports bucket).
