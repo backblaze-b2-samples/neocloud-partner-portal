@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Database, Lock, ShieldCheck, Eye, EyeOff, Copy, GitBranch, Layers, Filter, Boxes, Clock, Trash2, ChevronLeft, ChevronRight, Info, Users } from 'lucide-react';
+import { Database, Lock, ShieldCheck, Eye, EyeOff, Copy, GitBranch, Layers, Filter, Boxes, Clock, Trash2, ChevronLeft, ChevronRight, Info, Users, Plus, Pencil } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, SourceBadge, Tag, MetricCard,
   Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
 import { DonutChart } from '../components/charts.jsx';
+import { CreateBucketDialog } from '../components/dialogs.jsx';
+import { EditBucketDialog, DeleteBucketDialog } from '../components/bucketDialogs.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import * as partner from '../api/partnerApi.js';
 import { REGIONS } from '../data/regions.js';
@@ -16,7 +18,7 @@ const PAGE_SIZES = [10, 25, 50, 100];
 
 export default function StorageView({ lockedAccountId } = {}) {
   const { navigate } = useNav();
-  const { isLive } = useApp();
+  const { isLive, isCustomer, isCustomerAdmin } = useApp();
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('all');
@@ -27,6 +29,12 @@ export default function StorageView({ lockedAccountId } = {}) {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const [error, setError] = useState(null);
+
+  // CRUD (gated). customer_admin manages their own account; partner staff any.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);    // bucket being edited
+  const [deleteTarget, setDeleteTarget] = useState(null); // bucket being deleted
+  const canManage = isCustomerAdmin || !isCustomer;
 
   // Load customer list once (for the account selector).
   useEffect(() => {
@@ -137,6 +145,16 @@ export default function StorageView({ lockedAccountId } = {}) {
     ? 'Master account'
     : (selectedCustomer?.name || selectedAccountId);
 
+  // Target for "Create bucket": the locked sub-account (customer console) or a
+  // concretely-selected sub-account (partner staff). Null in the aggregate view.
+  const createTarget = lockedAccountId
+    ? { accountId: lockedAccountId, region: buckets[0]?.region, name: accountLabel }
+    : (selectedCustomer
+      ? { accountId: selectedCustomer.accountId, id: selectedCustomer.id, region: selectedCustomer.region, name: selectedCustomer.name }
+      : null);
+  // Per-row management needs a concrete accountId to scope the proxy call.
+  const manageAccountId = (b) => b.accountId || lockedAccountId || null;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -151,6 +169,14 @@ export default function StorageView({ lockedAccountId } = {}) {
                 value={selectedAccountId}
                 onChange={setSelectedAccountId}
               />
+            )}
+            {canManage && createTarget && (
+              <button
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
+              >
+                <Plus size={13} /> Create bucket
+              </button>
             )}
             <Tag>Native API + S3-compatible</Tag>
             <Tag variant="info">{buckets.length} buckets</Tag>
@@ -297,6 +323,7 @@ export default function StorageView({ lockedAccountId } = {}) {
               <TH>Lifecycle</TH>
               <TH className="text-right">Size</TH>
               <TH className="text-right">Objects</TH>
+              {canManage && <TH className="text-right">Manage</TH>}
             </TR>
           </THead>
           <TBody>
@@ -358,6 +385,30 @@ export default function StorageView({ lockedAccountId } = {}) {
                   </TD>
                   <TD className="text-right font-mono text-ink-100">{bytes(b.storageBytes)}</TD>
                   <TD className="text-right font-mono text-ink-100">{compactNumber(b.objectCount)}</TD>
+                  {canManage && (
+                    <TD className="text-right">
+                      {manageAccountId(b) ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditTarget(b); }}
+                            title="Edit bucket"
+                            className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-ink-100"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(b); }}
+                            title="Delete bucket"
+                            className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-bb-red"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-ink-500">—</span>
+                      )}
+                    </TD>
+                  )}
                 </TR>
               );
             })}
@@ -394,6 +445,34 @@ export default function StorageView({ lockedAccountId } = {}) {
           </div>
         </div>
       </Card>
+
+      {/* Gated CRUD dialogs */}
+      {canManage && createTarget && (
+        <CreateBucketDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => { setCreateOpen(false); loadBuckets(); }}
+          customer={createTarget}
+        />
+      )}
+      {editTarget && (
+        <EditBucketDialog
+          open={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => loadBuckets()}
+          bucket={editTarget}
+          accountId={manageAccountId(editTarget)}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteBucketDialog
+          open={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => { setDeleteTarget(null); loadBuckets(); }}
+          bucket={deleteTarget}
+          accountId={manageAccountId(deleteTarget)}
+        />
+      )}
     </div>
   );
 }

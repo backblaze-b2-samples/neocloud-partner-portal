@@ -139,14 +139,20 @@ function CustomerShell() {
     if (active === 'my-overview') return { ...params, customerId };
     if (active === 'storage') return { ...params, lockedAccountId: customerAccountId };
     if (active === 'keys') return { ...params, lockedCustomerId: customerId, lockedAccountId: customerAccountId };
+    // Drill-down views: force the customer's own accountId so the B2 proxy
+    // scopes every call to their sub-account (they can't pass another).
+    if (active === 'bucket-detail') return { ...params, accountId: customerAccountId };
+    if (active === 'key-detail') return { ...params, accountId: customerAccountId, customerId };
     return params;
   }, [active, params, customerId, customerAccountId]);
 
   const CUSTOMER_VIEWS = {
     'my-overview': CustomerDetail,
     storage: Storage,
+    'bucket-detail': BucketDetail,
     usage: Usage,
     keys: Keys,
+    'key-detail': KeyDetail,
     'customer-users': CustomerUsers,
     mcp: Mcp,
     account: Account,

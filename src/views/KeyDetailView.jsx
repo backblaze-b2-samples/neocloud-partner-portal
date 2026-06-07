@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft, KeyRound, ShieldCheck, ShieldAlert, Shield, Calendar, Database,
-  Activity, Copy, Clock, AlertTriangle, Radio,
+  Activity, Copy, Clock, AlertTriangle, Radio, RefreshCw, Trash2,
 } from 'lucide-react';
+import { RotateKeyDialog, DeleteKeyDialog } from '../components/bucketDialogs.jsx';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
@@ -30,13 +31,17 @@ const POSTURE = {
 
 export default function KeyDetailView({ keyId, customerId, accountId }) {
   const { navigate } = useNav();
-  const { isLive } = useApp();
+  const { isLive, isCustomer, isCustomerAdmin } = useApp();
   const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
   const [k, setKey] = useState(null);
   const [lastUsedTs, setLastUsedTs] = useState(null);
   const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
   const [error, setError] = useState(null);
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Key management requires a concrete sub-account to scope the proxy call.
+  const canManage = (isCustomerAdmin || !isCustomer) && !!accountId;
 
   const load = () => {
     setError(null);
@@ -142,6 +147,22 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
             >
               <Copy size={11} /> Copy key ID
             </button>
+            {canManage && (
+              <>
+                <button
+                  onClick={() => setRotateOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800"
+                >
+                  <RefreshCw size={11} /> Rotate
+                </button>
+                <button
+                  onClick={() => setDeleteOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 hover:text-bb-red"
+                >
+                  <Trash2 size={11} /> Revoke
+                </button>
+              </>
+            )}
           </div>
         }
       />
@@ -187,10 +208,12 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
           <div className="text-xs">
             <div className="text-sm font-semibold text-bb-red">{Posture.label}</div>
             <p className="mt-1 text-ink-200">{Posture.desc}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button className="rounded-md bg-bb-red px-3 py-1.5 text-[11px] font-medium text-white hover:bg-bb-redDim">Rotate this key</button>
-              <button className="rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-[11px] text-ink-300 hover:bg-ink-800">Disable & alert owner</button>
-            </div>
+            {canManage && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button onClick={() => setRotateOpen(true)} className="rounded-md bg-bb-red px-3 py-1.5 text-[11px] font-medium text-white hover:bg-bb-redDim">Rotate this key</button>
+                <button onClick={() => setDeleteOpen(true)} className="rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-[11px] text-ink-300 hover:bg-ink-800">Revoke this key</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -377,6 +400,26 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
           </Table>
         )}
       </Card>
+
+      {/* Gated key management */}
+      {canManage && rotateOpen && (
+        <RotateKeyDialog
+          open={rotateOpen}
+          onClose={() => setRotateOpen(false)}
+          onRotated={() => { setRotateOpen(false); navigate('keys'); }}
+          apiKey={k}
+          accountId={accountId}
+        />
+      )}
+      {canManage && deleteOpen && (
+        <DeleteKeyDialog
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={() => { setDeleteOpen(false); navigate('keys'); }}
+          apiKey={k}
+          accountId={accountId}
+        />
+      )}
     </div>
   );
 }

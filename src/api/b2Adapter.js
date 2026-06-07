@@ -371,6 +371,7 @@ export async function createBucket(payload) {
       bucketId: '__mock_' + Math.random().toString(16).slice(2, 18),
       bucketName: payload.bucketName,
       customerId: payload.customerId,
+      accountId: payload.accountId,   // so account-scoped views (customer console) show it
       region: payload.region,
       bucketType: payload.bucketType || 'allPrivate',
       storageBytes: 0,
