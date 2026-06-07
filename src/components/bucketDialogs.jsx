@@ -16,6 +16,7 @@ import { Tag } from './ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import { bytes } from '../lib/format.js';
+import { buildBucketUpdate, fileProtectionPlan, performRotate, genRuleName } from '../lib/bucketPayloads.js';
 
 // ── Local form primitives (kept private; mirror dialogs.jsx styling) ─────────
 function Field({ label, placeholder, value, onChange, help, mono, required, type = 'text' }) {
@@ -168,53 +169,19 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
 
   async function submit(e) {
     e.preventDefault();
-    // Validate lifecycle rules: B2 requires at least one of hide/delete days.
-    for (const r of rules) {
-      if (r.daysFromUploadingToHiding === '' && r.daysFromHidingToDeleting === '') {
-        return setError('Each lifecycle rule needs a hide and/or delete day count.');
-      }
-    }
-    // Validate CORS rules: B2 requires ≥1 origin and ≥1 operation per rule, and
-    // corsRuleName 6–63 of [A-Za-z0-9-].
-    for (const c of corsRules) {
-      const origins = c.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean);
-      if (!origins.length) return setError('Each CORS rule needs at least one origin.');
-      if (c.allowedOperations.size === 0) return setError('Each CORS rule needs at least one operation.');
-      const name = (c.corsRuleName || '').trim();
-      if (name && !/^[A-Za-z0-9-]{6,63}$/.test(name)) return setError('CORS rule names must be 6–63 chars of letters, digits, or dashes.');
+    let payload;
+    try {
+      payload = buildBucketUpdate({
+        accountId, bucketId: bucket.bucketId, bucketType,
+        encryption, initialEncryption,
+        rules, corsRules, info,
+        lockEnabled, retMode, retDuration, retUnit, initialRet,
+      });
+    } catch (err) {
+      return setError(String(err.message || err)); // validation errors
     }
     setSubmitting(true);
     setError(null);
-    const lifecycleRules = rules.map((r) => ({
-      fileNamePrefix: r.fileNamePrefix,
-      daysFromUploadingToHiding: r.daysFromUploadingToHiding === '' ? null : Number(r.daysFromUploadingToHiding),
-      daysFromHidingToDeleting: r.daysFromHidingToDeleting === '' ? null : Number(r.daysFromHidingToDeleting),
-    }));
-    const builtCors = corsRules.map((c) => ({
-      corsRuleName: (c.corsRuleName || '').trim() || `rule-${Math.floor(Math.random() * 1e6).toString().padStart(6, '0')}`,
-      allowedOrigins: c.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean),
-      allowedOperations: [...c.allowedOperations],
-      allowedHeaders: ['*'],
-      maxAgeSeconds: Number(c.maxAgeSeconds) || 0,
-    }));
-    const bucketInfo = Object.fromEntries(info.filter((r) => r.k.trim()).map((r) => [r.k.trim(), r.v]));
-    const payload = {
-      accountId,
-      bucketId: bucket.bucketId,
-      bucketType,
-      lifecycleRules,
-      corsRules: builtCors,
-      bucketInfo,
-    };
-    // Only touch default encryption if the user actually changed it — avoids
-    // clobbering an SSE-C bucket's default and avoids a needless disable call.
-    if (encryption !== initialEncryption) payload.encryption = encryption;
-    // Only touch default retention if it's editable and actually changed.
-    if (lockEnabled && (retMode !== initialRet.mode || String(retDuration) !== String(initialRet.duration) || retUnit !== initialRet.unit)) {
-      payload.defaultRetention = retMode === 'none'
-        ? { mode: null }
-        : { mode: retMode, period: { duration: Number(retDuration) || 1, unit: retUnit } };
-    }
     try {
       const updated = await b2.updateBucket(payload);
       setSaved(true);
@@ -819,33 +786,24 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
     setPhase('working');
     setError(null);
     setRevokeWarning(null);
-    // Step 1: create the replacement. If this fails, nothing has changed.
-    let replacement;
+    let result;
     try {
-      replacement = await b2.createApplicationKey({
-        accountId,
-        customerId: apiKey.customerId,
-        keyName: apiKey.keyName,
-        capabilities: apiKey.capabilities,
-        bucketIds: scopeBucketIds,
-        namePrefix: apiKey.namePrefix || undefined,
+      result = await performRotate({
+        createKey: (args) => b2.createApplicationKey({ accountId, customerId: apiKey.customerId, ...args }),
+        deleteKey: (args) => b2.deleteApplicationKey({ accountId, ...args }),
+        apiKey,
         validDurationInSeconds: validDuration ? Number(validDuration) : undefined,
       });
     } catch (err) {
+      // create failed — nothing changed.
       setError('Could not create the replacement key: ' + String(err.message || err));
       setPhase('error');
       return;
     }
-    // The new key (and its one-time secret) now exists — surface it no matter
-    // what happens next, so it's never lost.
-    setCreated(replacement);
-    // Step 2: revoke the old key. If THIS fails, both keys are live — warn
-    // loudly so the operator revokes the old one manually.
-    try {
-      await b2.deleteApplicationKey({ accountId, applicationKeyId: apiKey.applicationKeyId });
-    } catch (err) {
-      setRevokeWarning(`The new key was created, but the OLD key (${apiKey.applicationKeyId}) could NOT be revoked: ${String(err.message || err)}. Revoke it manually.`);
-    }
+    // New key (and its one-time secret) exists — surface it no matter what; if
+    // the revoke failed, performRotate returns a warning instead of throwing.
+    setCreated(result.replacement);
+    if (result.revokeWarning) setRevokeWarning(result.revokeWarning);
     setPhase('done');
   }
 
@@ -1092,23 +1050,22 @@ export function FileProtectionDialog({ open, onClose, onDone, file, bucket, acco
   const [saved, setSaved] = useState(false);
 
   async function save() {
+    let plan;
+    try {
+      plan = fileProtectionPlan({ legalHold, initialLegalHold, retMode, initialRetMode, retUntil, initialRetUntil, bypass });
+    } catch (err) {
+      return setError(String(err.message || err));
+    }
     setSubmitting(true);
     setError(null);
     try {
       // Only write what actually changed (legal hold and retention are separate
       // B2 calls and a re-write of an existing compliance lock would error).
-      if (legalHold !== initialLegalHold) {
-        await b2.setFileLegalHold({ accountId, fileName: file.fileName, fileId: file.fileId, legalHold: legalHold ? 'on' : 'off' });
+      if (plan.legalHold !== undefined) {
+        await b2.setFileLegalHold({ accountId, fileName: file.fileName, fileId: file.fileId, legalHold: plan.legalHold });
       }
-      const retChanged = retMode !== initialRetMode || retUntil !== initialRetUntil;
-      if (retChanged) {
-        const payload = { accountId, fileName: file.fileName, fileId: file.fileId, mode: retMode, bypassGovernance: bypass };
-        if (retMode !== 'none') {
-          if (!retUntil) throw new Error('Choose a "retain until" date.');
-          // End of the chosen day (UTC) so the lock covers the whole date.
-          payload.retainUntilTimestamp = Date.parse(retUntil + 'T23:59:59Z');
-        }
-        await b2.setFileRetention(payload);
+      if (plan.retention) {
+        await b2.setFileRetention({ accountId, fileName: file.fileName, fileId: file.fileId, ...plan.retention });
       }
       setSaved(true);
       onDone?.();
@@ -1222,7 +1179,7 @@ export function BucketNotificationsDialog({ open, onClose, onSaved, bucket, acco
     setSubmitting(true); setError(null);
     try {
       const eventNotificationRules = rules.map((r) => ({
-        name: (r.name || '').trim() || `rule-${Math.floor(Math.random() * 1e6).toString().padStart(6, '0')}`,
+        name: (r.name || '').trim() || genRuleName(),
         eventTypes: [...r.eventTypes],
         objectNamePrefix: r.objectNamePrefix || '',
         isEnabled: r.isEnabled,

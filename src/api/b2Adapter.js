@@ -32,6 +32,7 @@ import { REGIONS, resolveRegion } from '../data/regions.js';
 import { FILES_BY_BUCKET } from '../data/files.js';
 import { parseDailyUsageCsv, activityFromCsv, loadSampleCsv, parseBackblazeGroupUsageCsv, parseStandardUsageCsv } from './csvParser.js';
 import { record as traceCall, isTrainingEnabled } from '../lib/apiTrace.js';
+import { buildCreateKeyBody } from '../lib/bucketPayloads.js';
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -544,13 +545,7 @@ export async function createApplicationKey(payload) {
   // bucketIds (ARRAY — a Multi-Bucket Application Key; empty/omitted = account-
   // wide), namePrefix, validDurationInSeconds. The singular bucketId field was
   // removed in v4. accountId is injected server-side for the sub-account route.
-  const b2Body = {
-    keyName: payload.keyName,
-    capabilities: payload.capabilities,
-  };
-  if (payload.bucketIds?.length) b2Body.bucketIds = payload.bucketIds;
-  if (payload.namePrefix) b2Body.namePrefix = payload.namePrefix;
-  if (payload.validDurationInSeconds) b2Body.validDurationInSeconds = payload.validDurationInSeconds;
+  const b2Body = buildCreateKeyBody(payload);
 
   if (payload.accountId) {
     const data = await callAsCustomer(payload.accountId, 'b2_create_key', b2Body);
