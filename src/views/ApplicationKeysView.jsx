@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import {
-  KeyRound, Shield, ShieldAlert, ShieldCheck, Calendar, Code2, Bell, ExternalLink,
+  KeyRound, Shield, ShieldAlert, ShieldCheck, Calendar, Code2, Bell, ExternalLink, Plus, Trash2,
 } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
+import { CreateKeyDialog, DeleteKeyDialog } from '../components/bucketDialogs.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import { deriveKeyCoverage, coverageToAvailability, coverageStatusBadge, getKeyActivityLabel } from '../api/accessLogCoverage.js';
 import { relativeTime } from '../lib/format.js';
 import { useNav } from '../lib/nav.js';
+import { useApp } from '../lib/AppContext.jsx';
 import { useCustomers } from '../lib/useCustomers.js';
 
 const POSTURE_STYLES = {
@@ -34,12 +36,20 @@ const POSTURE_TABS = [
 export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId } = {}) {
   const { navigate } = useNav();
   const { customers } = useCustomers();
+  const { isCustomer, isCustomerAdmin } = useApp();
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState([]);
+  const [bucketList, setBucketList] = useState([]);
   const [lastUsed, setLastUsed] = useState(new Map());
   const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
   const [tab, setTab] = useState('all');
   const [error, setError] = useState(null);
+
+  // Key CRUD is gated to the customer console (a concrete sub-account is locked
+  // in, so the proxy can scope every call) for customer_admin / partner staff.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const canManage = (isCustomerAdmin || !isCustomer) && !!lockedAccountId;
 
   const load = () => {
     setError(null);
@@ -51,6 +61,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
     ])
       .then(([{ keys }, { lastUsed }, { buckets }]) => {
         setKeys(keys);
+        setBucketList(buckets);
         setLastUsed(lastUsed);
         setBucketStatusMap(new Map(
           buckets.map((bk) => [bk.bucketId, bk.accessLogging || { status: 'not_configured' }])
@@ -78,7 +89,19 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
         eyebrow="Security"
         title="Application keys & security posture"
         subtitle="Application keys are managed via the B2 Native API (b2_list_keys / b2_create_key). Each key can be scoped to specific buckets, capabilities, a name prefix, and an optional expirationTimestamp. The secret applicationKey value is returned ONCE on creation and never again — store it immediately."
-        actions={<Tag variant="info">{keys.length} keys</Tag>}
+        actions={
+          <div className="flex items-center gap-2">
+            {canManage && (
+              <button
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
+              >
+                <Plus size={13} /> Create key
+              </button>
+            )}
+            <Tag variant="info">{keys.length} keys</Tag>
+          </div>
+        }
       />
 
       {/* Posture summary */}
@@ -148,6 +171,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
               <TH>Last used</TH>
               <TH>Log coverage</TH>
               <TH>Posture</TH>
+              {canManage && <TH className="text-right">Manage</TH>}
             </TR>
           </THead>
           <TBody>
@@ -171,7 +195,7 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
                   </TD>
                   {!lockedCustomerId && <TD className="text-ink-300">{cust?.name || '—'}</TD>}
                   <TD>
-                    <div className="text-xs text-ink-200">{k.bucketName}</div>
+                    <div className="text-xs text-ink-200">{scopeSummary(k, bucketList)}</div>
                     {k.namePrefix && (
                       <div className="font-mono text-[10.5px] text-accent-violet">prefix: {k.namePrefix}</div>
                     )}
@@ -213,12 +237,44 @@ export default function ApplicationKeysView({ lockedCustomerId, lockedAccountId 
                       <Posture.icon size={11} /> {Posture.label}
                     </span>
                   </TD>
+                  {canManage && (
+                    <TD className="text-right">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(k); }}
+                        title="Revoke key"
+                        className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-bb-red"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </TD>
+                  )}
                 </TR>
               );
             })}
           </TBody>
         </Table>
       </Card>
+
+      {/* Gated key CRUD */}
+      {canManage && (
+        <CreateKeyDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => load()}
+          accountId={lockedAccountId}
+          customerId={lockedCustomerId}
+          buckets={bucketList}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteKeyDialog
+          open={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => { setDeleteTarget(null); load(); }}
+          apiKey={deleteTarget}
+          accountId={lockedAccountId}
+        />
+      )}
 
       {/* Least privilege examples */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -330,6 +386,16 @@ X-Bz-Event-Notification-Signature-Sha256: <hmac>
       </Card>
     </div>
   );
+}
+
+// Resolve a key's bucket scope to human names using the live bucket list.
+// b2_list_keys returns bucketIds (array) but no names; empty = account-wide.
+export function scopeSummary(k, buckets = []) {
+  const ids = k.bucketIds || [];
+  if (ids.length === 0) return 'All buckets (account-wide)';
+  const names = ids.map((id) => buckets.find((b) => b.bucketId === id)?.bucketName || (id.slice(0, 10) + '…'));
+  if (names.length <= 2) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
 }
 
 function CodeBlock({ children }) {

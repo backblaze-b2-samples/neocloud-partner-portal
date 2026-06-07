@@ -3,17 +3,19 @@ import {
   ArrowLeft, Database, Lock, ShieldCheck, Eye, EyeOff, Layers, Clock, Trash2,
   GitBranch, Globe, Copy, FileText, Folder, Search, ChevronLeft, ChevronRight,
   AlertTriangle, Info, History, ChevronDown, ChevronUp, EyeOff as HideIcon,
-  ScrollText, CheckCircle2,
+  ScrollText, CheckCircle2, UploadCloud, Download,
 } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { TrendAreaChart } from '../components/charts.jsx';
+import { FileUploadDialog, DeleteFileDialog, FileProtectionDialog, BucketNotificationsDialog } from '../components/bucketDialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import { CUSTOMERS } from '../data/customers.js';
 import * as b2 from '../api/b2Adapter.js';
 import { useNav } from '../lib/nav.js';
+import { useApp } from '../lib/AppContext.jsx';
 import { bytes, compactNumber, shortDate, relativeTime } from '../lib/format.js';
 
 const TABS = [
@@ -25,6 +27,7 @@ const TABS = [
 
 export default function BucketDetailView({ bucketId, fromCustomer, accountId, customerName, customerRegion }) {
   const { navigate } = useNav();
+  const { isCustomer, isCustomerAdmin } = useApp();
   const [loading, setLoading] = useState(true);
   const [bucket, setBucket] = useState(null);
   const [tab, setTab] = useState('overview');
@@ -68,6 +71,9 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
   // Fall back to customerRegion passed through navigation params.
   const resolvedRegionId = bucket.region || customerRegion || null;
   const region = REGIONS.find((r) => r.id === resolvedRegionId);
+  // File CRUD is gated to customer_admin / partner staff and needs the bucket's
+  // accountId (to scope the proxy) and region (to sign S3 requests).
+  const canManage = (isCustomerAdmin || !isCustomer) && !!accountId;
   // In live mode bucket.customerId is null — use customerName from nav params.
   // accountId IS the customer's id in live mode (see getCustomer in partnerApi.js),
   // so include it in the fallback so the "Back to <name>" link navigates correctly.
@@ -153,9 +159,9 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
       <Tabs tabs={tabsWithCounts} value={tab} onChange={setTab} />
 
       {tab === 'overview' && <OverviewTab bucket={bucket} customer={customer} region={region} />}
-      {tab === 'files' && <FilesTab bucket={bucket} accountId={accountId} onStats={setLiveStats} />}
+      {tab === 'files' && <FilesTab bucket={bucket} accountId={accountId} regionId={resolvedRegionId} canManage={canManage} onStats={setLiveStats} />}
       {tab === 'lifecycle' && <LifecycleTab bucket={bucket} />}
-      {tab === 'access' && <AccessTab bucket={bucket} region={region} accountId={accountId} />}
+      {tab === 'access' && <AccessTab bucket={bucket} region={region} accountId={accountId} canManage={canManage} />}
     </div>
   );
 }
@@ -233,13 +239,18 @@ function indexRowToFile(f) {
   };
 }
 
-function FilesTab({ bucket, accountId, onStats }) {
+function FilesTab({ bucket, accountId, regionId, canManage, onStats }) {
   const [draftPrefix, setDraftPrefix] = useState('');
   const [activePrefix, setActivePrefix] = useState('');
   const [pageSize, setPageSize] = useState(100);
   const [sortMode, setSortMode] = useState('name-asc');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [deleteFileTarget, setDeleteFileTarget] = useState(null);
+  const [protectFileTarget, setProtectFileTarget] = useState(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const reload = () => setReloadToken((t) => t + 1);
 
   // ── Index mode (background job has run) ────────────────────────────────
   // null = not yet detected; false = not indexed; true = indexed
@@ -314,7 +325,7 @@ function FilesTab({ bucket, accountId, onStats }) {
         }
       }).catch(() => { setFiles([]); setLoading(false); });
     }
-  }, [bucket.bucketId, indexed, activePrefix, indexPage, currentCursor, pageSize, sortMode]);
+  }, [bucket.bucketId, indexed, activePrefix, indexPage, currentCursor, pageSize, sortMode, reloadToken]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
   function applyPrefix(p) {
@@ -434,6 +445,16 @@ function FilesTab({ bucket, accountId, onStats }) {
             )}
           </form>
 
+          {canManage && (
+            <button
+              type="button"
+              onClick={() => setUploadOpen(true)}
+              className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
+            >
+              <UploadCloud size={13} /> Upload
+            </button>
+          )}
+
           {/* Sort + page size */}
           <div className="ml-auto flex items-center gap-2 text-xs">
             <label className="text-ink-400">Sort</label>
@@ -520,11 +541,22 @@ function FilesTab({ bucket, accountId, onStats }) {
                 <TH>Encryption</TH>
                 <TH>File ID</TH>
                 <TH className="w-20 text-center">Versions</TH>
+                <TH className="w-24 text-right">Actions</TH>
               </TR>
             </THead>
             <TBody>
               {sortedFiles.map((f) => (
-                <FileRow key={f.fileId} f={f} bucketId={bucket.bucketId} />
+                <FileRow
+                  key={f.fileId}
+                  f={f}
+                  bucket={bucket}
+                  regionId={regionId}
+                  accountId={accountId}
+                  canManage={canManage}
+                  onDownload={() => b2.downloadFile({ accountId, bucket: bucket.bucketName, region: regionId, key: f.fileName })}
+                  onDelete={() => setDeleteFileTarget(f)}
+                  onProtect={() => setProtectFileTarget(f)}
+                />
               ))}
             </TBody>
           </Table>
@@ -579,6 +611,40 @@ function FilesTab({ bucket, accountId, onStats }) {
           </div>
         </Card>
       )}
+
+      {/* Gated file CRUD */}
+      {canManage && uploadOpen && (
+        <FileUploadDialog
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={reload}
+          accountId={accountId}
+          bucket={bucket}
+          region={regionId}
+          activePrefix={activePrefix}
+        />
+      )}
+      {canManage && deleteFileTarget && (
+        <DeleteFileDialog
+          open={!!deleteFileTarget}
+          onClose={() => setDeleteFileTarget(null)}
+          onDeleted={() => { setDeleteFileTarget(null); reload(); }}
+          file={deleteFileTarget}
+          bucket={bucket}
+          region={regionId}
+          accountId={accountId}
+        />
+      )}
+      {canManage && protectFileTarget && (
+        <FileProtectionDialog
+          open={!!protectFileTarget}
+          onClose={() => setProtectFileTarget(null)}
+          onDone={() => reload()}
+          file={protectFileTarget}
+          bucket={bucket}
+          accountId={accountId}
+        />
+      )}
     </div>
   );
 }
@@ -586,10 +652,12 @@ function FilesTab({ bucket, accountId, onStats }) {
 // ============================================================================
 // FileRow — a single file row with an expandable version history panel
 // ============================================================================
-function FileRow({ f, bucketId }) {
+function FileRow({ f, bucket, regionId, accountId, canManage, onDownload, onDelete, onProtect }) {
+  const bucketId = bucket.bucketId;
   const [expanded, setExpanded] = useState(false);
   const [versions, setVersions] = useState(null); // null = not loaded yet
   const [versionsLoading, setVersionsLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   function toggleVersions() {
     if (!expanded && versions === null) {
@@ -599,6 +667,11 @@ function FileRow({ f, bucketId }) {
         .catch(() => { setVersions([]); setVersionsLoading(false); });
     }
     setExpanded((e) => !e);
+  }
+
+  async function handleDownload() {
+    setDownloading(true);
+    try { await onDownload(); } finally { setDownloading(false); }
   }
 
   const versionCount = versions?.length ?? null;
@@ -639,10 +712,40 @@ function FileRow({ f, bucketId }) {
             {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
           </button>
         </TD>
+        <TD className="text-right">
+          <div className="flex items-center justify-end gap-1">
+            <button
+              onClick={handleDownload}
+              disabled={downloading || !regionId}
+              title={regionId ? 'Download' : 'Region unknown — open from the Storage list'}
+              className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-ink-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download size={12} className={downloading ? 'animate-pulse' : ''} />
+            </button>
+            {canManage && (
+              <>
+                <button
+                  onClick={onProtect}
+                  title="Object Lock — legal hold / retention"
+                  className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-accent-violet"
+                >
+                  <Lock size={12} />
+                </button>
+                <button
+                  onClick={onDelete}
+                  title="Delete file"
+                  className="grid h-7 w-7 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:text-bb-red"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </>
+            )}
+          </div>
+        </TD>
       </TR>
       {expanded && (
         <tr className="bg-ink-900/60">
-          <td colSpan={7} className="px-6 py-3">
+          <td colSpan={8} className="px-6 py-3">
             {versionsLoading ? (
               <div className="flex items-center gap-2 text-[11px] text-ink-400">
                 <span className="animate-spin">⟳</span> Loading versions…
@@ -814,7 +917,8 @@ function RuleStat({ icon, title, value, desc }) {
 }
 
 // ============================================================================
-function AccessTab({ bucket, region, accountId }) {
+function AccessTab({ bucket, region, accountId, canManage }) {
+  const [notifOpen, setNotifOpen] = useState(false);
   const codeAuth = `Authorization: <auth_token>
 GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
 
@@ -862,10 +966,35 @@ GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
         )}
       </Card>
 
+      {/* Event notifications */}
+      <Card>
+        <CardHeader title="Event notifications" subtitle="Webhook POSTs on object created / deleted / hidden events" icon={<ScrollText size={16} />} />
+        {canManage ? (
+          <button
+            onClick={() => setNotifOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md bg-bb-red px-3 py-1.5 text-xs font-medium text-white shadow-glow hover:bg-bb-redDim"
+          >
+            Configure notification rules
+          </button>
+        ) : (
+          <p className="text-xs text-ink-400">Per-object event webhooks. Ask an account admin to configure rules.</p>
+        )}
+      </Card>
+
       {/* Access Logs — full width */}
       <div className="lg:col-span-2">
-        <AccessLogsPanel bucket={bucket} region={region} accountId={accountId} />
+        <AccessLogsPanel bucket={bucket} region={region} accountId={accountId} canManage={canManage} />
       </div>
+
+      {canManage && notifOpen && (
+        <BucketNotificationsDialog
+          open={notifOpen}
+          onClose={() => setNotifOpen(false)}
+          onSaved={() => setNotifOpen(false)}
+          bucket={bucket}
+          accountId={accountId}
+        />
+      )}
     </div>
   );
 }
@@ -874,7 +1003,7 @@ GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
 // AccessLogsPanel — configure S3 PutBucketLogging / GetBucketLogging
 // Ref: https://www.backblaze.com/docs/cloud-storage-bucket-access-logs
 // ============================================================================
-function AccessLogsPanel({ bucket, region, accountId }) {
+function AccessLogsPanel({ bucket, region, accountId, canManage }) {
   const [loading, setLoading]   = useState(true);
   const [config, setConfig]     = useState(null);  // { enabled, targetBucket, targetPrefix }
   const [saving, setSaving]     = useState(false);
@@ -994,7 +1123,8 @@ function AccessLogsPanel({ bucket, region, accountId }) {
             )}
           </div>
 
-          {/* Edit form */}
+          {/* Edit form — only for managers; read-only users see status + notes */}
+          {canManage && (
           <div className="space-y-3 rounded-md border border-ink-700 bg-ink-900/60 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">Configure logging</p>
 
@@ -1057,6 +1187,7 @@ function AccessLogsPanel({ bucket, region, accountId }) {
               <span className="text-[10.5px] text-ink-500">Calls S3 PutBucketLogging · requires <code>writeBucketLogging</code> capability</span>
             </div>
           </div>
+          )}
 
           {/* Delivery notes */}
           <div className="rounded-md bg-ink-900/40 p-3 text-[11px] leading-relaxed text-ink-400 ring-1 ring-ink-700">

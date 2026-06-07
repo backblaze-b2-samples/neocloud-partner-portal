@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft, KeyRound, ShieldCheck, ShieldAlert, Shield, Calendar, Database,
-  Activity, Copy, Clock, AlertTriangle, Radio,
+  Activity, Copy, Clock, AlertTriangle, Radio, RefreshCw, Trash2,
 } from 'lucide-react';
+import { RotateKeyDialog, DeleteKeyDialog } from '../components/bucketDialogs.jsx';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
@@ -15,7 +16,7 @@ import { useNav } from '../lib/nav.js';
 import { useApp } from '../lib/AppContext.jsx';
 import { useCustomers } from '../lib/useCustomers.js';
 import { compactNumber, shortDate, relativeTime } from '../lib/format.js';
-import { LastUsedCell } from './ApplicationKeysView.jsx';
+import { LastUsedCell, scopeSummary } from './ApplicationKeysView.jsx';
 
 const POSTURE = {
   good:      { Icon: ShieldCheck,  label: 'Healthy',   tone: 'green',
@@ -30,13 +31,18 @@ const POSTURE = {
 
 export default function KeyDetailView({ keyId, customerId, accountId }) {
   const { navigate } = useNav();
-  const { isLive } = useApp();
+  const { isLive, isCustomer, isCustomerAdmin } = useApp();
   const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
   const [k, setKey] = useState(null);
+  const [allBuckets, setAllBuckets] = useState([]);
   const [lastUsedTs, setLastUsedTs] = useState(null);
   const [bucketStatusMap, setBucketStatusMap] = useState(new Map());
   const [error, setError] = useState(null);
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Key management requires a concrete sub-account to scope the proxy call.
+  const canManage = (isCustomerAdmin || !isCustomer) && !!accountId;
 
   const load = () => {
     setError(null);
@@ -48,6 +54,7 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
     ]).then(([{ keys }, { lastUsed }, { buckets }]) => {
       const found = keys.find((x) => x.applicationKeyId === keyId) || null;
       setKey(found);
+      setAllBuckets(buckets || []);
       setLastUsedTs(lastUsed.get(keyId) || null);
       setBucketStatusMap(new Map(
         buckets.map((bk) => [bk.bucketId, bk.accessLogging || { status: 'not_configured' }])
@@ -72,9 +79,13 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
 
   const Posture = POSTURE[k.posture] || POSTURE.good;
   const customer = customers.find((c) => c.id === k.customerId);
+  // Resolve from the live bucket list (b2_list_keys returns no names, and in
+  // live mode k.customerId is null). Fall back to demo BUCKETS only if the
+  // fetch returned nothing.
+  const bucketSource = allBuckets.length ? allBuckets : BUCKETS;
   const accessibleBuckets = k.bucketIds.length === 0
-    ? BUCKETS.filter((b) => b.customerId === k.customerId)  // master-equivalent
-    : BUCKETS.filter((b) => k.bucketIds.includes(b.bucketId));
+    ? bucketSource  // account-wide → every bucket in the sub-account
+    : bucketSource.filter((b) => k.bucketIds.includes(b.bucketId));
 
   const writeCaps = k.capabilities.filter((c) => c.startsWith('write') || c.startsWith('delete'));
   const readCaps = k.capabilities.filter((c) => c.startsWith('read') || c.startsWith('list') || c === 'shareFiles');
@@ -142,6 +153,22 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
             >
               <Copy size={11} /> Copy key ID
             </button>
+            {canManage && (
+              <>
+                <button
+                  onClick={() => setRotateOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800"
+                >
+                  <RefreshCw size={11} /> Rotate
+                </button>
+                <button
+                  onClick={() => setDeleteOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 hover:text-bb-red"
+                >
+                  <Trash2 size={11} /> Revoke
+                </button>
+              </>
+            )}
           </div>
         }
       />
@@ -187,10 +214,12 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
           <div className="text-xs">
             <div className="text-sm font-semibold text-bb-red">{Posture.label}</div>
             <p className="mt-1 text-ink-200">{Posture.desc}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button className="rounded-md bg-bb-red px-3 py-1.5 text-[11px] font-medium text-white hover:bg-bb-redDim">Rotate this key</button>
-              <button className="rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-[11px] text-ink-300 hover:bg-ink-800">Disable & alert owner</button>
-            </div>
+            {canManage && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button onClick={() => setRotateOpen(true)} className="rounded-md bg-bb-red px-3 py-1.5 text-[11px] font-medium text-white hover:bg-bb-redDim">Rotate this key</button>
+                <button onClick={() => setDeleteOpen(true)} className="rounded-md border border-ink-700 bg-ink-850 px-3 py-1.5 text-[11px] text-ink-300 hover:bg-ink-800">Revoke this key</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -305,7 +334,7 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
           <CardHeader title="Scope" icon={<Database size={16} />} />
           <dl className="space-y-1.5 text-xs">
             <KV label="Bucket scope" value={k.bucketIds.length === 0 ? 'account-wide (master-equivalent)' : `${k.bucketIds.length} bucket(s)`} />
-            <KV label="Buckets" value={k.bucketName} />
+            <KV label="Buckets" value={scopeSummary(k, allBuckets)} />
             <KV label="Name prefix" value={k.namePrefix || '(none — entire bucket namespace)'} mono />
             <KV label="Created" value={shortDate(k.createdAt)} />
             <KV label="Expires" value={k.expirationDate || <Tag variant="warn">no expiration set</Tag>} />
@@ -377,6 +406,26 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
           </Table>
         )}
       </Card>
+
+      {/* Gated key management */}
+      {canManage && rotateOpen && (
+        <RotateKeyDialog
+          open={rotateOpen}
+          onClose={() => setRotateOpen(false)}
+          onRotated={() => { setRotateOpen(false); navigate('keys'); }}
+          apiKey={k}
+          accountId={accountId}
+        />
+      )}
+      {canManage && deleteOpen && (
+        <DeleteKeyDialog
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={() => { setDeleteOpen(false); navigate('keys'); }}
+          apiKey={k}
+          accountId={accountId}
+        />
+      )}
     </div>
   );
 }

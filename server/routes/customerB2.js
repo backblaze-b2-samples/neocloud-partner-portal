@@ -18,6 +18,7 @@
 
 import express from 'express';
 import { createHmac, createHash } from 'crypto';
+import { Readable } from 'node:stream';
 import { requireAuth, requireNotDemo, requireCsrf, canAccessAccount } from '../middleware/requireAuth.js';
 import { getCredential, getDecryptedApplicationKey } from '../credentials.js';
 import { audit } from '../audit.js';
@@ -65,12 +66,15 @@ function hmacSha256(key, data, enc) {
  * @param {string} keyId     application_key_id (S3 access key)
  * @param {string} secret    application_key   (S3 secret key)
  * @param {string} [body]    Request body (empty string for GET)
+ * @param {object} [opts]    { payloadHash, contentType } — payloadHash overrides
+ *                           the body hash (use 'UNSIGNED-PAYLOAD' for streamed
+ *                           uploads); contentType sets a non-XML Content-Type.
  */
-function s3AuthHeaders(method, host, path, query, region, keyId, secret, body = '') {
+function s3AuthHeaders(method, host, path, query, region, keyId, secret, body = '', opts = {}) {
   const now = new Date();
   const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, '');           // YYYYMMDD
   const amzDate  = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z/, 'Z'); // YYYYMMDDTHHmmssZ
-  const payloadHash = sha256hex(body);
+  const payloadHash = opts.payloadHash || sha256hex(body);
 
   const canonHeaders = [
     `host:${host}`,
@@ -79,7 +83,17 @@ function s3AuthHeaders(method, host, path, query, region, keyId, secret, body = 
   ].join('\n') + '\n';
   const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
 
-  const canonRequest = [method, path, query, canonHeaders, signedHeaders, payloadHash].join('\n');
+  // Canonical query string (SigV4): each param as key=value — value may be
+  // empty, but the "=" is REQUIRED. A bare subresource flag like "logging" must
+  // canonicalize to "logging=", else the signature won't match what B2 derives
+  // from the "?logging" request URL. Empty query (file routes) stays "".
+  const canonQuery = query
+    ? query.split('&').map((p) => {
+        const [k, v = ''] = p.split('=');
+        return `${encodeURIComponent(k)}=${encodeURIComponent(v)}`;
+      }).sort().join('&')
+    : '';
+  const canonRequest = [method, path, canonQuery, canonHeaders, signedHeaders, payloadHash].join('\n');
 
   const credScope  = `${dateStamp}/${region}/s3/aws4_request`;
   const strToSign  = ['AWS4-HMAC-SHA256', amzDate, credScope, sha256hex(canonRequest)].join('\n');
@@ -94,7 +108,7 @@ function s3AuthHeaders(method, host, path, query, region, keyId, secret, body = 
     Authorization: `AWS4-HMAC-SHA256 Credential=${keyId}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
     'x-amz-date': amzDate,
     'x-amz-content-sha256': payloadHash,
-    ...(body ? { 'Content-Type': 'application/xml' } : {}),
+    ...(opts.contentType ? { 'Content-Type': opts.contentType } : (body ? { 'Content-Type': 'application/xml' } : {})),
   };
 }
 
@@ -127,13 +141,46 @@ const router = express.Router();
 router.use(requireAuth, requireNotDemo);
 
 const ALLOWED_ENDPOINTS = new Set([
+  // reads
   'b2_list_buckets',
   'b2_list_keys',
   'b2_list_file_names',
   'b2_list_file_versions',
   'b2_get_file_info',
+  // writes (gated to customer_admin / partner staff by requireCustomerWrite)
   'b2_create_bucket',
+  'b2_update_bucket',
+  'b2_delete_bucket',
+  'b2_create_key',
+  'b2_delete_key',
+  'b2_delete_file_version',
+  'b2_hide_file',
+  'b2_update_file_legal_hold',
+  'b2_update_file_retention',
+  'b2_get_bucket_notification_rules',
+  'b2_set_bucket_notification_rules',
 ]);
+
+// State-changing endpoints: audited, and require write access (a
+// customer_readonly user can read but never mutate — see requireCustomerWrite).
+const MUTATING = new Set([
+  'b2_create_bucket',
+  'b2_update_bucket',
+  'b2_delete_bucket',
+  'b2_create_key',
+  'b2_delete_key',
+  'b2_delete_file_version',
+  'b2_hide_file',
+  'b2_update_file_legal_hold',
+  'b2_update_file_retention',
+  'b2_set_bucket_notification_rules',
+]);
+
+// Write access = partner staff (accountId null) OR customer_admin.
+// customer_readonly is explicitly excluded.
+function canWrite(user) {
+  return !!user && (!user.accountId || user.role === 'customer_admin');
+}
 
 // Endpoints that are semantically reads even though B2's API uses POST.
 // During read-only impersonation these must still work so the staff agent
@@ -184,12 +231,28 @@ async function getSubAccountAuth(accountId) {
   return entry;
 }
 
-router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, async (req, res) => {
+router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, async (req, res, next) => {
   if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId, endpoint } = req.params;
 
+  // s3_logging is a single path segment, so it matches this generic route, but
+  // it's served by its own handler below (an S3 PutBucketLogging call, not a
+  // b2_ native endpoint). Hand off rather than reject it as "not allowed".
+  if (endpoint === 's3_logging') return next();
+
   if (!ALLOWED_ENDPOINTS.has(endpoint)) {
     return res.status(400).json({ error: `Endpoint '${endpoint}' not allowed via customer proxy.` });
+  }
+
+  // Read-only customers may list/read but never mutate.
+  if (MUTATING.has(endpoint) && !canWrite(req.session.user)) {
+    audit({
+      actorId: req.session.user.id,
+      action:  'authz.denied',
+      details: { route: 'customer-b2', accountId, endpoint, reason: 'read_only' },
+      ip:      req.ip,
+    });
+    return res.status(403).json({ error: 'read_only', message: 'Read-only access — bucket, file, and key changes require an account admin.' });
   }
 
   let auth;
@@ -206,7 +269,7 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
 
   const targetUrl = `${auth.apiUrl}/b2api/v4/${endpoint}`;
   // Only inject accountId for endpoints that require it; file-listing endpoints don't accept it.
-  const NEEDS_ACCOUNT_ID = new Set(['b2_list_buckets', 'b2_list_keys', 'b2_create_bucket']);
+  const NEEDS_ACCOUNT_ID = new Set(['b2_list_buckets', 'b2_list_keys', 'b2_create_bucket', 'b2_create_key', 'b2_update_bucket', 'b2_delete_bucket']);
   const body = NEEDS_ACCOUNT_ID.has(endpoint)
     ? { accountId: auth.accountId, ...req.body }
     : { ...req.body };
@@ -233,14 +296,21 @@ router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, 
       error: b2Res.ok ? undefined : text,
     });
 
-    // Audit only mutating endpoints. Read-only listings (b2_list_*,
-    // b2_get_file_info) fire on every page load and would flood the table.
-    const MUTATING = new Set(['b2_create_bucket']);
+    // Audit mutating endpoints (the MUTATING set is module-level). Read-only
+    // listings fire on every page load and would flood the table.
     if (b2Res.ok && MUTATING.has(endpoint)) {
       audit({
         actorId: req.session.user.id,
         action:  `customer_b2.${endpoint}`,
-        details: { accountId, bucketName: req.body?.bucketName ?? null },
+        details: {
+          accountId,
+          bucketName: req.body?.bucketName ?? null,
+          bucketId: req.body?.bucketId ?? null,
+          applicationKeyId: req.body?.applicationKeyId ?? null,
+          keyName: req.body?.keyName ?? null,
+          fileName: req.body?.fileName ?? null,
+          fileId: req.body?.fileId ?? null,
+        },
         ip:      req.ip,
       });
     }
@@ -331,6 +401,9 @@ router.get('/:accountId/s3_logging', async (req, res) => {
 router.post('/:accountId/s3_logging', requireCsrf, async (req, res) => {
   if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId } = req.params;
+  // PutBucketLogging is a mutation — same write gate as the b2_* mutations and
+  // the file routes. customer_readonly may GET logging status but not change it.
+  if (!canWrite(req.session.user)) return denyReadOnly(req, res, accountId, 's3_logging');
   const { bucketName, bucketRegion, enabled, targetBucket, targetPrefix = '' } = req.body;
 
   if (!BUCKET_NAME_RE.test(String(bucketName || ''))) {
@@ -379,6 +452,145 @@ router.post('/:accountId/s3_logging', requireCsrf, async (req, res) => {
   } catch (err) {
     console.error('[customerB2] s3_put_bucket_logging fetch error:', err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// =============================================================================
+// File operations — upload / download / delete via the S3-compatible API.
+// Streamed through the proxy (the browser can't reach private B2 buckets under
+// CORS). Multi-segment paths (/file/...) never collide with the generic
+// /:accountId/:endpoint route. Writes require customer_admin / partner staff.
+// =============================================================================
+
+// Reject path traversal / control chars; B2 object keys may contain '/'.
+function validFileKey(k) {
+  if (typeof k !== "string" || k.length === 0 || k.length > 1024) return false;
+  if (k.startsWith("/") || k.includes("..") || /[\u0000-\u001f]/.test(k)) return false;
+  return true;
+}
+
+// Build the S3 host + RFC-3986 path for a bucket/region/object key.
+function s3Object(bucketName, region, key) {
+  const host = `${bucketName}.s3.${region}.backblazeb2.com`;
+  const path = '/' + key.split('/').map(encodeURIComponent).join('/');
+  return { host, path, url: `https://${host}${path}` };
+}
+
+// Decrypt the sub-account's S3 key pair. Throws { code:'no_credentials' }.
+function s3Creds(accountId) {
+  const cred = getCredential(accountId);
+  if (!cred) { const e = new Error('No stored credentials'); e.code = 'no_credentials'; throw e; }
+  const secret = getDecryptedApplicationKey(accountId);
+  if (!secret) { const e = new Error('Could not decrypt key'); e.code = 'no_credentials'; throw e; }
+  return { keyId: cred.application_key_id, secret };
+}
+
+// Validate bucket/region/key; returns an error string or null.
+function validateObjectParams({ bucket, region, key }) {
+  if (!BUCKET_NAME_RE.test(String(bucket || ''))) return 'bucket missing or malformed';
+  if (!ALLOWED_REGIONS.has(String(region))) return `region must be one of: ${[...ALLOWED_REGIONS].join(', ')}`;
+  if (!validFileKey(String(key || ''))) return 'file key missing or malformed';
+  return null;
+}
+
+function denyReadOnly(req, res, accountId, op) {
+  audit({ actorId: req.session.user.id, action: 'authz.denied', details: { route: 'customer-b2', accountId, op, reason: 'read_only' }, ip: req.ip });
+  return res.status(403).json({ error: 'read_only', message: 'Read-only access — file changes require an account admin.' });
+}
+
+// POST /:accountId/file/upload?bucket=&region=&key=  (raw body streamed to S3 PUT)
+router.post('/:accountId/file/upload', requireCsrf, async (req, res) => {
+  if (rejectInvalidAccountAccess(req, res)) return;
+  const { accountId } = req.params;
+  if (!canWrite(req.session.user)) return denyReadOnly(req, res, accountId, 'file_upload');
+  const { bucket, region, key } = req.query;
+  const bad = validateObjectParams({ bucket, region, key });
+  if (bad) return res.status(400).json({ error: bad });
+
+  // B2's S3 endpoint rejects a chunked (no-length) PUT signed with
+  // UNSIGNED-PAYLOAD. Require Content-Length so we never forward one.
+  if (!req.headers['content-length']) {
+    return res.status(411).json({ error: 'length_required', message: 'Content-Length header is required for uploads.' });
+  }
+
+  let creds;
+  try { creds = s3Creds(accountId); } catch { return res.status(404).json({ error: 'no_credentials' }); }
+  const { host, path, url } = s3Object(bucket, region, key);
+  const headers = s3AuthHeaders('PUT', host, path, '', region, creds.keyId, creds.secret, '', {
+    payloadHash: 'UNSIGNED-PAYLOAD',
+    contentType: req.headers['content-type'] || 'application/octet-stream',
+  });
+  try {
+    const s3Res = await fetch(url, {
+      method: 'PUT',
+      headers: { Host: host, ...headers, ...(req.headers['content-length'] ? { 'Content-Length': req.headers['content-length'] } : {}) },
+      body: req,
+      duplex: 'half',
+    });
+    if (!s3Res.ok) {
+      const txt = await s3Res.text();
+      return res.status(s3Res.status).json({ error: `S3 PUT failed: ${s3Res.status}`, detail: txt.slice(0, 500) });
+    }
+    audit({ actorId: req.session.user.id, action: 'customer_b2.file_upload', details: { accountId, bucket, key }, ip: req.ip });
+    res.json({ ok: true, bucket, key, etag: s3Res.headers.get('etag') || null });
+  } catch (err) {
+    console.error('[customerB2] upload error:', err.message);
+    res.status(502).json({ error: `Upload failed: ${err.message}` });
+  }
+});
+
+// GET /:accountId/file/download?bucket=&region=&key=  (streams the object back)
+router.get('/:accountId/file/download', async (req, res) => {
+  if (rejectInvalidAccountAccess(req, res)) return;
+  const { accountId } = req.params;
+  const { bucket, region, key } = req.query;
+  const bad = validateObjectParams({ bucket, region, key });
+  if (bad) return res.status(400).json({ error: bad });
+
+  let creds;
+  try { creds = s3Creds(accountId); } catch { return res.status(404).json({ error: 'no_credentials' }); }
+  const { host, path, url } = s3Object(bucket, region, key);
+  const headers = s3AuthHeaders('GET', host, path, '', region, creds.keyId, creds.secret, '');
+  try {
+    const s3Res = await fetch(url, { headers: { Host: host, ...headers } });
+    if (!s3Res.ok) {
+      const txt = await s3Res.text();
+      return res.status(s3Res.status).json({ error: `S3 GET failed: ${s3Res.status}`, detail: txt.slice(0, 500) });
+    }
+    res.setHeader('Content-Type', s3Res.headers.get('content-type') || 'application/octet-stream');
+    const len = s3Res.headers.get('content-length'); if (len) res.setHeader('Content-Length', len);
+    res.setHeader('Content-Disposition', `attachment; filename="${String(key).split('/').pop().replace(/"/g, '')}"`);
+    Readable.fromWeb(s3Res.body).pipe(res);
+  } catch (err) {
+    console.error('[customerB2] download error:', err.message);
+    res.status(502).json({ error: `Download failed: ${err.message}` });
+  }
+});
+
+// POST /:accountId/file/delete  { bucket, region, key }  (S3 DELETE object)
+router.post('/:accountId/file/delete', requireCsrf, async (req, res) => {
+  if (rejectInvalidAccountAccess(req, res)) return;
+  const { accountId } = req.params;
+  if (!canWrite(req.session.user)) return denyReadOnly(req, res, accountId, 'file_delete');
+  const { bucket, region, key } = req.body || {};
+  const bad = validateObjectParams({ bucket, region, key });
+  if (bad) return res.status(400).json({ error: bad });
+
+  let creds;
+  try { creds = s3Creds(accountId); } catch { return res.status(404).json({ error: 'no_credentials' }); }
+  const { host, path, url } = s3Object(bucket, region, key);
+  const headers = s3AuthHeaders('DELETE', host, path, '', region, creds.keyId, creds.secret, '');
+  try {
+    const s3Res = await fetch(url, { method: 'DELETE', headers: { Host: host, ...headers } });
+    if (!s3Res.ok && s3Res.status !== 204) {
+      const txt = await s3Res.text();
+      return res.status(s3Res.status).json({ error: `S3 DELETE failed: ${s3Res.status}`, detail: txt.slice(0, 500) });
+    }
+    audit({ actorId: req.session.user.id, action: 'customer_b2.file_delete', details: { accountId, bucket, key }, ip: req.ip });
+    res.json({ ok: true, bucket, key });
+  } catch (err) {
+    console.error('[customerB2] delete error:', err.message);
+    res.status(502).json({ error: `Delete failed: ${err.message}` });
   }
 });
 
