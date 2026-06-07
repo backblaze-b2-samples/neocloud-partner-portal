@@ -222,5 +222,15 @@ addColumnIfMissing('customer_metadata', 'ejected_region',   'TEXT');
 // sessions.user_id remains the staff actor for audit purposes.
 addColumnIfMissing('sessions', 'impersonating_user_id', 'INTEGER');
 
+// Migration: MCP transport + auth mode. transport = 'http' (Streamable HTTP) or
+// 'sse'. auth_mode = 'bearer' (single Authorization token) or 'headers' (custom
+// header set, e.g. the four X-B2-* values). The encrypted credential blob holds
+// the bearer token OR a JSON object of header name→value, per auth_mode.
+// header_names stores the header KEYS in plaintext (not secret) for UI display.
+addColumnIfMissing('mcp_config', 'transport',   "TEXT NOT NULL DEFAULT 'http'");
+addColumnIfMissing('mcp_config', 'auth_mode',   "TEXT NOT NULL DEFAULT 'bearer'");
+addColumnIfMissing('mcp_config', 'header_names', 'TEXT');
+addColumnIfMissing('mcp_account_tokens', 'header_names', 'TEXT');
+
 // Best-effort sweep of expired sessions on every boot.
 db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(new Date().toISOString());

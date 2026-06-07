@@ -9,6 +9,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import {
   getConfigPublic, getDecryptedConfigToken,
   getDecryptedAccountToken,
@@ -20,11 +21,27 @@ export class McpError extends Error {
   constructor(message, status = 502) { super(message); this.status = status; }
 }
 
+// A stored credential blob is either a bearer token (auth_mode 'bearer') or a
+// JSON object of header name→value (auth_mode 'headers'). Turn it into the
+// request headers the transport should send. Returns null if it can't (e.g. the
+// blob doesn't match the current auth mode — fail closed).
+function credentialToHeaders(raw, authMode) {
+  if (!raw) return null;
+  if (authMode === 'headers') {
+    try {
+      const obj = JSON.parse(raw);
+      return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+    } catch { return null; }
+  }
+  return { Authorization: `Bearer ${raw}` };
+}
+
 /**
- * Resolve { baseUrl, token, scope } for the *effective* session user.
- * - Partner staff (accountId == null, not impersonating) -> master token (full).
+ * Resolve { baseUrl, transport, authMode, headers, token, scope } for the
+ * *effective* session user.
+ * - Partner staff (accountId == null, not impersonating) -> master credential.
  * - Customer user, or staff impersonating a customer (effective accountId set)
- *   -> that account's scoped token. Absent -> 403 (fail closed; never master).
+ *   -> that account's scoped credential. Absent -> 403 (fail closed).
  * Throws McpError on misconfiguration or missing scope.
  */
 export function resolveMcpAuth(session) {
@@ -37,18 +54,23 @@ export function resolveMcpAuth(session) {
 
   // user.accountId is already the *effective* identity (impersonation swaps it).
   const accountId = user.accountId || null;
-
-  if (accountId == null) {
-    const token = getDecryptedConfigToken();
-    if (!token) throw new McpError('MCP server has no token configured.', 503);
-    return { baseUrl: cfg.baseUrl, token, scope: 'partner' };
-  }
-
-  const token = getDecryptedAccountToken(accountId);
-  if (!token) {
+  const raw = accountId == null ? getDecryptedConfigToken() : getDecryptedAccountToken(accountId);
+  if (!raw) {
+    if (accountId == null) throw new McpError('MCP server has no credential configured.', 503);
     throw new McpError('No MCP access is configured for this account.', 403);
   }
-  return { baseUrl: cfg.baseUrl, token, scope: `account:${accountId}` };
+
+  const headers = credentialToHeaders(raw, cfg.authMode);
+  if (!headers) throw new McpError('MCP credential does not match the configured auth mode — re-enter it.', 503);
+
+  return {
+    baseUrl: cfg.baseUrl,
+    transport: cfg.transport,
+    authMode: cfg.authMode,
+    headers,
+    token: cfg.authMode === 'bearer' ? raw : null, // back-compat for callers/tests
+    scope: accountId == null ? 'partner' : `account:${accountId}`,
+  };
 }
 
 async function withClient(auth, fn) {
@@ -56,9 +78,11 @@ async function withClient(auth, fn) {
     { name: 'neocloud-partner-portal', version: '1.0.0' },
     { capabilities: {} },
   );
-  const transport = new StreamableHTTPClientTransport(new URL(auth.baseUrl), {
-    requestInit: { headers: { Authorization: `Bearer ${auth.token}` } },
-  });
+  const url = new URL(auth.baseUrl);
+  const opts = { requestInit: { headers: auth.headers || {} } };
+  const transport = auth.transport === 'sse'
+    ? new SSEClientTransport(url, opts)
+    : new StreamableHTTPClientTransport(url, opts);
   try {
     await client.connect(transport);
     return await fn(client);
@@ -99,10 +123,13 @@ export async function callTool(session, name, args) {
   );
 }
 
-/** Admin "Test connection" — uses an explicit URL + token, not the session. */
-export async function testConnection({ baseUrl, token }) {
+/** Admin "Test connection" — uses an explicit URL + credential, not the session. */
+export async function testConnection({ baseUrl, transport = 'http', authMode = 'bearer', token, headers }) {
   if (!baseUrl) throw new McpError('Base URL is required.', 400);
-  const auth = { baseUrl, token, scope: 'test' };
+  const resolvedHeaders = authMode === 'headers'
+    ? (headers && typeof headers === 'object' ? headers : {})
+    : (token ? { Authorization: `Bearer ${token}` } : {});
+  const auth = { baseUrl, transport, headers: resolvedHeaders, scope: 'test' };
   return timeout(
     withClient(auth, async (client) => {
       const res = await client.listTools();

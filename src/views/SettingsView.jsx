@@ -303,37 +303,69 @@ function SourceRow({ source, desc }) {
 
 const mcpErr = (e) => (e instanceof ApiError && (e.body?.error || e.message)) || 'Request failed';
 
+const B2_HEADER_NAMES = ['X-B2-Key-Id', 'X-B2-Key', 'X-B2-App-Key-Id', 'X-B2-App-Key'];
+
 function McpServerCard() {
-  const [cfg, setCfg] = useState(null);        // { baseUrl, enabled, hasToken }
+  const [cfg, setCfg] = useState(null);        // { baseUrl, enabled, hasToken, transport, authMode, headerNames }
   const [baseUrl, setBaseUrl] = useState('');
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [enabled, setEnabled] = useState(false);
+  const [transport, setTransport] = useState('http');
+  const [authMode, setAuthMode] = useState('bearer');
+  const [headers, setHeaders] = useState([]);  // [{ name, value }]
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState('');
   const [test, setTest] = useState(null);
   const [err, setErr] = useState('');
   const [tokens, setTokens] = useState([]);
   const [acct, setAcct] = useState({ accountId: '', label: '', token: '' });
+  const [acctHeaders, setAcctHeaders] = useState({}); // { headerName: value } for per-account add
 
   const load = async () => {
     setErr('');
     try {
       const c = await api.get('/api/admin/mcp/config');
-      setCfg(c.config); setBaseUrl(c.config.baseUrl || ''); setEnabled(!!c.config.enabled);
+      setCfg(c.config);
+      setBaseUrl(c.config.baseUrl || '');
+      setEnabled(!!c.config.enabled);
+      setTransport(c.config.transport || 'http');
+      setAuthMode(c.config.authMode || 'bearer');
+      // Values are encrypted/never returned — show saved header NAMES with blank
+      // values; re-enter a value to change it.
+      setHeaders((c.config.headerNames || []).map((name) => ({ name, value: '' })));
       const t = await api.get('/api/admin/mcp/account-tokens');
       setTokens(t.tokens || []);
     } catch (e) { setErr(mcpErr(e)); }
   };
   useEffect(() => { load(); }, []);
 
+  // Header-editor helpers (custom-headers auth mode)
+  const setHeaderRow = (i, patch) => setHeaders((h) => h.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const addHeaderRow = () => setHeaders((h) => [...h, { name: '', value: '' }]);
+  const removeHeaderRow = (i) => setHeaders((h) => h.filter((_, idx) => idx !== i));
+  const applyB2Preset = () => setHeaders(B2_HEADER_NAMES.map((name) => ({ name, value: '' })));
+  const headersObject = () => {
+    const o = {};
+    headers.forEach((r) => { if (r.name.trim() && r.value) o[r.name.trim()] = r.value; });
+    return o;
+  };
+  // Header NAMES configured on the master (used to label per-account value inputs).
+  const configuredHeaderNames = headers.map((h) => h.name).filter(Boolean);
+
   const save = async () => {
     setBusy(true); setErr(''); setFlash('');
     try {
-      const body = { baseUrl, enabled };
-      if (token) body.token = token;
+      const body = { baseUrl, enabled, transport, authMode };
+      if (authMode === 'bearer') {
+        if (token) body.token = token;
+      } else {
+        const ho = headersObject();
+        if (Object.keys(ho).length) body.headers = ho;
+      }
       const r = await api.put('/api/admin/mcp/config', body);
       setCfg(r.config); setToken('');
+      setHeaders((r.config.headerNames || []).map((name) => ({ name, value: '' })));
       setFlash('Saved'); setTimeout(() => setFlash(''), 1500);
     } catch (e) { setErr(mcpErr(e)); } finally { setBusy(false); }
   };
@@ -341,20 +373,32 @@ function McpServerCard() {
   const runTest = async () => {
     setTest(null); setErr('');
     try {
-      const body = {};
+      const body = { transport, authMode };
       if (baseUrl) body.baseUrl = baseUrl;
-      if (token) body.token = token;
+      if (authMode === 'bearer') { if (token) body.token = token; }
+      else { const ho = headersObject(); if (Object.keys(ho).length) body.headers = ho; }
       setTest(await api.post('/api/admin/mcp/test', body));
     } catch (e) { setTest({ ok: false, error: mcpErr(e) }); }
   };
 
   const addToken = async (e) => {
     e?.preventDefault?.();
-    if (!acct.accountId || !acct.token) { setErr('accountId and token are required'); return; }
+    if (!acct.accountId) { setErr('accountId is required'); return; }
+    const body = { label: acct.label };
+    if (authMode === 'bearer') {
+      if (!acct.token) { setErr('a scoped token is required'); return; }
+      body.token = acct.token;
+    } else {
+      const ho = {};
+      configuredHeaderNames.forEach((n) => { if (acctHeaders[n]) ho[n] = acctHeaders[n]; });
+      if (!Object.keys(ho).length) { setErr('enter at least one header value for this account'); return; }
+      body.headers = ho;
+    }
     setErr('');
     try {
-      await api.put(`/api/admin/mcp/account-tokens/${encodeURIComponent(acct.accountId)}`, { label: acct.label, token: acct.token });
+      await api.put(`/api/admin/mcp/account-tokens/${encodeURIComponent(acct.accountId)}`, body);
       setAcct({ accountId: '', label: '', token: '' });
+      setAcctHeaders({});
       await load();
     } catch (e2) { setErr(mcpErr(e2)); }
   };
@@ -368,7 +412,7 @@ function McpServerCard() {
     <Card>
       <CardHeader
         title="Advanced — MCP server"
-        subtitle="Connect your Backblaze MCP server. Partner staff use the master token (full scope); each customer account uses its own scoped token. Tokens are encrypted at rest and never returned."
+        subtitle="Connect your Backblaze MCP server. Partner staff use the master credential (full scope); each customer account uses its own scoped credential. Supports a single bearer token or custom headers (e.g. the four X-B2-* values the hosted Backblaze MCP needs), over Streamable HTTP or SSE. Encrypted at rest, never returned."
         icon={<KeyRound size={16} />}
         action={
           <div className="flex items-center gap-2">
@@ -380,23 +424,66 @@ function McpServerCard() {
       <div className="space-y-4">
         <Field
           label="MCP server URL"
-          placeholder="https://mcp.example.com/mcp"
+          placeholder={transport === 'sse' ? 'https://mcp.backblazedemos.xyz/sse' : 'https://mcp.example.com/mcp'}
           value={baseUrl}
           onChange={setBaseUrl}
-          help="The Streamable HTTP endpoint of your MCP server."
+          help={transport === 'sse' ? 'The SSE endpoint (…/sse).' : 'The Streamable HTTP endpoint (…/mcp).'}
           mono
         />
-        <Field
-          label={cfg?.hasToken ? 'Master bearer token (leave blank to keep current)' : 'Master bearer token'}
-          placeholder={cfg?.hasToken ? '•••••••• (saved)' : 'mcp_xxx…'}
-          value={token}
-          onChange={setToken}
-          help="Sent as 'Authorization: Bearer …' for partner-staff sessions. Full scope."
-          mono
-          secret
-          showSecret={showToken}
-          onToggleSecret={() => setShowToken(!showToken)}
-        />
+
+        {/* Transport + auth mode */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block">
+            <div className="mb-1 text-xs font-medium text-ink-200">Transport</div>
+            <select value={transport} onChange={(e) => setTransport(e.target.value)} className="w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-ink-100 focus:border-bb-red/50 focus:outline-none">
+              <option value="http">Streamable HTTP</option>
+              <option value="sse">SSE (Server-Sent Events)</option>
+            </select>
+          </label>
+          <label className="block">
+            <div className="mb-1 text-xs font-medium text-ink-200">Authentication</div>
+            <select value={authMode} onChange={(e) => setAuthMode(e.target.value)} className="w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-ink-100 focus:border-bb-red/50 focus:outline-none">
+              <option value="bearer">Bearer token (Authorization header)</option>
+              <option value="headers">Custom headers</option>
+            </select>
+          </label>
+        </div>
+
+        {authMode === 'bearer' ? (
+          <Field
+            label={cfg?.hasToken ? 'Master bearer token (leave blank to keep current)' : 'Master bearer token'}
+            placeholder={cfg?.hasToken ? '•••••••• (saved)' : 'mcp_xxx…'}
+            value={token}
+            onChange={setToken}
+            help="Sent as 'Authorization: Bearer …' for partner-staff sessions. Full scope."
+            mono
+            secret
+            showSecret={showToken}
+            onToggleSecret={() => setShowToken(!showToken)}
+          />
+        ) : (
+          <div className="space-y-2 rounded-md border border-ink-700 bg-ink-900/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">Master headers {cfg?.headerNames?.length ? `· ${cfg.headerNames.length} saved` : ''}</p>
+              <div className="flex gap-1.5">
+                <button type="button" onClick={applyB2Preset} className="rounded-md border border-ink-700 bg-ink-850 px-2 py-0.5 text-[10.5px] text-ink-300 hover:bg-ink-800">B2 preset</button>
+                <button type="button" onClick={addHeaderRow} className="rounded-md border border-ink-700 bg-ink-850 px-2 py-0.5 text-[10.5px] text-ink-300 hover:bg-ink-800">+ Add</button>
+              </div>
+            </div>
+            <p className="text-[11px] text-ink-400">Header name → value, sent on every request. The hosted Backblaze MCP needs <code className="font-mono">X-B2-Key-Id</code>, <code className="font-mono">X-B2-Key</code>, <code className="font-mono">X-B2-App-Key-Id</code>, <code className="font-mono">X-B2-App-Key</code> — click “B2 preset”. Leave a value blank to keep the saved one.</p>
+            {headers.length === 0 && <p className="py-1 text-[11px] text-ink-500">No headers. Click “B2 preset” or “Add”.</p>}
+            {headers.map((h, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1.3fr_auto] gap-2">
+                <input value={h.name} onChange={(e) => setHeaderRow(i, { name: e.target.value })} placeholder="X-B2-Key-Id"
+                  className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                <input value={h.value} onChange={(e) => setHeaderRow(i, { value: e.target.value })} type="password" placeholder={cfg?.headerNames?.includes(h.name) ? '•••••••• (saved)' : 'value'}
+                  className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                <button type="button" onClick={() => removeHeaderRow(i)} className="grid place-items-center rounded-md px-2 text-ink-400 hover:bg-ink-800 hover:text-bb-red" title="Remove"><Trash2 size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <label className="flex items-center gap-2 text-xs text-ink-200">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 rounded border-ink-700 bg-ink-900" />
           Enable the MCP console
@@ -440,12 +527,32 @@ function McpServerCard() {
               ))}
             </ul>
           )}
-          <form onSubmit={addToken} className="grid grid-cols-1 gap-2 sm:grid-cols-[1.3fr,1fr,1.3fr,auto]">
-            <input value={acct.accountId} onChange={(e) => setAcct({ ...acct, accountId: e.target.value })} placeholder="accountId" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
-            <input value={acct.label} onChange={(e) => setAcct({ ...acct, label: e.target.value })} placeholder="label (optional)" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 text-xs text-ink-100" />
-            <input value={acct.token} onChange={(e) => setAcct({ ...acct, token: e.target.value })} placeholder="scoped token" type="password" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
-            <button type="submit" className="inline-flex h-8 items-center justify-center rounded-md border border-ink-700 bg-ink-850 px-3 text-xs font-medium text-ink-200 hover:bg-ink-800">Add</button>
-          </form>
+          {authMode === 'bearer' ? (
+            <form onSubmit={addToken} className="grid grid-cols-1 gap-2 sm:grid-cols-[1.3fr,1fr,1.3fr,auto]">
+              <input value={acct.accountId} onChange={(e) => setAcct({ ...acct, accountId: e.target.value })} placeholder="accountId" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
+              <input value={acct.label} onChange={(e) => setAcct({ ...acct, label: e.target.value })} placeholder="label (optional)" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 text-xs text-ink-100" />
+              <input value={acct.token} onChange={(e) => setAcct({ ...acct, token: e.target.value })} placeholder="scoped token" type="password" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
+              <button type="submit" className="inline-flex h-8 items-center justify-center rounded-md border border-ink-700 bg-ink-850 px-3 text-xs font-medium text-ink-200 hover:bg-ink-800">Add</button>
+            </form>
+          ) : configuredHeaderNames.length === 0 ? (
+            <p className="text-[11px] text-accent-amber">Configure the master headers above (e.g. “B2 preset”) and Save first — per-account values use the same header names.</p>
+          ) : (
+            <form onSubmit={addToken} className="space-y-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <input value={acct.accountId} onChange={(e) => setAcct({ ...acct, accountId: e.target.value })} placeholder="accountId" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-xs text-ink-100" />
+                <input value={acct.label} onChange={(e) => setAcct({ ...acct, label: e.target.value })} placeholder="label (optional)" className="h-8 rounded border border-ink-700 bg-ink-900 px-2 text-xs text-ink-100" />
+              </div>
+              <p className="text-[10.5px] text-ink-400">This account's values for each configured header:</p>
+              {configuredHeaderNames.map((name) => (
+                <div key={name} className="grid grid-cols-[1fr_1.3fr] items-center gap-2">
+                  <span className="truncate font-mono text-[11px] text-ink-300">{name}</span>
+                  <input value={acctHeaders[name] || ''} onChange={(e) => setAcctHeaders((h) => ({ ...h, [name]: e.target.value }))} type="password" placeholder="value"
+                    className="h-8 rounded border border-ink-700 bg-ink-900 px-2 font-mono text-[11px] text-ink-100 placeholder:text-ink-500 focus:border-bb-red/50 focus:outline-none" />
+                </div>
+              ))}
+              <button type="submit" className="inline-flex h-8 items-center justify-center rounded-md border border-ink-700 bg-ink-850 px-3 text-xs font-medium text-ink-200 hover:bg-ink-800">Add account credential</button>
+            </form>
+          )}
         </div>
       </div>
     </Card>
