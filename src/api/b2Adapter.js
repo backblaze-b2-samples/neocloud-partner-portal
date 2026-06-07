@@ -425,6 +425,62 @@ export async function createBucket(payload) {
   return normalizeBucket(created);
 }
 
+// POST /b2api/v4/b2_update_bucket — edit bucketType / lifecycleRules /
+// corsRules / defaultServerSideEncryption on an existing bucket.
+// Only the fields present in `payload` are sent; everything else is left
+// untouched by B2. accountId is injected server-side by the proxy.
+export async function updateBucket(payload) {
+  if (useMocks()) {
+    await wait(360);
+    const b = BUCKETS.find((x) => x.bucketId === payload.bucketId);
+    if (!b) throw new Error('Bucket not found');
+    if (payload.bucketType) {
+      b.bucketType = payload.bucketType;
+      b.publicAccess = payload.bucketType === 'allPublic';
+    }
+    if (payload.lifecycleRules !== undefined) b.lifecycleRules = payload.lifecycleRules;
+    if (payload.cors !== undefined) b.cors = payload.cors;
+    if (payload.encryption !== undefined) b.encryption = payload.encryption;
+    b.lastModified = new Date().toISOString();
+    return { ...b };
+  }
+
+  const b2Body = { bucketId: payload.bucketId };
+  if (payload.bucketType) b2Body.bucketType = payload.bucketType;
+  if (payload.lifecycleRules !== undefined) b2Body.lifecycleRules = payload.lifecycleRules;
+  if (payload.corsRules !== undefined) b2Body.corsRules = payload.corsRules;
+  if (payload.encryption !== undefined) {
+    b2Body.defaultServerSideEncryption = payload.encryption && payload.encryption !== 'none'
+      ? { mode: payload.encryption, algorithm: 'AES256' }
+      : { mode: 'none' };
+  }
+
+  if (payload.accountId) {
+    const data = await callAsCustomer(payload.accountId, 'b2_update_bucket', b2Body);
+    if (data === null) throw new Error(`No stored credentials for account ${payload.accountId}`);
+    return normalizeBucket(data);
+  }
+  const updated = await callB2('b2_update_bucket', b2Body);
+  return normalizeBucket(updated);
+}
+
+// POST /b2api/v4/b2_delete_bucket — the bucket must be empty (B2 returns a
+// friendly error otherwise, which the UI surfaces). accountId injected by proxy.
+export async function deleteBucket({ accountId, bucketId } = {}) {
+  if (useMocks()) {
+    await wait(360);
+    const idx = BUCKETS.findIndex((x) => x.bucketId === bucketId);
+    if (idx >= 0) BUCKETS.splice(idx, 1);
+    return { bucketId };
+  }
+  if (accountId) {
+    const data = await callAsCustomer(accountId, 'b2_delete_bucket', { bucketId });
+    if (data === null) throw new Error(`No stored credentials for account ${accountId}`);
+    return data;
+  }
+  return callB2('b2_delete_bucket', { bucketId });
+}
+
 // ===== Application keys =====================================================
 export async function listApplicationKeys({ customerId, accountId, maxKeyCount = 100 } = {}) {
   if (useMocks()) {
@@ -456,20 +512,61 @@ export async function listApplicationKeys({ customerId, accountId, maxKeyCount =
 export async function createApplicationKey(payload) {
   if (useMocks()) {
     await wait(420);
-    return {
-      accountId: '7f3a91d2c4b8',
+    const created = {
+      accountId: payload.accountId || '7f3a91d2c4b8',
       applicationKeyId: '0' + Math.random().toString(16).slice(2, 16),
-      applicationKey: 'K005' + '*'.repeat(40),
+      applicationKey: 'K005' + Math.random().toString(36).slice(2).padEnd(40, '0').slice(0, 40),
       keyName: payload.keyName,
       capabilities: payload.capabilities,
-      bucketIds: payload.bucketIds || [],
+      bucketId: payload.bucketId || null,
+      bucketIds: payload.bucketId ? [payload.bucketId] : (payload.bucketIds || []),
       namePrefix: payload.namePrefix || '',
       expirationTimestamp: payload.validDurationInSeconds
         ? Date.now() + payload.validDurationInSeconds * 1000
         : null,
     };
+    // Surface the new key in the customer's list (without the secret) so the
+    // demo console reflects the create immediately.
+    APPLICATION_KEYS.unshift(normalizeApiKey({
+      ...created, customerId: payload.customerId ?? null,
+    }));
+    return created;
   }
-  return callB2('b2_create_key', payload);
+
+  // b2_create_key body: keyName + capabilities (required), optional bucketId
+  // (singular — bucket-scopes the key), namePrefix, validDurationInSeconds.
+  // accountId is injected server-side for the sub-account route.
+  const b2Body = {
+    keyName: payload.keyName,
+    capabilities: payload.capabilities,
+  };
+  if (payload.bucketId) b2Body.bucketId = payload.bucketId;
+  if (payload.namePrefix) b2Body.namePrefix = payload.namePrefix;
+  if (payload.validDurationInSeconds) b2Body.validDurationInSeconds = payload.validDurationInSeconds;
+
+  if (payload.accountId) {
+    const data = await callAsCustomer(payload.accountId, 'b2_create_key', b2Body);
+    if (data === null) throw new Error(`No stored credentials for account ${payload.accountId}`);
+    return data; // includes applicationKey (the secret) — shown once by the UI
+  }
+  return callB2('b2_create_key', { accountId: payload.accountId, ...b2Body });
+}
+
+// POST /b2api/v4/b2_delete_key — revoke an application key. accountId is not a
+// body field here (the key is identified solely by applicationKeyId).
+export async function deleteApplicationKey({ accountId, applicationKeyId } = {}) {
+  if (useMocks()) {
+    await wait(360);
+    const idx = APPLICATION_KEYS.findIndex((k) => k.applicationKeyId === applicationKeyId);
+    if (idx >= 0) APPLICATION_KEYS.splice(idx, 1);
+    return { applicationKeyId };
+  }
+  if (accountId) {
+    const data = await callAsCustomer(accountId, 'b2_delete_key', { applicationKeyId });
+    if (data === null) throw new Error(`No stored credentials for account ${accountId}`);
+    return data;
+  }
+  return callB2('b2_delete_key', { applicationKeyId });
 }
 
 // ===== Files ================================================================
@@ -536,6 +633,111 @@ export async function getFileVersions({ bucketId, fileName, maxVersions = 100 } 
   // immediately after the target (e.g. "file.txt.bak" after "file.txt").
   const versions = (data.files || []).filter((f) => f.fileName === fileName);
   return { versions };
+}
+
+// ===== File mutations (server-proxied, streamed) ============================
+// Upload / download / delete go through /api/customer-b2/:accountId/file/* so
+// they work on private buckets with no per-bucket CORS. Writes carry the CSRF
+// token; the server gates them to customer_admin / partner staff.
+
+function triggerBlobDownload(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Stream a File/Blob to the bucket via an S3 PUT. Reports 0–100 via onProgress.
+// Uses XMLHttpRequest because fetch() can't report upload progress.
+export async function uploadFile({ accountId, bucket, region, key, bucketId, file, contentType, onProgress } = {}) {
+  if (useMocks()) {
+    for (let p = 0; p <= 100; p += 25) { onProgress?.(p); await wait(140); }
+    const entry = {
+      fileId: '4_mock_' + Math.random().toString(16).slice(2, 14),
+      fileName: key,
+      contentLength: file?.size ?? 0,
+      contentType: contentType || file?.type || 'application/octet-stream',
+      uploadTimestamp: Date.now(),
+      action: 'upload',
+      serverSideEncryption: { mode: 'SSE-B2', algorithm: 'AES256' },
+      fileInfo: {},
+    };
+    if (bucketId) (FILES_BY_BUCKET[bucketId] ||= []).unshift(entry);
+    return entry;
+  }
+
+  const qs = new URLSearchParams({ bucket, region, key }).toString();
+  const csrf = readCsrfCookie();
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/customer-b2/${accountId}/file/upload?${qs}`);
+    if (csrf) xhr.setRequestHeader('X-CSRF-Token', csrf);
+    xhr.setRequestHeader('Content-Type', contentType || file?.type || 'application/octet-stream');
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText || '{}')); }
+        catch { resolve({ ok: true }); }
+      } else {
+        reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText?.slice(0, 300) || ''}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed (network error)'));
+    xhr.send(file);
+  });
+}
+
+// Save an object to the user's device. Live mode streams straight from the
+// proxy (the browser saves it via Content-Disposition); demo mode fabricates a
+// small placeholder blob.
+export async function downloadFile({ accountId, bucket, region, key, fileName } = {}) {
+  const name = fileName || String(key || '').split('/').pop() || 'download';
+  if (useMocks()) {
+    await wait(200);
+    const blob = new Blob(
+      [`Demo file: ${key}\n\n(Mock content — real bytes are only served in live mode.)\n`],
+      { type: 'text/plain' },
+    );
+    triggerBlobDownload(blob, name);
+    return { ok: true };
+  }
+  const qs = new URLSearchParams({ bucket, region, key }).toString();
+  const a = document.createElement('a');
+  a.href = `/api/customer-b2/${accountId}/file/download?${qs}`;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  return { ok: true };
+}
+
+// Delete a single object (S3 DELETE through the proxy).
+export async function deleteFile({ accountId, bucket, region, key, bucketId } = {}) {
+  if (useMocks()) {
+    await wait(300);
+    const list = FILES_BY_BUCKET[bucketId];
+    if (list) {
+      const idx = list.findIndex((f) => f.fileName === key);
+      if (idx >= 0) list.splice(idx, 1);
+    }
+    return { ok: true, key };
+  }
+  const csrf = readCsrfCookie();
+  const res = await fetch(`/api/customer-b2/${accountId}/file/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+    credentials: 'include',
+    body: JSON.stringify({ bucket, region, key }),
+  });
+  if (!res.ok) throw new Error(`Delete failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  return res.json();
 }
 
 // ===== Activity (Bucket Access Logs — REAL per-event records) ===============
