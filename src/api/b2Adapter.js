@@ -519,8 +519,8 @@ export async function createApplicationKey(payload) {
       applicationKey: 'K005' + Math.random().toString(36).slice(2).padEnd(40, '0').slice(0, 40),
       keyName: payload.keyName,
       capabilities: payload.capabilities,
-      bucketId: payload.bucketId || null,
-      bucketIds: payload.bucketId ? [payload.bucketId] : (payload.bucketIds || []),
+      // v4 Multi-Bucket Application Keys: bucketIds is an array (empty = account-wide).
+      bucketIds: payload.bucketIds || [],
       namePrefix: payload.namePrefix || '',
       expirationTimestamp: payload.validDurationInSeconds
         ? Date.now() + payload.validDurationInSeconds * 1000
@@ -534,14 +534,15 @@ export async function createApplicationKey(payload) {
     return created;
   }
 
-  // b2_create_key body: keyName + capabilities (required), optional bucketId
-  // (singular — bucket-scopes the key), namePrefix, validDurationInSeconds.
-  // accountId is injected server-side for the sub-account route.
+  // v4 b2_create_key body: keyName + capabilities (required), optional
+  // bucketIds (ARRAY — a Multi-Bucket Application Key; empty/omitted = account-
+  // wide), namePrefix, validDurationInSeconds. The singular bucketId field was
+  // removed in v4. accountId is injected server-side for the sub-account route.
   const b2Body = {
     keyName: payload.keyName,
     capabilities: payload.capabilities,
   };
-  if (payload.bucketId) b2Body.bucketId = payload.bucketId;
+  if (payload.bucketIds?.length) b2Body.bucketIds = payload.bucketIds;
   if (payload.namePrefix) b2Body.namePrefix = payload.namePrefix;
   if (payload.validDurationInSeconds) b2Body.validDurationInSeconds = payload.validDurationInSeconds;
 

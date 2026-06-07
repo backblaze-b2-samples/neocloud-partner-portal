@@ -355,7 +355,10 @@ const EXPIRY_OPTIONS = [
 export function CreateKeyDialog({ open, onClose, onCreated, accountId, customerId, buckets = [] }) {
   const { isLive } = useApp();
   const [keyName, setKeyName] = useState('');
-  const [bucketId, setBucketId] = useState(buckets[0]?.bucketId || '');
+  // v4 Multi-Bucket Application Keys: a key may be scoped to one OR MORE buckets
+  // (bucketIds array). Empty = account-wide. Default to the first bucket as a
+  // least-privilege starting point.
+  const [bucketIds, setBucketIds] = useState(buckets[0] ? [buckets[0].bucketId] : []);
   const [namePrefix, setNamePrefix] = useState('');
   const [validDuration, setValidDuration] = useState('604800');
   const [caps, setCaps] = useState(new Set(DEFAULT_CAPS));
@@ -372,9 +375,12 @@ export function CreateKeyDialog({ open, onClose, onCreated, accountId, customerI
     });
   }
   function applyPreset(ids) { setCaps(new Set(ids)); }
+  function toggleBucket(id) {
+    setBucketIds((prev) => (prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]));
+  }
 
   const selectedDanger = [...caps].filter((c) => DANGER_CAPS.has(c));
-  const bucketScoped = !!bucketId;
+  const bucketScoped = bucketIds.length > 0;
   const hasExpiry = validDuration !== '';
   // Mirror normalizeApiKey posture logic for a live preview.
   const posture = selectedDanger.length > 0 && !hasExpiry ? 'risk'
@@ -398,7 +404,7 @@ export function CreateKeyDialog({ open, onClose, onCreated, accountId, customerI
         customerId,
         keyName: keyName.trim(),
         capabilities: [...caps],
-        bucketId: bucketId || undefined,
+        bucketIds,
         namePrefix: namePrefix || undefined,
         validDurationInSeconds: validDuration ? Number(validDuration) : undefined,
       });
@@ -438,17 +444,37 @@ export function CreateKeyDialog({ open, onClose, onCreated, accountId, customerI
           <Field label="Key name" placeholder="checkpoint-writer-prod" value={keyName} onChange={setKeyName} mono required
             help="A human label returned by b2_list_keys. Not a security boundary." />
 
+          {/* Bucket scope — v4 Multi-Bucket Application Key: select one or more */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <div className="text-xs font-medium text-ink-200">Bucket scope</div>
+              <div className="flex gap-1.5">
+                <PresetButton onClick={() => setBucketIds(buckets.map((b) => b.bucketId))}>Select all</PresetButton>
+                <PresetButton onClick={() => setBucketIds([])}>Account-wide</PresetButton>
+              </div>
+            </div>
+            <div className="max-h-44 space-y-0.5 overflow-y-auto rounded-md border border-ink-700 bg-ink-900 p-2">
+              {buckets.length === 0 && (
+                <p className="px-1 py-1 text-[11px] text-ink-500">No buckets in this account — the key will be account-wide.</p>
+              )}
+              {buckets.map((b) => {
+                const on = bucketIds.includes(b.bucketId);
+                return (
+                  <label key={b.bucketId} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-ink-850">
+                    <input type="checkbox" checked={on} onChange={() => toggleBucket(b.bucketId)} className="accent-bb-red" />
+                    <span className="truncate font-mono text-ink-100">{b.bucketName}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-ink-400">
+              {bucketScoped
+                ? `Scoped to ${bucketIds.length} bucket${bucketIds.length === 1 ? '' : 's'} — limits blast radius (recommended). v4 keys may span multiple buckets.`
+                : '⚠ No buckets selected → account-wide key (can touch every bucket). Prefer scoping to specific buckets.'}
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Select
-              label="Bucket scope"
-              value={bucketId}
-              onChange={setBucketId}
-              options={[
-                { value: '', label: '⚠ All buckets (account-wide)' },
-                ...buckets.map((b) => ({ value: b.bucketId, label: b.bucketName })),
-              ]}
-              help={bucketScoped ? 'Scoped to one bucket — limits blast radius (recommended).' : 'Account-wide keys can touch every bucket. Prefer scoping to a single bucket.'}
-            />
             <Select
               label="Expiration"
               value={validDuration}
@@ -456,10 +482,9 @@ export function CreateKeyDialog({ open, onClose, onCreated, accountId, customerI
               options={EXPIRY_OPTIONS}
               help={hasExpiry ? undefined : 'Long-lived keys increase risk if leaked.'}
             />
+            <Field label="Name prefix (optional)" placeholder="tenants/acme/" value={namePrefix} onChange={setNamePrefix} mono
+              help="Restricts the key to object names starting with this prefix." />
           </div>
-
-          <Field label="Name prefix (optional)" placeholder="tenants/acme/" value={namePrefix} onChange={setNamePrefix} mono
-            help="Restricts the key to object names starting with this prefix — enables per-tenant scoping inside a shared bucket." />
 
           {/* Capabilities */}
           <div className="space-y-3 rounded-md border border-ink-700 bg-ink-900/60 p-3">
@@ -630,8 +655,8 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState(null);
 
-  // b2_create_key takes a single bucketId; preserve scope only when unambiguous.
-  const scopeBucketId = apiKey?.bucketIds?.length === 1 ? apiKey.bucketIds[0] : undefined;
+  // v4 keys carry a bucketIds array — preserve the full scope on rotation.
+  const scopeBucketIds = apiKey?.bucketIds || [];
 
   async function rotate() {
     setPhase('working');
@@ -642,7 +667,7 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
         customerId: apiKey.customerId,
         keyName: apiKey.keyName,
         capabilities: apiKey.capabilities,
-        bucketId: scopeBucketId,
+        bucketIds: scopeBucketIds,
         namePrefix: apiKey.namePrefix || undefined,
         validDurationInSeconds: validDuration ? Number(validDuration) : undefined,
       });
@@ -681,7 +706,7 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
           <div className="rounded-md border border-ink-700 bg-ink-900/60 p-3 text-xs text-ink-300">
             A new key named <span className="font-mono text-ink-100">{apiKey?.keyName}</span> will be created with the
             <strong className="text-ink-100"> same capabilities</strong>
-            {scopeBucketId ? ' and bucket scope' : (apiKey?.bucketIds?.length > 1 ? ' (multi-bucket scope can\'t be preserved — new key will be account-wide)' : '')}
+            {scopeBucketIds.length > 0 ? ` and bucket scope (${scopeBucketIds.length} bucket${scopeBucketIds.length === 1 ? '' : 's'})` : ' (account-wide)'}
             {apiKey?.namePrefix ? <> and prefix <span className="font-mono text-ink-100">{apiKey.namePrefix}</span></> : ''}.
             Then this key (<span className="font-mono">{apiKey?.applicationKeyId}</span>) is revoked.
           </div>
