@@ -33,6 +33,12 @@ function credentialToHeaders(raw, authMode) {
       return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
     } catch { return null; }
   }
+  // bearer: refuse a blob that's actually a stored headers object (a stale
+  // credential left over from a headers→bearer mode switch). Without this we'd
+  // send the secret header values as `Authorization: Bearer {…json…}` — a leak.
+  // A real bearer token never starts with '{' or '['.
+  const t = raw.trimStart();
+  if (t.startsWith('{') || t.startsWith('[')) return null;
   return { Authorization: `Bearer ${raw}` };
 }
 

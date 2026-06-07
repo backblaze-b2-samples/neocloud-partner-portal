@@ -26,11 +26,17 @@ const TRANSPORTS = new Set(['http', 'sse']);
 const AUTH_MODES = new Set(['bearer', 'headers']);
 
 // Validate a custom-headers object: { [name]: value } of non-empty strings.
+// Header names must be RFC-7230 tokens; values must not contain CR/LF (defense
+// in depth — undici also rejects these at fetch time).
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 function cleanHeaders(headers) {
   if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null;
   const out = {};
-  for (const [k, v] of Object.entries(headers)) {
-    if (typeof k === 'string' && k.trim() && typeof v === 'string' && v.length > 0) out[k.trim()] = v;
+  for (const [rawK, v] of Object.entries(headers)) {
+    const k = typeof rawK === 'string' ? rawK.trim() : '';
+    if (!HEADER_NAME_RE.test(k)) continue;
+    if (typeof v !== 'string' || v.length === 0 || /[\r\n]/.test(v)) continue;
+    out[k] = v;
   }
   return Object.keys(out).length ? out : null;
 }
@@ -50,8 +56,16 @@ router.put('/config', (req, res) => {
     return res.status(400).json({ error: "authMode must be 'bearer' or 'headers'" });
   }
   const cleanedHeaders = cleanHeaders(headers);
+  // Switching auth mode without supplying a matching credential would leave a
+  // stale, mismatched blob (now fails closed at use time). Force re-entry so the
+  // admin doesn't silently break the connection.
+  const current = getConfigPublic();
+  const hasNewCredential = (typeof token === 'string' && token.length > 0) || !!cleanedHeaders;
+  if (authMode && authMode !== current.authMode && current.hasToken && !hasNewCredential) {
+    return res.status(400).json({ error: `Re-enter the credential when switching auth mode to '${authMode}'.` });
+  }
   const saved = setConfig({
-    baseUrl: baseUrl ?? getConfigPublic().baseUrl,
+    baseUrl: baseUrl ?? current.baseUrl,
     enabled: !!enabled,
     transport, authMode,
     token: typeof token === 'string' && token.length > 0 ? token : undefined,
@@ -71,11 +85,12 @@ router.post('/test', async (req, res) => {
   const cleanedHeaders = cleanHeaders(headers);
   let useToken = (typeof token === 'string' && token.length > 0) ? token : undefined;
   let useHeaders = cleanedHeaders || undefined;
-  // Fall back to the stored credential when nothing was posted.
+  // Fall back to the stored credential when nothing was posted. Guard the
+  // bearer branch: never send a stale headers-JSON blob as a Bearer token.
   if (!useToken && !useHeaders) {
     const raw = getDecryptedConfigToken();
     if (useAuthMode === 'headers') { try { useHeaders = raw ? JSON.parse(raw) : {}; } catch { useHeaders = {}; } }
-    else { useToken = raw; }
+    else { useToken = (raw && !raw.trimStart().startsWith('{') && !raw.trimStart().startsWith('[')) ? raw : undefined; }
   }
   try {
     const out = await testConnection({ baseUrl: useUrl, transport: useTransport, authMode: useAuthMode, token: useToken, headers: useHeaders });

@@ -83,7 +83,17 @@ function s3AuthHeaders(method, host, path, query, region, keyId, secret, body = 
   ].join('\n') + '\n';
   const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
 
-  const canonRequest = [method, path, query, canonHeaders, signedHeaders, payloadHash].join('\n');
+  // Canonical query string (SigV4): each param as key=value — value may be
+  // empty, but the "=" is REQUIRED. A bare subresource flag like "logging" must
+  // canonicalize to "logging=", else the signature won't match what B2 derives
+  // from the "?logging" request URL. Empty query (file routes) stays "".
+  const canonQuery = query
+    ? query.split('&').map((p) => {
+        const [k, v = ''] = p.split('=');
+        return `${encodeURIComponent(k)}=${encodeURIComponent(v)}`;
+      }).sort().join('&')
+    : '';
+  const canonRequest = [method, path, canonQuery, canonHeaders, signedHeaders, payloadHash].join('\n');
 
   const credScope  = `${dateStamp}/${region}/s3/aws4_request`;
   const strToSign  = ['AWS4-HMAC-SHA256', amzDate, credScope, sha256hex(canonRequest)].join('\n');

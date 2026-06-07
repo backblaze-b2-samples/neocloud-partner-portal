@@ -101,4 +101,21 @@ describe('transport + custom-header auth mode', () => {
     setConfig({ enabled: true, authMode: 'headers' }); // no new credential
     expect(statusOf(() => resolveMcpAuth(staff))).toBe(503);
   });
+
+  it('fails closed (does NOT leak header values as a Bearer token) on headers→bearer switch', () => {
+    // Store secret headers, then flip global mode to bearer WITHOUT re-entering.
+    setConfig({ baseUrl: 'https://mcp.example.com/sse', enabled: true, transport: 'sse', authMode: 'headers', headers: { 'X-B2-Key': 'SUPERSECRET', 'X-B2-Key-Id': 'kid' } });
+    setConfig({ enabled: true, transport: 'http', authMode: 'bearer' }); // stale headers blob, no new token
+    // Must throw (fail closed) rather than send Authorization: Bearer {…json…}.
+    expect(statusOf(() => resolveMcpAuth(staff))).toBe(503);
+    let leaked = null;
+    try { leaked = JSON.stringify(resolveMcpAuth(staff).headers || {}); } catch { /* expected */ }
+    expect(leaked).toBeNull(); // never built headers from the stale blob
+  });
+
+  it('per-account headers blob under bearer mode also fails closed', () => {
+    setConfig({ baseUrl: 'https://mcp.example.com/mcp', enabled: true, transport: 'http', authMode: 'bearer', token: 'master-ok' });
+    upsertAccountToken({ accountId: 'acct-mix', label: 'Mix', headers: { 'X-B2-Key': 'leakme' } });
+    expect(statusOf(() => resolveMcpAuth({ user: { id: 7, role: 'customer_admin', accountId: 'acct-mix' } }))).toBe(503);
+  });
 });

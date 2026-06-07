@@ -107,7 +107,8 @@ function SuccessPanel({ title, desc, onAck }) {
 export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) {
   const { isLive } = useApp();
   const [bucketType, setBucketType] = useState(bucket?.bucketType || 'allPrivate');
-  const [encryption, setEncryption] = useState(bucket?.encryption || 'SSE-B2');
+  const initialEncryption = bucket?.encryption || 'SSE-B2';
+  const [encryption, setEncryption] = useState(initialEncryption);
   const [rules, setRules] = useState(() =>
     (bucket?.lifecycleRules || []).map((r) => ({
       fileNamePrefix: r.fileNamePrefix || '',
@@ -128,6 +129,11 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
   const lockEnabled = (bucket?.fileLock && bucket.fileLock !== 'none') || bucket?.isObjectLockEnabled
     || bucket?.fileLockConfiguration?.value?.isFileLockEnabled;
   const existingRet = bucket?.fileLockConfiguration?.value?.defaultRetention || bucket?.defaultRetention || null;
+  const initialRet = {
+    mode: existingRet?.mode && existingRet.mode !== 'none' ? existingRet.mode : 'none',
+    duration: existingRet?.period?.duration ?? '',
+    unit: existingRet?.period?.unit || 'days',
+  };
   const [retMode, setRetMode] = useState(existingRet?.mode && existingRet.mode !== 'none' ? existingRet.mode : 'none');
   const [retDuration, setRetDuration] = useState(existingRet?.period?.duration ?? '');
   const [retUnit, setRetUnit] = useState(existingRet?.period?.unit || 'days');
@@ -162,6 +168,21 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
 
   async function submit(e) {
     e.preventDefault();
+    // Validate lifecycle rules: B2 requires at least one of hide/delete days.
+    for (const r of rules) {
+      if (r.daysFromUploadingToHiding === '' && r.daysFromHidingToDeleting === '') {
+        return setError('Each lifecycle rule needs a hide and/or delete day count.');
+      }
+    }
+    // Validate CORS rules: B2 requires ≥1 origin and ≥1 operation per rule, and
+    // corsRuleName 6–63 of [A-Za-z0-9-].
+    for (const c of corsRules) {
+      const origins = c.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!origins.length) return setError('Each CORS rule needs at least one origin.');
+      if (c.allowedOperations.size === 0) return setError('Each CORS rule needs at least one operation.');
+      const name = (c.corsRuleName || '').trim();
+      if (name && !/^[A-Za-z0-9-]{6,63}$/.test(name)) return setError('CORS rule names must be 6–63 chars of letters, digits, or dashes.');
+    }
     setSubmitting(true);
     setError(null);
     const lifecycleRules = rules.map((r) => ({
@@ -170,7 +191,7 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
       daysFromHidingToDeleting: r.daysFromHidingToDeleting === '' ? null : Number(r.daysFromHidingToDeleting),
     }));
     const builtCors = corsRules.map((c) => ({
-      corsRuleName: (c.corsRuleName || '').trim() || `rule${Math.floor(Math.random() * 1e6)}`,
+      corsRuleName: (c.corsRuleName || '').trim() || `rule-${Math.floor(Math.random() * 1e6).toString().padStart(6, '0')}`,
       allowedOrigins: c.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean),
       allowedOperations: [...c.allowedOperations],
       allowedHeaders: ['*'],
@@ -181,14 +202,17 @@ export function EditBucketDialog({ open, onClose, onSaved, bucket, accountId }) 
       accountId,
       bucketId: bucket.bucketId,
       bucketType,
-      encryption,
       lifecycleRules,
       corsRules: builtCors,
       bucketInfo,
     };
-    if (lockEnabled) {
+    // Only touch default encryption if the user actually changed it — avoids
+    // clobbering an SSE-C bucket's default and avoids a needless disable call.
+    if (encryption !== initialEncryption) payload.encryption = encryption;
+    // Only touch default retention if it's editable and actually changed.
+    if (lockEnabled && (retMode !== initialRet.mode || String(retDuration) !== String(initialRet.duration) || retUnit !== initialRet.unit)) {
       payload.defaultRetention = retMode === 'none'
-        ? { mode: 'none' }
+        ? { mode: null }
         : { mode: retMode, period: { duration: Number(retDuration) || 1, unit: retUnit } };
     }
     try {
@@ -1051,12 +1075,17 @@ export function DeleteFileDialog({ open, onClose, onDeleted, file, bucket, regio
 // =============================================================================
 function fileLegalHoldValue(f) { return f?.legalHold?.value ?? f?.legalHold ?? 'off'; }
 function fileRetentionMode(f) { return f?.fileRetention?.value?.mode ?? f?.fileRetention?.mode ?? 'none'; }
+function fileRetentionUntilMs(f) { return f?.fileRetention?.value?.retainUntilTimestamp ?? f?.fileRetention?.retainUntilTimestamp ?? null; }
 
 export function FileProtectionDialog({ open, onClose, onDone, file, bucket, accountId }) {
   const { isLive } = useApp();
-  const [legalHold, setLegalHold] = useState(fileLegalHoldValue(file) === 'on');
-  const [retMode, setRetMode] = useState(fileRetentionMode(file) || 'none');
-  const [retUntil, setRetUntil] = useState('');
+  const initialLegalHold = fileLegalHoldValue(file) === 'on';
+  const initialRetMode = fileRetentionMode(file) || 'none';
+  const initialUntilMs = fileRetentionUntilMs(file);
+  const initialRetUntil = initialUntilMs ? new Date(initialUntilMs).toISOString().slice(0, 10) : '';
+  const [legalHold, setLegalHold] = useState(initialLegalHold);
+  const [retMode, setRetMode] = useState(initialRetMode);
+  const [retUntil, setRetUntil] = useState(initialRetUntil);
   const [bypass, setBypass] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -1066,13 +1095,21 @@ export function FileProtectionDialog({ open, onClose, onDone, file, bucket, acco
     setSubmitting(true);
     setError(null);
     try {
-      await b2.setFileLegalHold({ accountId, fileName: file.fileName, fileId: file.fileId, legalHold: legalHold ? 'on' : 'off' });
-      const payload = { accountId, fileName: file.fileName, fileId: file.fileId, mode: retMode, bypassGovernance: bypass };
-      if (retMode !== 'none') {
-        if (!retUntil) throw new Error('Choose a "retain until" date.');
-        payload.retainUntilTimestamp = Date.parse(retUntil + 'T00:00:00Z');
+      // Only write what actually changed (legal hold and retention are separate
+      // B2 calls and a re-write of an existing compliance lock would error).
+      if (legalHold !== initialLegalHold) {
+        await b2.setFileLegalHold({ accountId, fileName: file.fileName, fileId: file.fileId, legalHold: legalHold ? 'on' : 'off' });
       }
-      await b2.setFileRetention(payload);
+      const retChanged = retMode !== initialRetMode || retUntil !== initialRetUntil;
+      if (retChanged) {
+        const payload = { accountId, fileName: file.fileName, fileId: file.fileId, mode: retMode, bypassGovernance: bypass };
+        if (retMode !== 'none') {
+          if (!retUntil) throw new Error('Choose a "retain until" date.');
+          // End of the chosen day (UTC) so the lock covers the whole date.
+          payload.retainUntilTimestamp = Date.parse(retUntil + 'T23:59:59Z');
+        }
+        await b2.setFileRetention(payload);
+      }
       setSaved(true);
       onDone?.();
     } catch (err) {
@@ -1185,7 +1222,7 @@ export function BucketNotificationsDialog({ open, onClose, onSaved, bucket, acco
     setSubmitting(true); setError(null);
     try {
       const eventNotificationRules = rules.map((r) => ({
-        name: (r.name || '').trim() || `rule${Math.floor(Math.random() * 1e6)}`,
+        name: (r.name || '').trim() || `rule-${Math.floor(Math.random() * 1e6).toString().padStart(6, '0')}`,
         eventTypes: [...r.eventTypes],
         objectNamePrefix: r.objectNamePrefix || '',
         isEnabled: r.isEnabled,
@@ -1214,7 +1251,7 @@ export function BucketNotificationsDialog({ open, onClose, onSaved, bucket, acco
       ) : (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-[11px] text-ink-400">B2 delivers at-least-once; downloads are not covered. Sign with an HMAC secret to verify authenticity.</p>
+            <p className="text-[11px] text-ink-400">B2 delivers at-least-once; downloads are not covered. Sign with an HMAC secret to verify authenticity. <span className="text-accent-amber">The HMAC secret is write-only — re-enter it when editing a rule or it will be cleared.</span></p>
             <button type="button" onClick={addRule} className="rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800">+ Add rule</button>
           </div>
           {rules.length === 0 && <p className="py-2 text-center text-[11px] text-ink-500">No notification rules.</p>}

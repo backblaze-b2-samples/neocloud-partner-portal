@@ -461,6 +461,7 @@ export default function StorageView({ lockedAccountId } = {}) {
       )}
       {editTarget && (
         <EditBucketDialog
+          key={editTarget.bucketId}
           open={!!editTarget}
           onClose={() => setEditTarget(null)}
           onSaved={() => loadBuckets()}
