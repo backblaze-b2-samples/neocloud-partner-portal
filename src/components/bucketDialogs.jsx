@@ -307,8 +307,10 @@ const CAP_GROUPS = [
       { id: 'shareFiles', label: 'shareFiles' },
       { id: 'listKeys', label: 'listKeys' },
       { id: 'readBucketEncryption', label: 'readBucketEncryption' },
+      { id: 'readBucketRetentions', label: 'readBucketRetentions' },
       { id: 'readBucketReplications', label: 'readBucketReplications' },
       { id: 'readBucketNotifications', label: 'readBucketNotifications' },
+      { id: 'readBucketLogging', label: 'readBucketLogging' },
       { id: 'readFileRetentions', label: 'readFileRetentions' },
       { id: 'readFileLegalHolds', label: 'readFileLegalHolds' },
     ],
@@ -318,8 +320,10 @@ const CAP_GROUPS = [
     caps: [
       { id: 'writeFiles', label: 'writeFiles' },
       { id: 'writeBucketEncryption', label: 'writeBucketEncryption' },
+      { id: 'writeBucketRetentions', label: 'writeBucketRetentions' },
       { id: 'writeBucketReplications', label: 'writeBucketReplications' },
       { id: 'writeBucketNotifications', label: 'writeBucketNotifications' },
+      { id: 'writeBucketLogging', label: 'writeBucketLogging' },
       { id: 'writeFileRetentions', label: 'writeFileRetentions' },
       { id: 'writeFileLegalHolds', label: 'writeFileLegalHolds' },
     ],
@@ -654,6 +658,7 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
   const [created, setCreated] = useState(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState(null);
+  const [revokeWarning, setRevokeWarning] = useState(null);
 
   // v4 keys carry a bucketIds array — preserve the full scope on rotation.
   const scopeBucketIds = apiKey?.bucketIds || [];
@@ -661,8 +666,11 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
   async function rotate() {
     setPhase('working');
     setError(null);
+    setRevokeWarning(null);
+    // Step 1: create the replacement. If this fails, nothing has changed.
+    let replacement;
     try {
-      const replacement = await b2.createApplicationKey({
+      replacement = await b2.createApplicationKey({
         accountId,
         customerId: apiKey.customerId,
         keyName: apiKey.keyName,
@@ -671,14 +679,22 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
         namePrefix: apiKey.namePrefix || undefined,
         validDurationInSeconds: validDuration ? Number(validDuration) : undefined,
       });
-      // Revoke the old key only after the new one exists.
-      await b2.deleteApplicationKey({ accountId, applicationKeyId: apiKey.applicationKeyId });
-      setCreated(replacement);
-      setPhase('done');
     } catch (err) {
-      setError(String(err.message || err));
+      setError('Could not create the replacement key: ' + String(err.message || err));
       setPhase('error');
+      return;
     }
+    // The new key (and its one-time secret) now exists — surface it no matter
+    // what happens next, so it's never lost.
+    setCreated(replacement);
+    // Step 2: revoke the old key. If THIS fails, both keys are live — warn
+    // loudly so the operator revokes the old one manually.
+    try {
+      await b2.deleteApplicationKey({ accountId, applicationKeyId: apiKey.applicationKeyId });
+    } catch (err) {
+      setRevokeWarning(`The new key was created, but the OLD key (${apiKey.applicationKeyId}) could NOT be revoked: ${String(err.message || err)}. Revoke it manually.`);
+    }
+    setPhase('done');
   }
 
   return (
@@ -691,10 +707,17 @@ export function RotateKeyDialog({ open, onClose, onRotated, apiKey, accountId })
     >
       {phase === 'done' && created ? (
         <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-md border border-accent-green/30 bg-accent-green/5 p-3 text-xs text-accent-green">
-            <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
-            <div>Rotated. The old key has been revoked. Copy the new secret now — <strong>it won't be shown again.</strong></div>
-          </div>
+          {revokeWarning ? (
+            <div className="flex items-start gap-3 rounded-md border border-bb-red/30 bg-bb-red/5 p-3 text-xs text-bb-red">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <div>{revokeWarning} Copy the new secret now — <strong>it won't be shown again.</strong></div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-3 rounded-md border border-accent-green/30 bg-accent-green/5 p-3 text-xs text-accent-green">
+              <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+              <div>Rotated. The old key has been revoked. Copy the new secret now — <strong>it won't be shown again.</strong></div>
+            </div>
+          )}
           <SecretRow label="new keyID" value={created.applicationKeyId} revealed />
           <SecretRow label="new applicationKey (secret)" value={created.applicationKey} revealed={revealed} onReveal={() => setRevealed(true)} />
           <ModalFooter>

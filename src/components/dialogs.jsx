@@ -636,10 +636,9 @@ export function CreateBucketDialog({ open, onClose, onCreated, customer }) {
               onChange={(v) => setForm({ ...form, encryption: v })}
               options={[
                 { value: 'SSE-B2', label: 'SSE-B2 (Backblaze-managed AES-256)' },
-                { value: 'SSE-C', label: 'SSE-C (customer-supplied key per request)' },
                 { value: 'none', label: 'None' },
               ]}
-              help={form.encryption === 'SSE-C' ? 'SSE-C: the encryption key must be provided on every upload and download request.' : undefined}
+              help="SSE-C (customer-supplied keys) is a per-request scheme and cannot be set as a bucket default."
             />
           </div>
 

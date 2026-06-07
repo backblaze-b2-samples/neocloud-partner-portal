@@ -161,7 +161,7 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
       {tab === 'overview' && <OverviewTab bucket={bucket} customer={customer} region={region} />}
       {tab === 'files' && <FilesTab bucket={bucket} accountId={accountId} regionId={resolvedRegionId} canManage={canManage} onStats={setLiveStats} />}
       {tab === 'lifecycle' && <LifecycleTab bucket={bucket} />}
-      {tab === 'access' && <AccessTab bucket={bucket} region={region} accountId={accountId} />}
+      {tab === 'access' && <AccessTab bucket={bucket} region={region} accountId={accountId} canManage={canManage} />}
     </div>
   );
 }
@@ -896,7 +896,7 @@ function RuleStat({ icon, title, value, desc }) {
 }
 
 // ============================================================================
-function AccessTab({ bucket, region, accountId }) {
+function AccessTab({ bucket, region, accountId, canManage }) {
   const codeAuth = `Authorization: <auth_token>
 GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
 
@@ -946,7 +946,7 @@ GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
 
       {/* Access Logs — full width */}
       <div className="lg:col-span-2">
-        <AccessLogsPanel bucket={bucket} region={region} accountId={accountId} />
+        <AccessLogsPanel bucket={bucket} region={region} accountId={accountId} canManage={canManage} />
       </div>
     </div>
   );
@@ -956,7 +956,7 @@ GET https://${region?.s3Endpoint}/${bucket.bucketName}/<key>`;
 // AccessLogsPanel — configure S3 PutBucketLogging / GetBucketLogging
 // Ref: https://www.backblaze.com/docs/cloud-storage-bucket-access-logs
 // ============================================================================
-function AccessLogsPanel({ bucket, region, accountId }) {
+function AccessLogsPanel({ bucket, region, accountId, canManage }) {
   const [loading, setLoading]   = useState(true);
   const [config, setConfig]     = useState(null);  // { enabled, targetBucket, targetPrefix }
   const [saving, setSaving]     = useState(false);
@@ -1076,7 +1076,8 @@ function AccessLogsPanel({ bucket, region, accountId }) {
             )}
           </div>
 
-          {/* Edit form */}
+          {/* Edit form — only for managers; read-only users see status + notes */}
+          {canManage && (
           <div className="space-y-3 rounded-md border border-ink-700 bg-ink-900/60 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">Configure logging</p>
 
@@ -1139,6 +1140,7 @@ function AccessLogsPanel({ bucket, region, accountId }) {
               <span className="text-[10.5px] text-ink-500">Calls S3 PutBucketLogging · requires <code>writeBucketLogging</code> capability</span>
             </div>
           </div>
+          )}
 
           {/* Delivery notes */}
           <div className="rounded-md bg-ink-900/40 p-3 text-[11px] leading-relaxed text-ink-400 ring-1 ring-ink-700">

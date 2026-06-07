@@ -185,6 +185,21 @@ describe('write role gate (customer_readonly cannot mutate)', () => {
     expect(r.status).not.toBe(403); // may 404 on cred lookup, but not gated
   });
 
+  it('customer_readonly: 403 read_only on s3_logging (PutBucketLogging is a write)', async () => {
+    const r = await post(readonlySid, readonlyCsrf)(`/api/customer-b2/${customerAccountId}/s3_logging`, {
+      bucketName: 'valid-bucket-name', bucketRegion: 'us-west-002', enabled: false,
+    });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe('read_only');
+  });
+
+  it('customer_admin: s3_logging passes the gate (own account)', async () => {
+    const r = await post(customerSid, customerCsrf)(`/api/customer-b2/${customerAccountId}/s3_logging`, {
+      bucketName: 'valid-bucket-name', bucketRegion: 'us-west-002', enabled: false,
+    });
+    expect(r.status).not.toBe(403); // 404 on cred lookup, but not gated
+  });
+
   it('customer_admin: write endpoints pass the gate (own account)', async () => {
     const r = await post(customerSid, customerCsrf)(`/api/customer-b2/${customerAccountId}/b2_create_bucket`);
     expect(r.status).not.toBe(403);

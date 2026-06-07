@@ -395,12 +395,11 @@ export async function createBucket(payload) {
     bucketType:  payload.bucketType || 'allPrivate',
   };
 
-  // defaultServerSideEncryption: omit entirely for 'none', otherwise send mode + algorithm.
-  if (payload.encryption && payload.encryption !== 'none') {
-    b2Body.defaultServerSideEncryption = {
-      mode:      payload.encryption,   // 'SSE-B2' or 'SSE-C'
-      algorithm: 'AES256',
-    };
+  // defaultServerSideEncryption: only SSE-B2 is valid as a BUCKET default.
+  // SSE-C is a per-request scheme (the key is supplied on each upload/download)
+  // and B2 rejects it here — so only emit the field for SSE-B2.
+  if (payload.encryption === 'SSE-B2') {
+    b2Body.defaultServerSideEncryption = { mode: 'SSE-B2', algorithm: 'AES256' };
   }
 
   // isObjectLockEnabled: only send if true (false is the default; sending it as

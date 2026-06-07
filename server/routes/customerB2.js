@@ -214,9 +214,14 @@ async function getSubAccountAuth(accountId) {
   return entry;
 }
 
-router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, async (req, res) => {
+router.post('/:accountId/:endpoint', allowReadDuringImpersonation, requireCsrf, async (req, res, next) => {
   if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId, endpoint } = req.params;
+
+  // s3_logging is a single path segment, so it matches this generic route, but
+  // it's served by its own handler below (an S3 PutBucketLogging call, not a
+  // b2_ native endpoint). Hand off rather than reject it as "not allowed".
+  if (endpoint === 's3_logging') return next();
 
   if (!ALLOWED_ENDPOINTS.has(endpoint)) {
     return res.status(400).json({ error: `Endpoint '${endpoint}' not allowed via customer proxy.` });
@@ -379,6 +384,9 @@ router.get('/:accountId/s3_logging', async (req, res) => {
 router.post('/:accountId/s3_logging', requireCsrf, async (req, res) => {
   if (rejectInvalidAccountAccess(req, res)) return;
   const { accountId } = req.params;
+  // PutBucketLogging is a mutation — same write gate as the b2_* mutations and
+  // the file routes. customer_readonly may GET logging status but not change it.
+  if (!canWrite(req.session.user)) return denyReadOnly(req, res, accountId, 's3_logging');
   const { bucketName, bucketRegion, enabled, targetBucket, targetPrefix = '' } = req.body;
 
   if (!BUCKET_NAME_RE.test(String(bucketName || ''))) {
@@ -481,6 +489,12 @@ router.post('/:accountId/file/upload', requireCsrf, async (req, res) => {
   const { bucket, region, key } = req.query;
   const bad = validateObjectParams({ bucket, region, key });
   if (bad) return res.status(400).json({ error: bad });
+
+  // B2's S3 endpoint rejects a chunked (no-length) PUT signed with
+  // UNSIGNED-PAYLOAD. Require Content-Length so we never forward one.
+  if (!req.headers['content-length']) {
+    return res.status(411).json({ error: 'length_required', message: 'Content-Length header is required for uploads.' });
+  }
 
   let creds;
   try { creds = s3Creds(accountId); } catch { return res.status(404).json({ error: 'no_credentials' }); }
