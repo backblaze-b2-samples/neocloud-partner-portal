@@ -26,23 +26,51 @@
 // =============================================================================
 
 import { Router } from 'express';
-import fs   from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { requireAuth, requireNotDemo, requireCsrf, canAccessAccount } from '../middleware/requireAuth.js';
 import { audit } from '../audit.js';
 import { db } from '../db.js';
 import { runForAccount as runObjectCountForAccount } from '../jobs/objectCountJob.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Local CSV archive written by archive-reports.mjs.
-// Structure: server/data/reports/YYYY-MM-DD/<filename>.csv
-const ARCHIVE_DIR = path.join(__dirname, '..', 'data', 'reports');
-fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+import { loadArchivedFilenames, saveToArchive, loadArchiveRows } from '../reportsArchive.js';
 
 const router = Router();
 router.use(requireAuth, requireNotDemo);
+
+// ---------------------------------------------------------------------------
+// Authorization helpers
+//
+// Partner staff (admin/manager/user/support) have a null accountId and may
+// reach every sub-account. Customer roles carry an accountId and must be
+// confined to it — object counts, bucket names and file names of one tenant
+// must never be readable by another.
+// ---------------------------------------------------------------------------
+
+// Log + 403 for a cross-account attempt. Returns true so callers can
+// `if (denyAccount(...)) return;`.
+function denyAccount(req, res, route, accountId) {
+  audit({
+    actorId: req.session.user.id,
+    action:  'authz.denied',
+    details: { route, accountId },
+    ip:      req.ip,
+  });
+  res.status(403).json({ error: 'Forbidden — accountId does not belong to this user' });
+  return true;
+}
+
+// Guard for operations that span every sub-account (the full-fleet job).
+// No per-account check can express "all accounts", so these are staff-only.
+function requirePartnerStaff(req, res, next) {
+  if (req.session?.user?.accountId) {
+    audit({
+      actorId: req.session.user.id,
+      action:  'authz.denied',
+      details: { route: req.originalUrl?.split('?')[0], reason: 'partner_staff_only' },
+      ip:      req.ip,
+    });
+    return res.status(403).json({ error: 'Forbidden — partner staff only' });
+  }
+  next();
+}
 
 // ---------------------------------------------------------------------------
 // Server-side cache — shared across all browser sessions on this server.
@@ -105,192 +133,6 @@ async function downloadFile(auth, fileId) {
   return res.text();
 }
 
-// Minimal CSV line splitter (handles quoted fields with embedded commas).
-function splitCsvLine(line) {
-  const out = [];
-  let cur = '';
-  let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQ) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') { inQ = false; }
-      else { cur += ch; }
-    } else {
-      if (ch === ',') { out.push(cur); cur = ''; }
-      else if (ch === '"' && cur === '') { inQ = true; }
-      else { cur += ch; }
-    }
-  }
-  out.push(cur);
-  return out;
-}
-
-const REAL_NUMERIC = new Set([
-  'stored_gb', 'storage_byte_hours', 'uploaded_gb', 'deleted_gb',
-  'downloaded_gb', 'downloaded_bytes', 'downloaded_favored_bytes',
-  'api_txn_class_a', 'api_txn_class_b', 'api_txn_class_c', 'api_txn_class_d',
-]);
-const STD_NUMERIC = new Set([
-  'storage_bytes_avg', 'upload_bytes', 'download_bytes',
-  'class_a_txn', 'class_b_txn', 'class_c_txn', 'class_d_txn',
-]);
-const GB = 1e9;
-
-// Normalize a date string to YYYY-MM-DD regardless of how Backblaze formatted it.
-// The partner/groups CSV uses M/D/YY (e.g. "5/9/26"); the standard account CSV
-// uses YYYY-MM-DD. Both need to come out as "2026-05-09" so downstream aggregation
-// and string comparisons work correctly.
-function normalizeDate(raw) {
-  if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw; // already correct
-  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (m) {
-    const year  = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
-    const month = String(m[1]).padStart(2, '0');
-    const day   = String(m[2]).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  return null; // unparseable — caller will fall back to the file's directory date
-}
-
-// Parse a CSV (partner or standard format) into unified row shape.
-function parseCsv(text) {
-  if (!text) return [];
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-
-  const headers = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
-  const isPartner = headers.includes('stored_gb') || headers.includes('api_txn_class_a');
-
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    const cells = splitCsvLine(lines[i]);
-    const raw = {};
-    headers.forEach((h, idx) => {
-      const v = cells[idx];
-      const numSet = isPartner ? REAL_NUMERIC : STD_NUMERIC;
-      if (v === undefined || v === '') {
-        raw[h] = null;
-      } else if (numSet.has(h)) {
-        const n = Number(v);
-        raw[h] = Number.isFinite(n) ? n : null;
-      } else {
-        raw[h] = v;
-      }
-    });
-
-    if (isPartner) {
-      rows.push({
-        date:         normalizeDate(raw.date),
-        region:       raw.reporting_location || raw.region || null,
-        groupId:      raw.group_id || null,
-        accountId:    raw.account_id || null,
-        bucketId:     raw.bucket_id || null,
-        bucketName:   raw.bucket_name || null,
-        storageBytes: raw.stored_gb   != null ? Math.round(raw.stored_gb * GB)    : null,
-        egressBytes:  raw.downloaded_gb != null ? Math.round(raw.downloaded_gb * GB) : null,
-        uploadBytes:  raw.uploaded_gb  != null ? Math.round(raw.uploaded_gb * GB)  : null,
-        classATxn:    raw.api_txn_class_a != null ? Math.round(raw.api_txn_class_a) : null,
-        classBTxn:    raw.api_txn_class_b != null ? Math.round(raw.api_txn_class_b) : null,
-        classCTxn:    raw.api_txn_class_c != null ? Math.round(raw.api_txn_class_c) : null,
-        classDTxn:    raw.api_txn_class_d != null ? Math.round(raw.api_txn_class_d) : null,
-      });
-    } else {
-      rows.push({
-        date:         normalizeDate(raw.date),
-        region:       raw.region || raw.reporting_location || null,
-        groupId:      null,
-        accountId:    raw.account_id || null,
-        bucketId:     raw.bucket_id || null,
-        bucketName:   raw.bucket_name || null,
-        storageBytes: raw.storage_bytes_avg != null ? Math.round(raw.storage_bytes_avg) : null,
-        egressBytes:  raw.download_bytes    != null ? Math.round(raw.download_bytes)    : null,
-        uploadBytes:  raw.upload_bytes      != null ? Math.round(raw.upload_bytes)      : null,
-        classATxn:    raw.class_a_txn != null ? Math.round(raw.class_a_txn) : null,
-        classBTxn:    raw.class_b_txn != null ? Math.round(raw.class_b_txn) : null,
-        classCTxn:    raw.class_c_txn != null ? Math.round(raw.class_c_txn) : null,
-        classDTxn:    raw.class_d_txn != null ? Math.round(raw.class_d_txn) : null,
-      });
-    }
-  }
-  return rows;
-}
-
-// ---------------------------------------------------------------------------
-// Archive helpers — read from and write to the local CSV archive.
-//
-// The archive is the single source of truth for all historical data.
-// The live B2 fetch only downloads files that are not already on disk,
-// then saves them here. Subsequent requests read entirely from disk.
-//
-// Structure: server/data/reports/YYYY-MM-DD/<filename>.csv
-// ---------------------------------------------------------------------------
-
-// Returns a Set of already-archived relative paths, e.g. '2026-05-09/Usage.csv'.
-function loadArchivedFilenames() {
-  const archived = new Set();
-  if (!fs.existsSync(ARCHIVE_DIR)) return archived;
-  let dateDirs;
-  try { dateDirs = fs.readdirSync(ARCHIVE_DIR); } catch { return archived; }
-  for (const dateDir of dateDirs) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateDir)) continue;
-    let files;
-    try { files = fs.readdirSync(path.join(ARCHIVE_DIR, dateDir)); } catch { continue; }
-    for (const fname of files) {
-      if (fname.toLowerCase().endsWith('.csv')) archived.add(`${dateDir}/${fname}`);
-    }
-  }
-  return archived;
-}
-
-// Write a downloaded CSV to the local archive.
-function saveToArchive(fileName, content) {
-  const parts   = fileName.split('/');
-  const dateDir = parts[0];
-  const base    = parts.slice(1).join('/');
-  const dir     = path.join(ARCHIVE_DIR, dateDir);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, base), content, 'utf8');
-}
-
-// Read and parse all archived CSVs within the 90-day window.
-// Applies normalizeDate so M/D/YY dates in partner CSVs are converted
-// to YYYY-MM-DD before they reach aggregation / sort / comparison logic.
-function loadArchiveRows(maxCutoff) {
-  const rows = [];
-  if (!fs.existsSync(ARCHIVE_DIR)) return rows;
-  const cutoffStr = maxCutoff.toISOString().slice(0, 10);
-
-  let dateDirs;
-  try { dateDirs = fs.readdirSync(ARCHIVE_DIR); } catch { return rows; }
-
-  for (const dateDir of dateDirs) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateDir)) continue;
-    if (dateDir < cutoffStr) continue; // outside the requested window
-
-    let files;
-    try { files = fs.readdirSync(path.join(ARCHIVE_DIR, dateDir)); } catch { continue; }
-
-    for (const fname of files) {
-      if (!fname.toLowerCase().endsWith('.csv')) continue;
-      const relPath = `${dateDir}/${fname}`;
-      try {
-        const text = fs.readFileSync(path.join(ARCHIVE_DIR, dateDir, fname), 'utf8');
-        const parsed = parseCsv(text);
-        // normalizeDate handles both YYYY-MM-DD and M/D/YY (partner CSV format).
-        // Falls back to the directory name so the date is always a valid YYYY-MM-DD string.
-        parsed.forEach((r) => { r._date = normalizeDate(r.date) || dateDir; });
-        rows.push(...parsed);
-      } catch (e) {
-        console.warn(`[master-b2] archive read failed for ${relPath}: ${e.message}`);
-      }
-    }
-  }
-  return rows;
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/master-b2/reports-csv
 // ---------------------------------------------------------------------------
@@ -315,13 +157,7 @@ router.post('/reports-csv', async (req, res) => {
     return res.status(400).json({ error: 'authorizationToken, apiUrl, downloadUrl, and accountId are required' });
   }
   if (!canAccessAccount(req.session.user, accountId)) {
-    audit({
-      actorId: req.session.user.id,
-      action:  'authz.denied',
-      details: { route: 'master-b2/reports-csv', accountId },
-      ip:      req.ip,
-    });
-    return res.status(403).json({ error: 'Forbidden — accountId does not belong to this user' });
+    return void denyAccount(req, res, 'master-b2/reports-csv', accountId);
   }
 
   // ── Serve from cache if fresh ────────────────────────────────────────────
@@ -439,17 +275,23 @@ router.post('/reports-csv', async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/master-b2/object-counts
-// Returns all rows from the object_counts table as JSON.
+// Returns rows from the object_counts table as JSON, scoped to what the
+// caller may see: partner staff get every sub-account, a customer user gets
+// only their own (bucket names and counts are tenant data).
 // Written by the 24-hour background job; this read is instant (no B2 call).
 // Response: { counts: [{ bucketId, accountId, bucketName, objectCount, countedAt }], jobRanAt: ISO|null }
 // ---------------------------------------------------------------------------
 
 const stmtAllCounts  = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at FROM object_counts`);
 const stmtLatestRun  = db.prepare(`SELECT MAX(counted_at) AS latest FROM object_counts`);
+const stmtCountsForAccount = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at FROM object_counts WHERE account_id = ?`);
+const stmtLatestRunForAccount = db.prepare(`SELECT MAX(counted_at) AS latest FROM object_counts WHERE account_id = ?`);
 
-router.get('/object-counts', requireAuth, (_req, res) => {
-  const rows     = stmtAllCounts.all();
-  const { latest } = stmtLatestRun.get();
+router.get('/object-counts', requireAuth, (req, res) => {
+  // null for partner staff → unscoped; set for customer roles → own rows only.
+  const scope = req.session.user.accountId || null;
+  const rows     = scope ? stmtCountsForAccount.all(scope) : stmtAllCounts.all();
+  const { latest } = scope ? stmtLatestRunForAccount.get(scope) : stmtLatestRun.get();
   const counts   = rows.map((r) => ({
     bucketId:    r.bucket_id,
     accountId:   r.account_id,
@@ -467,6 +309,9 @@ router.get('/object-counts', requireAuth, (_req, res) => {
 // without waiting for the next 24-hour scheduled run.
 router.post('/sync-account/:accountId', requireAuth, requireCsrf, async (req, res) => {
   const { accountId } = req.params;
+  if (!canAccessAccount(req.session.user, accountId)) {
+    return void denyAccount(req, res, 'master-b2/sync-account', accountId);
+  }
   try {
     const { runForAccount } = await import('../jobs/objectCountJob.js');
     const result = await runForAccount(accountId);
@@ -481,7 +326,8 @@ router.post('/sync-account/:accountId', requireAuth, requireCsrf, async (req, re
 // Run the object-count job for every sub-account. Used by the dashboard
 // "Sync" button. Synchronous — the response waits for the walk to complete
 // across all accounts (with the job's internal batch-of-3 concurrency).
-router.post('/sync-all', requireAuth, requireCsrf, async (_req, res) => {
+// Partner-staff only — it walks every tenant's buckets.
+router.post('/sync-all', requireAuth, requireCsrf, requirePartnerStaff, async (_req, res) => {
   try {
     const { runObjectCountJob } = await import('../jobs/objectCountJob.js');
     await runObjectCountJob();
@@ -499,8 +345,11 @@ router.post('/sync-all', requireAuth, requireCsrf, async (_req, res) => {
 // Returns 404 if the account has no stored credentials.
 // Returns { ok: true, bucketsProcessed, elapsedMs } on success.
 // ---------------------------------------------------------------------------
-router.post('/object-counts/refresh/:accountId', requireAuth, async (req, res) => {
+router.post('/object-counts/refresh/:accountId', requireAuth, requireCsrf, async (req, res) => {
   const { accountId } = req.params;
+  if (!canAccessAccount(req.session.user, accountId)) {
+    return void denyAccount(req, res, 'master-b2/object-counts/refresh', accountId);
+  }
   try {
     const result = await runObjectCountForAccount(accountId);
     if (result.error) {
@@ -543,9 +392,18 @@ const VALID_SORT_COLS = { name: 'file_name', size: 'size', uploadedAt: 'uploaded
 const stmtIndexCount     = db.prepare(`SELECT COUNT(*) AS n FROM file_index WHERE bucket_id = ?`);
 const stmtIndexCountPfx  = db.prepare(`SELECT COUNT(*) AS n FROM file_index WHERE bucket_id = ? AND file_name LIKE ? ESCAPE '\\'`);
 const stmtIndexedAt      = db.prepare(`SELECT MAX(indexed_at) AS ts FROM file_index WHERE bucket_id = ?`);
+// file_index has no account_id of its own — object_counts is the bucket→account
+// join the same job writes, so use it to decide who may read these file names.
+const stmtBucketOwner    = db.prepare(`SELECT account_id FROM object_counts WHERE bucket_id = ?`);
 
 router.get('/file-index/:bucketId', requireAuth, (req, res) => {
   const { bucketId } = req.params;
+  // An unknown bucketId resolves to undefined, which only partner staff can
+  // pass — that stops a customer probing bucket ids they don't own.
+  const owner = stmtBucketOwner.get(bucketId)?.account_id;
+  if (!canAccessAccount(req.session.user, owner)) {
+    return void denyAccount(req, res, 'master-b2/file-index', owner || bucketId);
+  }
   const limit   = Math.min(Math.max(1, parseInt(req.query.limit)  || 100), 1000);
   const offset  = Math.max(0, parseInt(req.query.offset) || 0);
   const sortBy  = VALID_SORT_COLS[req.query.sortBy] || 'file_name';
