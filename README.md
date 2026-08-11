@@ -1,46 +1,113 @@
-# Backblaze for Neocloud · Partner Portal (Demo)
+# Backblaze for Neocloud · Partner Portal
 
-A polished, dark-mode partner portal demo built for selling **Backblaze B2** into **neocloud / AI cloud / SaaS** customers. Engineered to feel like a real co-branded reseller product so it can be shown to executives and storage engineers in a sales meeting.
+A dark-mode partner portal for reselling **Backblaze B2** into **neocloud / AI cloud / SaaS** customers. It runs in two modes: a **demo mode** backed entirely by mock data, and a **live mode** that talks to the real Backblaze Native and Partner APIs.
 
-The app focuses on **app storage, AI workloads, object storage, and partner use cases** — not backup. Every metric is labeled with its true data source (Native API, Partner API, Daily CSV, or derived) so the demo accurately reflects what's possible against the real Backblaze API surface.
+The app focuses on **app storage, AI workloads, object storage, and partner use cases** — not backup. Every metric is labeled with its true data source (Native API, Partner API, Daily CSV, or derived) so the app never overstates what Backblaze actually exposes.
+
+> ### ⚠️ Unsupported Sales Engineering project
+>
+> This is **not an official Backblaze product** and is **not supported by Backblaze**. It was built by Sales Engineering as a demonstration, not by a Backblaze product or engineering team.
+>
+> There is **no support of any kind** — please don't open Backblaze support tickets about it or escalate through Backblaze support channels. It is provided as-is, with no warranty, and may change or disappear without notice.
+>
+> If you deploy it, you own the deployment: its security, its data, and any charges it incurs against your Backblaze account. See [LICENSE](LICENSE).
+
+It is a **full-stack** application, not a static front end:
+
+- **React + Vite** front end
+- **Express** API server with session auth, RBAC, CSRF protection, and an audit log
+- **SQLite** for users, customer metadata, encrypted sub-account credentials, and background-job results
 
 ---
 
 ## Run it
 
+Requires **Node 20+** (`engines: node >=20`).
+
 ```bash
-cd backblaze-neocloud-demo
+git clone https://github.com/backblaze-b2-samples/neocloud-partner-portal.git
+cd neocloud-partner-portal
 npm install
 npm run dev
 ```
 
-Then open <http://localhost:5173>.
+This starts the Vite dev server and the API server together. Open <http://localhost:5173>.
 
-To produce a static build (e.g. for a sales-engineering demo box):
+No environment variables are required for demo mode — the database is created automatically and demo data is mocked.
+
+### Signing in
+
+Demo accounts are seeded on first boot. The password for all of them is `demo`:
+
+| Email | Role | Sees |
+|---|---|---|
+| `demo@backblaze.com` | admin | The full partner portal |
+| `support@demo.com` | support | Partner portal, support-scoped |
+| `lumora-admin@demo.com` | customer_admin | The customer console for one sub-account |
+| `lumora-viewer@demo.com` | customer_readonly | Same, read-only |
+
+Sign in as `demo@backblaze.com` to see the whole product. The two `lumora-*` accounts are useful for showing what an end customer sees.
+
+> On first boot you will see `ERROR: no admin user in DB and DEFAULT_ADMIN_* env vars unset`. In demo mode this is harmless — the demo seed creates the admin immediately afterwards. It matters only when you are standing up a real deployment (see [Going live](#going-live)).
+
+### Other commands
 
 ```bash
-npm run build
-npm run preview
+npm test           # vitest — front-end and server suites
+npm run build      # production front-end build into dist/
+npm run preview    # serve the built front end
+npm run server     # API server only, with --watch
 ```
-
-Tested with Node 18+. No environment variables are required to run the demo — all data is mocked.
 
 ---
 
-## What's in the demo
+## What's in it
 
-Eight views accessible from the left sidebar:
+### Insights
 
 | View | What it shows | Primary data source |
 |---|---|---|
 | **Executive overview** | Total storage, egress, transactions, customers, buckets, regions, MRR, gross margin, growth trends | CSV + Partner + derived |
-| **Customers & sub-accounts** | Group members, per-customer storage / egress / revenue / margin, drill-down | Partner API + CSV |
-| **Storage & buckets** | Per-bucket lifecycle (hide/delete only — no tiering), encryption, file lock, versioning, CORS, replication | B2 Native API + CSV |
+| **Business cockpit** | P&L lens — profit leaders, margin by customer, revenue concentration | Derived |
+| **Groups** | Partner group rollups and their member sub-accounts | Partner API |
+| **Customers & sub-accounts** | Per-customer storage, **object count**, egress, revenue, margin, health; drill-down to buckets, keys, activity, billing, and logins | Partner API + CSV + index |
+
+### Operations
+
+| View | What it shows | Primary data source |
+|---|---|---|
+| **Storage & buckets** | Per-bucket lifecycle (hide/delete only — no tiering), encryption, file lock, versioning, CORS, replication, object counts | B2 Native API + CSV + index |
 | **Regions & placement** | Per-region storage, growth, bucket placement, p99 (demo), availability (demo) | CSV + static |
-| **Usage & billing** | Daily / weekly / monthly trends, Class A/B/C transactions, cost model with adjustable resale multiplier, raw CSV preview | CSV + derived |
-| **Application keys & security** | Key inventory, scopes, bucket restrictions, expiration, posture cards, audit-style activity feed, least-privilege examples | B2 Native API + derived |
-| **API console** | Embedded request/response viewer with examples for auth, list buckets, create key, list files, partner groups, usage CSV | Demo / live with real keys |
-| **AI / Neocloud workloads** | Reference NVMe-staging architecture, dataset & checkpoint storage, tenant isolation, margin vs hyperscaler S3 | Derived + Partner |
+| **Usage & billing** | Daily / weekly / monthly trends, Class A/B/C/D transactions, cost model with adjustable resale multiplier, raw CSV preview | CSV + derived |
+
+### Security
+
+| View | What it shows | Primary data source |
+|---|---|---|
+| **Application keys & security** | Key inventory, scopes, bucket restrictions, expiration, posture cards, least-privilege examples | B2 Native API + derived |
+| **Ransomware protection** | Object Lock / immutability posture per bucket | B2 Native API |
+| **Trust Center** | Encryption, retention, and compliance posture summary | Derived |
+
+### Administration & developer
+
+| View | What it shows |
+|---|---|
+| **User management** | Portal users, roles, activation, password resets |
+| **Audit log** | Every privileged action, with actor and target |
+| **View as customer** | Read-only impersonation of a customer account |
+| **API console** | Request/response viewer for auth, list buckets, create key, list files, partner groups, usage CSV |
+| **MCP console** | Backblaze MCP tools, plus a conversational mode that turns intent into scoped tool calls (needs `ANTHROPIC_API_KEY`) |
+| **Reseller plans** | Pricing tiers and per-customer overrides that drive the revenue/COGS model |
+
+Customer-role users get a separate, reduced console scoped to their own account.
+
+---
+
+## Object counts
+
+`b2_list_buckets` does **not** return object counts or storage bytes — no Backblaze API does. The portal computes them with a background job (`server/jobs/objectCountJob.js`) that paginates `b2_list_file_names` for every sub-account bucket every 24 hours, storing per-bucket counts and a file index in SQLite.
+
+That means counts can be **up to a day old**. The UI says so wherever they appear, and there is a **Sync** button to force a recount for one customer or for everything. A customer whose account has never been walked shows `—` rather than `0`, so "unknown" is never mistaken for "empty".
 
 ---
 
@@ -85,18 +152,40 @@ const perCustomer = rollupBy(rows, 'sub_account_id');
 
 Reference: [Generate and Use Reports with the Backblaze Partner API](https://www.backblaze.com/docs/cloud-storage-use-partner-api-reports).
 
-### Wiring real credentials
+## Going live
 
-In `src/api/b2Adapter.js`, set `useMocks = false` and provide credentials via Vite env:
+> **Never put B2 credentials in a `VITE_`-prefixed variable.** Vite inlines those into the client bundle, which would publish your keys to every visitor. This project has no `VITE_B2_*` variables and does not need any.
+
+Live mode is a runtime toggle in the top bar, not a build-time flag. Turning it on requires two things:
+
+**1. A non-demo admin account.** Live mode is deliberately blocked for `@demo.com` addresses. Create a real admin by setting these in `.env` before first boot (they are used only when the users table has no admin):
 
 ```bash
-# .env.local (gitignored)
-VITE_B2_KEY_ID=00500000000000000000000
-VITE_B2_APPLICATION_KEY=K005************************************
-VITE_B2_PARTNER_ACCOUNT_ID=PARTNER_ACCOUNT_ID
+DEFAULT_ADMIN_EMAIL=you@yourcompany.com
+DEFAULT_ADMIN_PASSWORD=<a strong password>
 ```
 
-Then implement the real `b2_authorize_account` HTTP call inside `ensureAuth()` (a TODO is left in place). For production deployments you should **never call B2 directly from the browser** — proxy these calls through a backend that holds the key. The adapter is structured so the proxy URL is the only thing the UI needs to know.
+**2. Your B2 master key.** Sign in as that admin, open **Settings**, and enter the **Master Key ID** and **Master Application Key**. Then flip **Demo → Live** in the top bar. The toggle stays disabled until both are present.
+
+B2 calls are proxied through the Express server rather than made from the browser, so bucket listings, the daily usage CSV, and Partner API calls all originate server-side.
+
+### Server environment
+
+Copy `.env.example` to `.env`. The variables that matter:
+
+| Variable | Purpose |
+|---|---|
+| `CREDENTIAL_ENCRYPTION_KEY` | **Required for live mode.** AES-256-GCM key used to encrypt per-sub-account application keys at rest in SQLite. |
+| `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD` | First-boot admin seed. Ignored once an admin exists. |
+| `ANTHROPIC_API_KEY` | Enables the MCP console's chat mode. Without it, the console falls back to the manual tool picker. |
+| `DB_PATH` | SQLite location. Defaults to `server/data/app.db`. |
+| `PORT`, `TRUST_PROXY`, `NODE_ENV` | Standard server runtime settings. |
+
+`B2_MASTER_KEY_ID` and `B2_MASTER_APP_KEY` in `.env.example` are read **only** by the one-off `server/seed-master-buckets.mjs` utility. The running server does not use them — the master key comes from Settings, and per-customer operations use the encrypted sub-account keys in the database.
+
+### Removing demo mode
+
+When you are ready to run this as a real customer-facing portal, [`STRIP-DEMO.md`](STRIP-DEMO.md) walks through removing the demo path. Budget about half a day. The first phase is configuration only — no code changes — so you can disable demo accounts and seed data before committing to edits.
 
 ---
 
@@ -141,57 +230,66 @@ The Executive Overview footer summarizes which sections come from which sources.
 ## Project structure
 
 ```
-backblaze-neocloud-demo/
+neocloud-partner-portal/
 ├─ index.html
 ├─ package.json
-├─ vite.config.js
-├─ tailwind.config.js
-├─ postcss.config.js
-├─ public/
-│  └─ favicon.svg
-└─ src/
-   ├─ main.jsx
-   ├─ App.jsx
-   ├─ index.css
-   ├─ lib/
-   │  └─ format.js              # bytes / currency / percent helpers
-   ├─ api/
-   │  ├─ b2Adapter.js           # B2 Native API mock + real-API integration points
-   │  ├─ partnerApi.js          # Partner API v3 mock
-   │  └─ csvParser.js           # Daily Usage CSV parser + cost model
-   ├─ data/
-   │  ├─ regions.js             # 4 B2 regions
-   │  ├─ customers.js           # Demo sub-accounts
-   │  ├─ buckets.js             # Demo buckets with metadata
-   │  ├─ usageMetrics.js        # 30-day usage time series + region rollups + heatmap
-   │  ├─ applicationKeys.js     # Demo keys + audit-style activity feed
-   │  ├─ apiExamples.js         # Request/response examples for the API console
-   │  └─ sampleDailyUsage.csv   # Sample CSV file shaped like a real Backblaze Daily Usage report
-   ├─ components/
-   │  ├─ ui.jsx                 # Card, MetricCard, Tabs, Table, badges, source labels, states
-   │  ├─ charts.jsx             # Sparkline, area chart, stacked bar, donut, heatmap
-   │  └─ Layout.jsx             # Sidebar nav + topbar
-   └─ views/
-      ├─ ExecutiveOverview.jsx
-      ├─ PartnerView.jsx
-      ├─ StorageView.jsx
-      ├─ RegionView.jsx
-      ├─ UsageBillingView.jsx
-      ├─ ApplicationKeysView.jsx
-      ├─ ApiConsoleView.jsx
-      └─ AINeocloudView.jsx
+├─ deploy.sh                    # rsync dist/ + server/ to a host, then pm2 restart
+├─ STRIP-DEMO.md                # how to remove demo mode for a real deployment
+├─ server/
+│  ├─ index.js                  # Express app — middleware chain, route mounting
+│  ├─ db.js                     # SQLite schema + additive migrations
+│  ├─ auth.js, users.js         # sessions, argon2 password hashing, roles
+│  ├─ secretbox.js              # AES-256-GCM for stored sub-account keys
+│  ├─ credentials.js            # per-sub-account B2 key storage
+│  ├─ audit.js                  # privileged-action audit log
+│  ├─ reportsArchive.js         # daily usage CSV parsing + on-disk archive
+│  ├─ middleware/requireAuth.js # auth, RBAC, CSRF, read-only impersonation
+│  ├─ routes/                   # b2partner, customerB2, masterB2, admin, mcp, ...
+│  ├─ jobs/objectCountJob.js    # 24h bucket walk → object_counts + file_index
+│  └─ mcp/                      # MCP client, chat agent, usage-insight tools
+├─ src/
+│  ├─ App.jsx                   # view registry + partner/customer shells
+│  ├─ api/                      # b2Adapter, partnerApi, csvParser
+│  ├─ data/                     # demo fixtures (customers, buckets, keys, CSV)
+│  ├─ components/               # ui.jsx, charts.jsx, dialogs, Layout
+│  ├─ lib/                      # AppContext, apiClient, nav, format helpers
+│  └─ views/                    # 24 screens (see "What's in it")
+└─ tests/
+   ├─ frontend/                 # formatters, CSV parsing, billing, object counts
+   └─ server/                   # auth, RBAC, scoping, CSRF, MCP tools
 ```
 
 ---
 
 ## Tech stack
 
-- **React 18** + Vite 5
-- **Tailwind CSS** for the dark mode palette and component primitives
-- **Recharts** for line / area / bar / donut visualizations (the heatmap is hand-rolled)
-- **lucide-react** for icons
-- No state library — `useState` and component composition keep it readable
-- Lazy-loaded views via `React.lazy` keep the initial bundle small
+**Front end** — React 18, Vite 8, Tailwind CSS, Recharts (the heatmap is hand-rolled), lucide-react. No state library; `useState` plus context. Views are lazy-loaded via `React.lazy`.
+
+**Server** — Express 4, better-sqlite3, argon2 for password hashing, session cookies with double-submit CSRF tokens, and the Anthropic + MCP SDKs for the conversational console.
+
+**Tests** — Vitest, with supertest for the server routes.
+
+---
+
+## Security notes
+
+Worth understanding before you deploy this anywhere real:
+
+- **Sub-account application keys are encrypted at rest** (AES-256-GCM) via `CREDENTIAL_ENCRYPTION_KEY`. Lose that key and the stored credentials are unrecoverable.
+- **CSRF** uses a double-submit cookie. That same check is the single chokepoint enforcing read-only impersonation, so any new state-changing route must sit behind `requireCsrf`.
+- **Account scoping** — customer-role users are confined to their own `accountId` by `canAccessAccount`. Routes that read tenant data scope their queries by it.
+- **`deploy.sh` defaults to the sample deployment's own host.** Override `DEPLOY_HOST`, `DEPLOY_KEY`, and `DEPLOY_REMOTE_DIR` — via `.deploy.env` or the environment — before running it, or point it somewhere of your own.
+- Demo accounts (`@demo.com`, `demo@backblaze.com`) are blocked from live mode by design, and `STRIP-DEMO.md` covers removing them entirely.
+
+---
+
+## License and support
+
+MIT — see [LICENSE](LICENSE).
+
+**This is an unsupported Sales Engineering project.** It is not an official Backblaze product, not maintained by a Backblaze product or engineering team, and not covered by any Backblaze support agreement, SLA, or product warranty. Backblaze Support will not assist with it — use the GitHub issue tracker, which is handled on a best-effort basis with no guaranteed response.
+
+Provided as-is and as-available. You are responsible for reviewing, securing, and operating anything you deploy from it.
 
 ---
 

@@ -1,0 +1,51 @@
+MIT License
+
+Copyright (c) 2026 Backblaze, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+ADDITIONAL DISCLAIMER — UNSUPPORTED SALES ENGINEERING PROJECT
+
+This is a Sales Engineering demonstration project. It is NOT an official
+Backblaze product, NOT part of the Backblaze Cloud Storage service, NOT built
+or maintained by a Backblaze product or engineering team, and NOT covered by
+any Backblaze support agreement, service level agreement, or product warranty.
+
+THERE IS NO SUPPORT OF ANY KIND. Backblaze Support will not assist with this
+software — do not open support tickets about it, and do not escalate issues
+with it through Backblaze support channels. Nothing here creates any
+obligation for Backblaze to maintain, update, fix, or continue to publish this
+project, and it may be changed or withdrawn at any time without notice.
+
+Questions and issues belong on the project's GitHub issue tracker, which is
+handled on a best-effort basis by individual contributors with no guaranteed
+response time and no commitment to a fix.
+
+The software is provided as-is and as-available. You are solely responsible
+for reviewing, testing, securing, and operating any deployment you make from
+it, including but not limited to: authentication and access control, handling
+and storage of credentials, network exposure, data retention, regulatory
+compliance, and any charges incurred against your Backblaze account or other
+services.
+
+"Backblaze" and "B2 Cloud Storage" are trademarks of Backblaze, Inc. Use of
+these names in this project is descriptive only and does not imply
+endorsement of any derivative work.
