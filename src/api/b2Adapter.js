@@ -278,7 +278,7 @@ function normalizeApiKey(k) {
 // ===== Customer proxy helper ================================================
 // Read the double-submit CSRF token that the server sets as a non-HttpOnly
 // cookie when a session is created. Required on every state-changing request.
-function readCsrfCookie() {
+export function readCsrfCookie() {
   if (typeof document === 'undefined') return '';
   const m = document.cookie.match(/(?:^|;\s*)csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';
