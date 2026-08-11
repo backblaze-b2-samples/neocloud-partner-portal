@@ -136,6 +136,13 @@ export default function CustomerDetailView({ customerId }) {
 
   const region = REGIONS.find((r) => r.id === customer.region);
   const margin = (customer.revenue30d - customer.cogs30d) / customer.revenue30d;
+  // Sum the per-bucket counts already merged in from the object-count job.
+  // Only sum when we have real data — otherwise show '—' rather than a
+  // misleading 0 (same guard as StorageView).
+  const hasObjectCounts = buckets.some((b) => b.objectCount != null);
+  const totalObjects = hasObjectCounts
+    ? buckets.reduce((s, b) => s + (b.objectCount || 0), 0)
+    : null;
   const isEjected = customer.active === false;
   const allTabs = [
     { ...TABS[0] },
@@ -247,8 +254,16 @@ export default function CustomerDetailView({ customerId }) {
       />
 
       {/* Key metrics */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
         <MetricCard label="Storage" value={bytes(customer.storageBytes)} source="csv" icon={<Database size={14} />} accent="red" />
+        <MetricCard
+          label="Objects"
+          value={compactNumber(totalObjects)}
+          source="db"
+          icon={<Layers size={14} />}
+          accent="green"
+          title="Counted by a background job that runs every 24 hours — may be up to a day old. Use Refresh to recount now."
+        />
         <MetricCard label="Egress (30d)" value={bytes(customer.egressBytes30d)} source="csv" accent="teal" />
         <MetricCard label="Buckets" value={buckets.length} source="api" icon={<Database size={14} />} accent="violet" />
         <MetricCard label="App keys" value={keys.length} source="api" icon={<KeyRound size={14} />} accent="amber" />

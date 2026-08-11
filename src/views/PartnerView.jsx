@@ -8,7 +8,7 @@ import { CreateCustomerDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import * as partner from '../api/partnerApi.js';
 import { useNav } from '../lib/nav.js';
-import { bytes, currency, percent, shortDate } from '../lib/format.js';
+import { bytes, compactNumber, currency, percent, shortDate } from '../lib/format.js';
 
 const TABS = [
   { id: 'all', label: 'All customers' },
@@ -142,6 +142,7 @@ export default function PartnerView() {
               <TH>Region</TH>
               <TH>Plan</TH>
               <TH className="text-right">Storage</TH>
+              <TH className="text-right" title="Counted by a background job that runs every 24 hours — may be up to a day old.">Objects</TH>
               <TH className="text-right">Egress (30d)</TH>
               <TH className="text-right">Revenue (30d)</TH>
               <TH className="text-right">Growth</TH>
@@ -166,6 +167,7 @@ export default function PartnerView() {
                   </TD>
                   <TD className="text-ink-300">{c.plan}</TD>
                   <TD className="text-right font-mono text-ink-100">{bytes(c.storageBytes)}</TD>
+                  <TD className="text-right font-mono text-ink-100">{compactNumber(c.objectCount)}</TD>
                   <TD className="text-right font-mono text-ink-100">{bytes(c.egressBytes30d)}</TD>
                   <TD className="text-right font-mono text-ink-100">{currency(c.revenue30d, { compact: true })}</TD>
                   <TD className={"text-right font-mono " + (c.growth >= 0 ? "text-accent-green" : "text-bb-red")}>
@@ -183,7 +185,7 @@ export default function PartnerView() {
               );
             })}
             {filtered.length === 0 && (
-              <TR hover={false}><TD className="py-8 text-center text-ink-400" colSpan={10}>
+              <TR hover={false}><TD className="py-8 text-center text-ink-400" colSpan={11}>
                 <EmptyState
                   title={tab === 'inactive' ? 'No ejected sub-accounts' : 'No customers in this segment'}
                   message={tab === 'inactive'
