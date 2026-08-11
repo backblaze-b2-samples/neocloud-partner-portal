@@ -24,6 +24,7 @@ import masterB2Router from './routes/masterB2.js';
 import customerAdminRouter from './routes/customerAdmin.js';
 import impersonateRouter from './routes/impersonate.js';
 import mcpRouter from './routes/mcp.js';
+import mcpChatRouter from './routes/mcpChat.js';
 import mcpAdminRouter from './routes/mcpAdmin.js';
 import { seedDefaultAdmin, seedDemoUsers, reconcileCustomerLoginsAgainstEjection } from './seed.js';
 import { scheduleObjectCountJob } from './jobs/objectCountJob.js';
@@ -39,6 +40,11 @@ app.use(helmet({
   contentSecurityPolicy: false, // SPA's own CSP is configured at the static layer
   crossOriginResourcePolicy: { policy: 'same-site' },
 }));
+// The chat transcript carries prior tool results, so this one route needs a
+// larger body than the 64kb global cap. Parsed here (ahead of the global
+// parser, which then no-ops on the already-read body); auth/scope still apply
+// at the router below.
+app.use('/api/mcp/chat', express.json({ limit: '1mb' }));
 app.use(express.json({ limit: '64kb' }));
 app.use(cookieParser());
 app.use(attachSession);
@@ -63,6 +69,7 @@ app.use('/api/master-b2', masterB2Router);
 app.use('/api/customer-admin', customerAdminRouter);
 app.use('/api/impersonate', impersonateRouter);
 app.use('/api/admin/mcp', mcpAdminRouter);
+app.use('/api/mcp/chat', mcpChatRouter);
 app.use('/api/mcp', mcpRouter);
 
 // 404 for unknown /api routes — never fall through to anything else.

@@ -8,6 +8,7 @@ import express from 'express';
 import { requireAuth, requireCsrf } from '../middleware/requireAuth.js';
 import { getConfigPublic, hasAccountToken } from '../mcpStore.js';
 import { listTools, callTool, McpError } from '../mcp/client.js';
+import { chatAvailable } from '../mcp/chatAgent.js';
 import { audit } from '../audit.js';
 
 const router = express.Router();
@@ -23,7 +24,13 @@ router.get('/status', (req, res) => {
   const cfg = getConfigPublic();
   const accountId = req.session.user.accountId || null;
   const hasScope = accountId == null ? cfg.hasToken : hasAccountToken(accountId);
-  res.json({ configured: cfg.enabled && cfg.hasToken, hasScope, baseUrlSet: !!cfg.baseUrl });
+  res.json({
+    configured: cfg.enabled && cfg.hasToken,
+    hasScope,
+    baseUrlSet: !!cfg.baseUrl,
+    chatAvailable: chatAvailable(),
+    scope: accountId == null ? 'partner' : `account:${accountId}`,
+  });
 });
 
 router.get('/tools', async (req, res) => {
