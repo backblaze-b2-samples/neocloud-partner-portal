@@ -158,6 +158,7 @@ function memberToCustomer(member, groupId) {
     plan: null,             // not in API; shows '—'
     groupId,
     storageBytes,
+    objectCount: null,      // filled in from object_counts during enrichment
     egressBytes30d: null,   // only in CSV report
     txnA30d: null,
     txnB30d: null,
@@ -284,6 +285,7 @@ export async function getCustomers({ groupId } = {}) {
       plan: m.plan || null,
       groupId: m.ejected_group_id || null,
       storageBytes: 0,
+      objectCount: null,
       egressBytes30d: 0,
       txnA30d: 0,
       txnB30d: 0,
@@ -312,11 +314,14 @@ export async function getCustomers({ groupId } = {}) {
     api.get('/api/admin/reseller-plans').then((d) => d.plans).catch(() => RESELLER_PLANS),
   ]);
 
-  // Sum object_counts per accountId so we can use it as a per-customer storage source.
-  const bytesByAccount = new Map();
+  // Sum object_counts per accountId so we can use it as a per-customer storage
+  // source, and roll the file counts up the same way for the Objects column.
+  const bytesByAccount   = new Map();
+  const objectsByAccount = new Map();
   for (const [, oc] of objectCounts) {
     if (!oc?.accountId) continue; // map values now include accountId via the GET response shape
     bytesByAccount.set(oc.accountId, (bytesByAccount.get(oc.accountId) || 0) + (oc.totalBytes || 0));
+    objectsByAccount.set(oc.accountId, (objectsByAccount.get(oc.accountId) || 0) + (oc.count || 0));
   }
 
   const enriched = customers.map((c) => {
@@ -324,10 +329,15 @@ export async function getCustomers({ groupId } = {}) {
     // so they roll up as zero everywhere. They still appear on the dedicated
     // "Inactive" tab via the active=false flag.
     if (c.active === false) {
-      return { ...c, storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, txnD30d: 0, revenue30d: 0, cogs30d: 0 };
+      // objectCount stays null (not 0) — the buckets are gone from our view, so
+      // we genuinely don't know the count rather than knowing it to be zero.
+      return { ...c, storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, txnD30d: 0, revenue30d: 0, cogs30d: 0, objectCount: null };
     }
     const csv  = csvUsage.get(c.accountId);
     const objBytes = bytesByAccount.get(c.accountId) || 0;
+    // null when the object-count job has never walked this sub-account (no
+    // stored credentials, or not yet synced) so the UI shows '—', not '0'.
+    const objectCount = objectsByAccount.has(c.accountId) ? objectsByAccount.get(c.accountId) : null;
     const csvBytes = csv?.storageBytes > 0 ? csv.storageBytes : 0;
     const apiBytes = c.storageBytes ?? 0;
     const storageBytes   = csvBytes || objBytes || apiBytes;
@@ -355,6 +365,7 @@ export async function getCustomers({ groupId } = {}) {
       ...c,
       plan,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
+      objectCount,
       revenue30d: revenue,
       cogs30d:    cogs,
       health,
@@ -416,6 +427,7 @@ export function customerRowFromCreated(c) {
     plan:           c.plan || null,
     groupId:        c.groupId,
     storageBytes:   0,
+    objectCount:    null,   // job hasn't walked this account yet
     egressBytes30d: 0,
     txnA30d:        0,
     txnB30d:        0,

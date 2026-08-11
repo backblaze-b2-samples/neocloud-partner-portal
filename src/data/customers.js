@@ -3,7 +3,9 @@
 //   GET https://api.backblazeb2.com/b2api/v3/b2_list_group_members
 // Reference: https://www.backblaze.com/docs/cloud-storage-partner-api
 
-export const CUSTOMERS = [
+import { BUCKETS } from './buckets.js';
+
+const CUSTOMERS_BASE = [
   {
     id: 'sub-7f3a91',
     accountId: '7f3a91d2c4b8',
@@ -233,6 +235,21 @@ export const CUSTOMERS = [
   },
 ];
 
+// Object counts are derived from the demo buckets rather than hardcoded per
+// customer, so the Customers list always agrees with Storage & Buckets.
+// In live mode this comes from the object_counts table (see partnerApi.js).
+// null (not 0) for a customer with no buckets — the UI renders that as '—',
+// which reads as "unknown" rather than "empty account".
+const objectsByCustomer = BUCKETS.reduce(
+  (m, b) => m.set(b.customerId, (m.get(b.customerId) || 0) + (b.objectCount || 0)),
+  new Map()
+);
+
+export const CUSTOMERS = CUSTOMERS_BASE.map((c) => ({
+  ...c,
+  objectCount: objectsByCustomer.get(c.id) ?? null,
+}));
+
 // Aggregate metrics roll-up. In production these come from the daily usage
 // CSV report (egress/transactions) plus aggregated storage from Partner API.
 // n() coerces null/undefined to 0 so live-mode totals don't produce NaN.
@@ -250,6 +267,7 @@ export function aggregate(customers = CUSTOMERS) {
       acc.cogs30d += n(c.cogs30d);
       acc.revenue30d += n(c.revenue30d);
       acc.activeBuckets += n(c.activeBuckets);
+      acc.objectCount += n(c.objectCount);
       return acc;
     },
     {
@@ -262,6 +280,7 @@ export function aggregate(customers = CUSTOMERS) {
       cogs30d: 0,
       revenue30d: 0,
       activeBuckets: 0,
+      objectCount: 0,
     }
   );
 }
