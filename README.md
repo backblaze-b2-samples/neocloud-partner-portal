@@ -4,7 +4,13 @@ A dark-mode partner portal for reselling **Backblaze B2** into **neocloud / AI c
 
 The app focuses on **app storage, AI workloads, object storage, and partner use cases** — not backup. Every metric is labeled with its true data source (Native API, Partner API, Daily CSV, or derived) so the app never overstates what Backblaze actually exposes.
 
-> **Not an official Backblaze product.** This is a sample / reference implementation, provided as-is with no warranty and no support agreement. See [LICENSE](LICENSE).
+> ### ⚠️ Unsupported Sales Engineering project
+>
+> This is **not an official Backblaze product** and is **not supported by Backblaze**. It was built by Sales Engineering as a demonstration, not by a Backblaze product or engineering team.
+>
+> There is **no support of any kind** — please don't open Backblaze support tickets about it or escalate through Backblaze support channels. It is provided as-is, with no warranty, and may change or disappear without notice.
+>
+> If you deploy it, you own the deployment: its security, its data, and any charges it incurs against your Backblaze account. See [LICENSE](LICENSE).
 
 It is a **full-stack** application, not a static front end:
 
@@ -277,9 +283,13 @@ Worth understanding before you deploy this anywhere real:
 
 ---
 
-## License
+## License and support
 
-MIT — see [LICENSE](LICENSE). Provided as-is, without warranty. **Not an official Backblaze product** and not covered by any Backblaze support agreement or SLA.
+MIT — see [LICENSE](LICENSE).
+
+**This is an unsupported Sales Engineering project.** It is not an official Backblaze product, not maintained by a Backblaze product or engineering team, and not covered by any Backblaze support agreement, SLA, or product warranty. Backblaze Support will not assist with it — use the GitHub issue tracker, which is handled on a best-effort basis with no guaranteed response.
+
+Provided as-is and as-available. You are responsible for reviewing, securing, and operating anything you deploy from it.
 
 ---
 

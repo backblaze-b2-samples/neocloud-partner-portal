@@ -22,17 +22,22 @@ SOFTWARE.
 
 ---
 
-ADDITIONAL DISCLAIMER
+ADDITIONAL DISCLAIMER — UNSUPPORTED SALES ENGINEERING PROJECT
 
-This project is a sample / reference implementation. It is NOT an official
-Backblaze product, it is NOT part of the Backblaze Cloud Storage service, and
-it is NOT covered by any Backblaze support agreement, service level agreement,
-or product warranty.
+This is a Sales Engineering demonstration project. It is NOT an official
+Backblaze product, NOT part of the Backblaze Cloud Storage service, NOT built
+or maintained by a Backblaze product or engineering team, and NOT covered by
+any Backblaze support agreement, service level agreement, or product warranty.
 
-Backblaze Support does not provide assistance with this software. Do not
-contact Backblaze Support regarding it. Issues and questions belong on the
-project's issue tracker, which is maintained on a best-effort basis with no
-guaranteed response time.
+THERE IS NO SUPPORT OF ANY KIND. Backblaze Support will not assist with this
+software — do not open support tickets about it, and do not escalate issues
+with it through Backblaze support channels. Nothing here creates any
+obligation for Backblaze to maintain, update, fix, or continue to publish this
+project, and it may be changed or withdrawn at any time without notice.
+
+Questions and issues belong on the project's GitHub issue tracker, which is
+handled on a best-effort basis by individual contributors with no guaranteed
+response time and no commitment to a fix.
 
 The software is provided as-is and as-available. You are solely responsible
 for reviewing, testing, securing, and operating any deployment you make from
