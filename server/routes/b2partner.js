@@ -20,7 +20,7 @@
 // =============================================================================
 
 import express from 'express';
-import { requireAuth, requireNotDemo } from '../middleware/requireAuth.js';
+import { requireAuth, requireNotDemo, requireCsrf } from '../middleware/requireAuth.js';
 import { upsertCredential } from '../credentials.js';
 
 const router = express.Router();
@@ -37,7 +37,25 @@ const ALLOWED_ENDPOINTS = new Set([
   'b2_update_account_email',  // update a sub-account's login email (without ejecting)
 ]);
 
-router.post('/:endpoint', async (req, res) => {
+// Endpoints that only read. The Partner API uses POST as the transport for
+// these, so requireCsrf's impersonation gate would otherwise treat them as
+// writes and block "view as customer" from listing groups/members at all.
+const READ_ENDPOINTS = new Set([
+  'b2_list_groups',
+  'b2_list_group_members',
+]);
+
+// Pre-CSRF middleware: flag reads so requireCsrf's impersonation gate lets
+// them through. Everything not listed above — b2_create_group_member,
+// b2_eject_group_member, b2_update_account_email — stays blocked while
+// impersonating, which is the point: requireCsrf is the single chokepoint
+// that makes read-only impersonation actually read-only.
+function allowReadDuringImpersonation(req, _res, next) {
+  if (READ_ENDPOINTS.has(req.params.endpoint)) req.allowDuringImpersonation = true;
+  next();
+}
+
+router.post('/:endpoint', allowReadDuringImpersonation, requireCsrf, async (req, res) => {
   const { endpoint } = req.params;
 
   if (!ALLOWED_ENDPOINTS.has(endpoint)) {

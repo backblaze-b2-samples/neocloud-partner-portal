@@ -14,7 +14,7 @@
 
 import { CUSTOMERS, aggregate } from '../data/customers.js';
 import { GROUPS } from '../data/groups.js';
-import { authorizeAccount, getCustomerUsageFromCsv } from './b2Adapter.js';
+import { authorizeAccount, getCustomerUsageFromCsv, readCsrfCookie } from './b2Adapter.js';
 import { api } from '../lib/apiClient.js';
 import { computeBilling, DEFAULT_PLAN_NAME, RESELLER_PLANS } from '../data/resellerPlans.js';
 
@@ -50,13 +50,19 @@ async function callPartner(endpoint, body) {
 
   if (!rawApiUrl) throw new Error('callPartner: could not derive B2 API host from auth.apiUrl=' + auth.apiUrl);
 
+  // The proxy enforces the double-submit CSRF token — it's also the chokepoint
+  // that keeps read-only impersonation read-only, so the header is required on
+  // reads (b2_list_*) as well as writes.
+  const csrf = readCsrfCookie();
   const res = await fetch(`${window.location.origin}/api/b2-partner/${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: auth.authorizationToken,
       'X-B2-Api-Url': rawApiUrl,
       'Content-Type': 'application/json',
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
     },
+    credentials: 'include',
     body: JSON.stringify({ adminAccountId: auth.accountId, ...body }),
   });
   if (!res.ok) {
