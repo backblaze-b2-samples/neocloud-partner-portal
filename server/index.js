@@ -14,7 +14,10 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { attachSession } from './middleware/requireAuth.js';
 import authRouter from './routes/auth.js';
+import ssoRouter from './routes/sso.js';
+import ssoAdminRouter from './routes/ssoAdmin.js';
 import adminRouter from './routes/admin.js';
+import rolesRouter from './routes/roles.js';
 import credentialsRouter from './routes/credentials.js';
 import metadataRouter from './routes/customerMetadata.js';
 import resellerPlansRouter from './routes/resellerPlans.js';
@@ -58,7 +61,11 @@ app.use((req, res, next) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// Specific path first — the auth router has no /sso routes, but keep the
+// ordering explicit.
+app.use('/api/auth/sso', ssoRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/admin/roles', rolesRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/credentials', credentialsRouter);
 app.use('/api/admin/metadata', metadataRouter);
@@ -69,6 +76,7 @@ app.use('/api/master-b2', masterB2Router);
 app.use('/api/customer-admin', customerAdminRouter);
 app.use('/api/impersonate', impersonateRouter);
 app.use('/api/admin/mcp', mcpAdminRouter);
+app.use('/api/admin/sso', ssoAdminRouter);
 app.use('/api/mcp/chat', mcpChatRouter);
 app.use('/api/mcp', mcpRouter);
 

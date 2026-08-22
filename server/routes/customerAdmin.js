@@ -1,7 +1,8 @@
 import express from 'express';
 import { hashPassword, generateTempPassword, destroyAllSessionsFor } from '../auth.js';
 import { audit } from '../audit.js';
-import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
+import { requireAuth, requirePermission, requireCsrf } from '../middleware/requireAuth.js';
+import { USERS_READ, USERS_WRITE } from '../rbac.js';
 import {
   CUSTOMER_ROLES, findUsersByAccountId, findById, findByEmail, createUser,
   isValidEmail, isStrongPassword, publicUser,
@@ -9,7 +10,19 @@ import {
 } from '../users.js';
 
 const router = express.Router();
-router.use(requireAuth, requireRole('customer_admin'), requireCsrf);
+
+// This router is the customer-facing "My team" surface: it manages users
+// *within one tenant*. Permissions say what you may do; account_id says whose
+// data it is, and without one there is no tenant to act on — so partner staff
+// (account_id null) are refused here no matter how broad their permissions.
+function requireOwnAccount(req, res, next) {
+  if (!req.session.user.accountId) {
+    return res.status(403).json({ error: 'No account linked to this user' });
+  }
+  next();
+}
+
+router.use(requireAuth, requirePermission(USERS_READ), requireOwnAccount, requireCsrf);
 
 router.get('/users', (req, res) => {
   const { accountId } = req.session.user;
@@ -17,7 +30,7 @@ router.get('/users', (req, res) => {
   res.json({ users: findUsersByAccountId(accountId) });
 });
 
-router.post('/users', async (req, res) => {
+router.post('/users', requirePermission(USERS_WRITE), async (req, res) => {
   const { accountId } = req.session.user;
   if (!accountId) return res.status(403).json({ error: 'No account linked to this user' });
   const { email, password, role } = req.body || {};
@@ -31,7 +44,7 @@ router.post('/users', async (req, res) => {
   res.status(201).json({ user: publicUser(created) });
 });
 
-router.patch('/users/:id', (req, res) => {
+router.patch('/users/:id', requirePermission(USERS_WRITE), (req, res) => {
   const myAccountId = req.session.user.accountId;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
@@ -63,7 +76,7 @@ router.patch('/users/:id', (req, res) => {
   res.json({ user: publicUser(findById(id)) });
 });
 
-router.post('/users/:id/reset-password', async (req, res) => {
+router.post('/users/:id/reset-password', requirePermission(USERS_WRITE), async (req, res) => {
   const myAccountId = req.session.user.accountId;
   const id = Number(req.params.id);
   const target = findById(id);

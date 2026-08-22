@@ -13,7 +13,8 @@
 // =============================================================================
 
 import express from 'express';
-import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
+import { requireAuth, requirePermission, requirePartnerScope, requireCsrf } from '../middleware/requireAuth.js';
+import { CREDENTIALS_READ, CREDENTIALS_WRITE } from '../rbac.js';
 import { credentialKeyLimiter } from '../rateLimit.js';
 import { audit } from '../audit.js';
 import {
@@ -27,7 +28,7 @@ import {
 const router = express.Router();
 
 // All routes in this file are admin-only and require CSRF.
-router.use(requireAuth, requireRole('admin'), requireCsrf);
+router.use(requireAuth, requirePartnerScope, requireCsrf);
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -49,7 +50,7 @@ function validateCredentialBody(body) {
 // ---------------------------------------------------------------------------
 // GET / — list all accounts (no keys)
 // ---------------------------------------------------------------------------
-router.get('/', (req, res) => {
+router.get('/', requirePermission(CREDENTIALS_READ), (req, res) => {
   const { groupId } = req.query;
   const rows = listCredentials(groupId ? { groupId } : undefined);
   res.json({ credentials: rows });
@@ -58,7 +59,7 @@ router.get('/', (req, res) => {
 // ---------------------------------------------------------------------------
 // POST / — store or update credentials for one account
 // ---------------------------------------------------------------------------
-router.post('/', (req, res) => {
+router.post('/', requirePermission(CREDENTIALS_WRITE), (req, res) => {
   const validationError = validateCredentialBody(req.body);
   if (validationError) return res.status(400).json({ error: validationError });
 
@@ -86,7 +87,7 @@ router.post('/', (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /:accountId — public fields for one account
 // ---------------------------------------------------------------------------
-router.get('/:accountId', (req, res) => {
+router.get('/:accountId', requirePermission(CREDENTIALS_READ), (req, res) => {
   const row = getCredential(req.params.accountId);
   if (!row) return res.status(404).json({ error: 'Not found' });
   res.json({ credential: row });
@@ -98,7 +99,7 @@ router.get('/:accountId', (req, res) => {
 // The key is returned ONLY over an authenticated admin session. It is the
 // caller's responsibility not to log or forward the value carelessly.
 // ---------------------------------------------------------------------------
-router.get('/:accountId/key', (req, res) => {
+router.get('/:accountId/key', requirePermission(CREDENTIALS_READ), (req, res) => {
   const limit = credentialKeyLimiter(req);
   if (!limit.ok) {
     res.set('Retry-After', String(Math.ceil(limit.retryAfterMs / 1000)));
@@ -134,7 +135,7 @@ router.get('/:accountId/key', (req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /:accountId — remove credentials
 // ---------------------------------------------------------------------------
-router.delete('/:accountId', (req, res) => {
+router.delete('/:accountId', requirePermission(CREDENTIALS_WRITE), (req, res) => {
   const existing = getCredential(req.params.accountId);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 

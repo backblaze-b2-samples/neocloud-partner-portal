@@ -4,7 +4,7 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
-  Lock, Shield, Menu, X, Code2, Plug,
+  Lock, Shield, Menu, X, Code2, Plug, KeySquare,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -53,9 +53,10 @@ const ALL_NAV = [
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
   { id: 'immutability', label: 'Ransomware protection', icon: Lock,         group: 'Security' },
   { id: 'trust',     label: 'Trust Center',         icon: Shield,           group: 'Security' },
-  { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requireRole: 'admin' },
-  { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
-  { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requireAnyRole: ['admin', 'support'] },
+  { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requirePermission: 'users:read' },
+  { id: 'roles',     label: 'Roles & permissions',  icon: KeySquare,        group: 'Administration', requirePermission: 'roles:read' },
+  { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requirePermission: 'audit:read' },
+  { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requirePermission: 'impersonate:start' },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
   { id: 'mcp',       label: 'MCP console',          icon: Plug,             group: 'Developer' },
   { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
@@ -63,17 +64,20 @@ const ALL_NAV = [
   { id: 'settings',  label: 'Settings & credentials', icon: SettingsIcon,  group: 'System' },
 ];
 
-// Filter NAV per the user's role. Admin-only entries are *omitted* (not just
-// disabled) so they don't appear in the rendered HTML for non-admins.
-function navFor(user) {
+// Filter NAV by the user's permissions. Gated entries are *omitted* (not just
+// disabled) so they don't appear in the rendered HTML for those without them.
+// This is presentation only — every one of these views is independently gated
+// server-side.
+export function navFor(user) {
   if (!user) return [];
-  let items = ALL_NAV.filter((n) => {
-    if (n.requireRole)    return n.requireRole === user.role;
-    if (n.requireAnyRole) return n.requireAnyRole.includes(user.role);
-    return true;
-  });
+  const held = user.permissions || [];
+  let items = ALL_NAV.filter((n) => (n.requirePermission ? held.includes(n.requirePermission) : true));
+  // Settings is not permission-gated as a whole: partner staff use it to switch
+  // demo/live mode and hold their own B2 key, which is client-side config. The
+  // sensitive cards inside it (MCP connection, SSO) carry their own gates.
+  // Support keeps the same carve-out it had before the permission layer.
   if (user.role === 'support') {
-    items = items.filter((n) => n.id !== 'users' && n.id !== 'settings');
+    items = items.filter((n) => n.id !== 'settings');
   }
   return items;
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   ShieldCheck, UserPlus, KeyRound, Power, RefreshCcw,
-  AlertTriangle, CheckCircle2, Copy, Loader2, Lock,
+  AlertTriangle, CheckCircle2, Copy, Loader2, Lock, KeySquare,
 } from 'lucide-react';
 import { Card, CardHeader, LoadingState, MobileCardRow } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
@@ -9,19 +9,10 @@ import { useNav } from '../lib/nav.js';
 import { api, ApiError } from '../lib/apiClient.js';
 import { cx, shortDate, relativeTime } from '../lib/format.js';
 import { useCustomers } from '../lib/useCustomers.js';
-
-const ROLES = ['admin', 'manager', 'user', 'support', 'customer_admin', 'customer_readonly'];
-const ROLE_LABELS = {
-  admin: 'Admin',
-  manager: 'Manager',
-  user: 'User',
-  support: 'Support',
-  customer_admin: 'Customer Admin',
-  customer_readonly: 'Customer Read-only',
-};
+import { useRoles } from '../lib/useRoles.js';
 
 export default function UserManagementView() {
-  const { isAdmin, user: me } = useApp();
+  const { can, user: me } = useApp();
   const [users, setUsers] = useState(null);
   const [error, setError] = useState('');
   const [tempCred, setTempCred] = useState(null); // { email, tempPassword }
@@ -41,7 +32,7 @@ export default function UserManagementView() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  if (!isAdmin) {
+  if (!can('users:read')) {
     return (
       <div className="mx-auto max-w-xl">
         <Card>
@@ -49,7 +40,7 @@ export default function UserManagementView() {
             <AlertTriangle size={16} className="mt-0.5 text-bb-red" />
             <div>
               <div className="font-medium">Forbidden</div>
-              <p className="mt-1 text-xs text-ink-400">You need administrator access to view this page.</p>
+              <p className="mt-1 text-xs text-ink-400">You need the users:read permission to view this page.</p>
             </div>
           </div>
         </Card>
@@ -83,6 +74,22 @@ export default function UserManagementView() {
     }
   };
 
+  const onSetAuthSource = async (u, authSource) => {
+    const msg = authSource === 'sso'
+      ? `Convert ${u.email} to SSO? They will sign in through your identity provider from now on, and their role will be set by its group mappings. Any active session ends immediately.`
+      : `Convert ${u.email} back to a password account? They will need a password reset before they can sign in again.`;
+    if (!confirm(msg)) return;
+    setBusyId(u.id); setError('');
+    try {
+      await api.post(`/api/admin/users/${u.id}/auth-source`, { authSource });
+      await reload();
+    } catch (err) {
+      setError((err instanceof ApiError && err.body?.error) || 'Could not change the sign-in method.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-end justify-between gap-3">
@@ -100,7 +107,7 @@ export default function UserManagementView() {
         </button>
       </div>
 
-      <CreateUserCard onCreated={reload} />
+      {can('users:write') && <CreateUserCard onCreated={reload} />}
 
       {tempCred && (
         <Card className="border-accent-amber/40 bg-accent-amber/5">
@@ -131,32 +138,39 @@ export default function UserManagementView() {
       <UserSection
         title="Partner staff"
         icon={<ShieldCheck size={14} className="text-accent-green" />}
-        users={users === null ? null : users.filter((u) => ['admin', 'manager', 'user', 'support'].includes(u.role))}
+        // Partitioned by tenancy, not by role name: an operator-defined role
+        // would otherwise fall through both lists and become invisible here.
+        users={users === null ? null : users.filter((u) => !u.accountId)}
         loadingLabel="Loading users"
         emptyLabel="No partner staff."
         me={me}
         busyId={busyId}
         onUpdate={onUpdate}
         onResetPassword={onResetPassword}
+        onSetAuthSource={onSetAuthSource}
       />
 
       <UserSection
         title="Customer portal users"
         icon={<ShieldCheck size={14} className="text-accent-teal" />}
-        users={users === null ? null : users.filter((u) => ['customer_admin', 'customer_readonly'].includes(u.role))}
+        users={users === null ? null : users.filter((u) => !!u.accountId)}
         loadingLabel="Loading users"
         emptyLabel="No customer portal users."
         me={me}
         busyId={busyId}
         onUpdate={onUpdate}
         onResetPassword={onResetPassword}
+        onSetAuthSource={onSetAuthSource}
       />
     </div>
   );
 }
 
-function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId, onUpdate, onResetPassword }) {
+function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId, onUpdate, onResetPassword, onSetAuthSource }) {
   const { navigate } = useNav();
+  const { can } = useApp();
+  const roles = useRoles();
+  const mayWrite = can('users:write');
 
   // Cell renderers shared between the desktop table and the mobile card list.
   const emailCell = (u) => {
@@ -173,17 +187,23 @@ function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId,
         {isMe && <span className="ml-2 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet">you</span>}
         {u.protected && <span className="ml-2 inline-flex items-center gap-1 rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 ring-1 ring-ink-600"><Lock size={9} /> protected</span>}
         {u.mustChangePassword && <span className="ml-2 rounded bg-accent-amber/15 px-1.5 py-0.5 text-[10px] text-accent-amber">must reset</span>}
+        {/* How this person authenticates, at a glance — the thing you most want
+            to know when moving a team onto SSO. */}
+        {u.authSource === 'sso'
+          ? <span className="ml-2 inline-flex items-center gap-1 rounded bg-accent-violet/15 px-1.5 py-0.5 text-[10px] text-accent-violet"><KeySquare size={9} /> SSO</span>
+          : <span className="ml-2 rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300">Local</span>}
       </>
     );
   };
   const roleSelect = (u) => (
     <select
-      disabled={busyId === u.id || !!u.protected}
+      disabled={busyId === u.id || !!u.protected || !mayWrite || u.authSource === 'sso'}
+      title={u.authSource === 'sso' ? 'Role is managed by SSO group mappings' : undefined}
       value={u.role}
       onChange={(e) => onUpdate(u.id, { role: e.target.value })}
       className="h-8 rounded border border-ink-700 bg-ink-900 px-1.5 text-xs text-ink-100 focus:outline-none disabled:opacity-50 lg:h-7"
     >
-      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+      {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
     </select>
   );
   const statusBadge = (u) => (
@@ -199,7 +219,19 @@ function UserSection({ title, icon, users, loadingLabel, emptyLabel, me, busyId,
       <ActionBtn onClick={() => onUpdate(u.id, { mustChangePassword: !u.mustChangePassword })}>
         {u.mustChangePassword ? 'Clear reset flag' : 'Force reset'}
       </ActionBtn>
-      <ActionBtn onClick={() => onResetPassword(u)} icon={<KeyRound size={11} />}>Reset password</ActionBtn>
+      {u.authSource !== 'sso' && (
+        <ActionBtn onClick={() => onResetPassword(u)} icon={<KeyRound size={11} />}>Reset password</ActionBtn>
+      )}
+      {/* Non-destructive migration path: converting keeps the user row, its id,
+          and its audit history, unlike deleting and re-provisioning via SSO. */}
+      {!u.accountId && (
+        <ActionBtn
+          onClick={() => onSetAuthSource(u, u.authSource === 'sso' ? 'local' : 'sso')}
+          icon={<KeySquare size={11} />}
+        >
+          {u.authSource === 'sso' ? 'Convert to password' : 'Convert to SSO'}
+        </ActionBtn>
+      )}
       <ActionBtn
         danger={u.active}
         onClick={() => onUpdate(u.id, { active: !u.active })}
@@ -334,6 +366,7 @@ function CopyRow({ label, value, mono }) {
 }
 
 function CreateUserCard({ onCreated }) {
+  const roles = useRoles();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('user');
@@ -385,7 +418,7 @@ function CreateUserCard({ onCreated }) {
           onChange={(e) => setRole(e.target.value)}
           className="h-9 rounded-md border border-ink-700 bg-ink-900 px-2 text-sm text-ink-100"
         >
-          {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+          {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
         <button
           type="submit"

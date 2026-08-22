@@ -15,6 +15,7 @@ import {
   findByEmail, findById, isValidEmail, isStrongPassword,
   recordLogin, selfUser, setPasswordHash, CUSTOMER_ROLES,
 } from '../users.js';
+import { permissionsFor } from '../roles.js';
 import { db } from '../db.js';
 
 // Returns true when the customer account behind this user is currently
@@ -54,6 +55,17 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
+  // SSO-managed accounts have no usable password. The check runs AFTER
+  // verifyPassword so the response time doesn't reveal which accounts are
+  // federated, and the message is the same generic one.
+  if (row.auth_source === 'sso') {
+    audit({
+      actorId: row.id, action: 'auth.login.failed',
+      details: { reason: 'sso_account' }, ip: req.ip,
+    });
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
   // Defensive check: if the customer's account was ejected out of band
   // (direct DB edit, race with the metadata cascade), refuse the login here
   // too. The response is the same generic message so we don't leak account
@@ -77,7 +89,7 @@ router.post('/login', async (req, res) => {
   recordLogin(row.id);
   audit({ actorId: row.id, action: 'auth.login.success', ip: req.ip });
 
-  res.json({ user: selfUser(row) });
+  res.json({ user: { ...selfUser(row), permissions: [...permissionsFor(row.role)] } });
 });
 
 router.post('/logout', requireCsrf, (req, res) => {
@@ -92,7 +104,13 @@ router.post('/logout', requireCsrf, (req, res) => {
 
 router.get('/me', requireAuth, (req, res) => {
   const u = findById(req.session.user.id);
-  res.json({ user: selfUser(u), impersonator: req.session.impersonator || null });
+  // Permissions come from the session (already resolved from the role) rather
+  // than the user row — during impersonation they are the target's, which is
+  // what the UI must render against.
+  res.json({
+    user: { ...selfUser(u), permissions: req.session.user.permissions || [] },
+    impersonator: req.session.impersonator || null,
+  });
 });
 
 router.post('/change-password', requireAuth, requireCsrf, async (req, res) => {

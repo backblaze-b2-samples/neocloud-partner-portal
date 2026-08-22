@@ -33,6 +33,7 @@ const Account = lazy(() => import('./views/AccountView.jsx'));
 const UserManagement = lazy(() => import('./views/UserManagementView.jsx'));
 const UserDetail = lazy(() => import('./views/UserDetailView.jsx'));
 const AuditLog = lazy(() => import('./views/AuditLogView.jsx'));
+const RolesView = lazy(() => import('./views/RolesView.jsx'));
 const CustomerUsers = lazy(() => import('./views/CustomerUsersView.jsx'));
 const Immutability = lazy(() => import('./views/ImmutabilityView.jsx'));
 const TrustCenter = lazy(() => import('./views/TrustCenterView.jsx'));
@@ -57,16 +58,23 @@ const VIEWS = {
   users: UserManagement,
   'user-detail': UserDetail,
   audit: AuditLog,
+  roles: RolesView,
   'customer-users': CustomerUsers,
   support: Support,
   immutability: Immutability,
   trust: TrustCenter,
 };
 
-// Routes only an admin may navigate to.
-const ADMIN_ONLY = new Set(['users', 'user-detail', 'audit']);
-// Routes restricted to admin + support staff.
-const SUPPORT_TOOLS = new Set(['support']);
+// Views that require a permission to navigate to. Presentation only — each of
+// these is independently gated server-side, so a stale client cannot reach data
+// it is not entitled to.
+const VIEW_PERMISSIONS = {
+  users:         'users:read',
+  'user-detail': 'users:read',
+  roles:         'roles:read',
+  audit:         'audit:read',
+  support:       'impersonate:start',
+};
 
 function ImpersonationBanner() {
   const { impersonator, user, stopImpersonation } = useApp();
@@ -181,7 +189,7 @@ function CustomerShell() {
 }
 
 function Shell() {
-  const { config, isAuthenticated, authReady, isAdmin, isSupport, isCustomer, user } = useApp();
+  const { config, isAuthenticated, authReady, isCustomer, user, can } = useApp();
   const [active, setActive] = useState('overview');
   const [params, setParams] = useState({});
   const [navOpen, setNavOpen] = useState(false);
@@ -209,11 +217,12 @@ function Shell() {
     document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  // Redirect away from admin-only views if the user loses admin access.
+  // Redirect away from a gated view if the user does not (or no longer does)
+  // hold its permission.
   useEffect(() => {
-    if (ADMIN_ONLY.has(active) && !isAdmin) setActive('overview');
-    if (SUPPORT_TOOLS.has(active) && !isAdmin && !isSupport) setActive('overview');
-  }, [active, isAdmin, isSupport]);
+    const needed = VIEW_PERMISSIONS[active];
+    if (needed && !can(needed)) setActive('overview');
+  }, [active, can]);
 
   // Force the change-password screen if the server flagged the user.
   const mustChangePassword = !!user?.mustChangePassword;

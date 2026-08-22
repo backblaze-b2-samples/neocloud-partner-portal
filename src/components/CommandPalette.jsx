@@ -58,11 +58,13 @@ export function CommandPalette() {
     return () => { cancelled = true; };
   }, [open, loaded]);
 
+  // Same permission filter the sidebar uses — the palette must not surface a
+  // destination the nav deliberately omits.
   const navItems = useMemo(() => {
-    const role = user?.role;
+    const held = user?.permissions || [];
     return NAV.filter((n) => {
-      if (n.requireRole) return n.requireRole === role;
-      if (n.requireAnyRole) return n.requireAnyRole.includes(role);
+      if (n.requirePermission && !held.includes(n.requirePermission)) return false;
+      if (n.id === 'settings' && user?.role === 'support') return false;
       return true;
     });
   }, [user]);

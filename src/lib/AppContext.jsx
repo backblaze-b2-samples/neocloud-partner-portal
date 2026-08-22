@@ -105,6 +105,26 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  // Complete an SSO sign-in: swap the one-time code from the callback redirect
+  // for a real session, then load the profile. The code is single-use and
+  // expires in 60 seconds.
+  const ssoExchange = useCallback(async (code) => {
+    try {
+      await api.post('/api/auth/sso/exchange', { code });
+      const me = await api.get('/api/auth/me');
+      setUser(me.user);
+      setImpersonator(me.impersonator || null);
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof ApiError && err.status === 429
+          ? 'Too many attempts. Wait a few minutes and try again.'
+          : 'Your sign-in link has expired. Please try again.',
+      };
+    }
+  }, []);
+
   const logout = useCallback(async () => {
     try { await api.post('/api/auth/logout'); } catch { /* ignore */ }
     setUser(null);
@@ -139,7 +159,19 @@ export function AppProvider({ children }) {
   const isCustomerAdmin = user?.role === 'customer_admin';
   const isCustomerReadonly = user?.role === 'customer_readonly';
   const isCustomer = isCustomerAdmin || isCustomerReadonly;
-  const canSeeRevenue = ['admin', 'manager', 'user'].includes(user?.role);
+
+  // Permission check. The server is always the real gate — this only decides
+  // what to render, so a stale client can never grant access it doesn't have.
+  const permissions = user?.permissions || [];
+  const can = useCallback(
+    (permission) => permissions.includes(permission),
+    [permissions],
+  );
+
+  // Customer roles hold billing:read so they can see their OWN spend in the
+  // customer shell; canSeeRevenue means partner-side revenue and margin, which
+  // is a different thing. Keep the tenancy half of the condition.
+  const canSeeRevenue = can('billing:read') && !isCustomer;
   const customerAccountId = isCustomer ? (user?.accountId || null) : null;
 
   const value = {
@@ -154,6 +186,8 @@ export function AppProvider({ children }) {
     reset,
     user,
     isAuthenticated: !!user,
+    permissions,
+    can,
     isAdmin: user?.role === 'admin',
     isManagerOrAdmin: user?.role === 'admin' || user?.role === 'manager',
     isSupport,
@@ -165,6 +199,7 @@ export function AppProvider({ children }) {
     authReady,
     login,
     logout,
+    ssoExchange,
     refreshUser,
     impersonator,
     isImpersonating: !!impersonator,

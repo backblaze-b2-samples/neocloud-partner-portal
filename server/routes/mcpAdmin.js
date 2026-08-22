@@ -5,7 +5,8 @@
 // =============================================================================
 
 import express from 'express';
-import { requireAuth, requireRole, requireCsrf, requireNotDemo } from '../middleware/requireAuth.js';
+import { requireAuth, requirePermission, requirePartnerScope, requireCsrf, requireNotDemo } from '../middleware/requireAuth.js';
+import { MCP_ADMIN } from '../rbac.js';
 import {
   getConfigPublic, setConfig, getDecryptedConfigToken,
   listAccountTokens, upsertAccountToken, deleteAccountToken,
@@ -14,7 +15,7 @@ import { testConnection, McpError } from '../mcp/client.js';
 import { audit } from '../audit.js';
 
 const router = express.Router();
-router.use(requireAuth, requireRole('admin'), requireNotDemo, requireCsrf);
+router.use(requireAuth, requirePartnerScope, requirePermission(MCP_ADMIN), requireNotDemo, requireCsrf);
 
 // --- connection config -------------------------------------------------------
 

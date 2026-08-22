@@ -11,7 +11,8 @@
 // =============================================================================
 
 import express from 'express';
-import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
+import { requireAuth, requirePermission, requirePartnerScope, requireCsrf } from '../middleware/requireAuth.js';
+import { PLANS_WRITE } from '../rbac.js';
 import { db } from '../db.js';
 import { audit } from '../audit.js';
 
@@ -81,7 +82,7 @@ router.get('/', requireAuth, (_req, res) => {
 });
 
 // PUT — admin-only, CSRF required.
-router.put('/:id', requireAuth, requireRole('admin'), requireCsrf, (req, res) => {
+router.put('/:id', requireAuth, requirePartnerScope, requirePermission(PLANS_WRITE), requireCsrf, (req, res) => {
   const { id } = req.params;
   const b = req.body || {};
 

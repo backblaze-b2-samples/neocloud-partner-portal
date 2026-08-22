@@ -10,6 +10,7 @@
 import crypto from 'node:crypto';
 import argon2 from 'argon2';
 import { db } from './db.js';
+import { permissionsFor } from './roles.js';
 
 export const SESSION_COOKIE = 'sid';
 export const CSRF_COOKIE = 'csrf';
@@ -86,6 +87,10 @@ export function getSession(sid) {
         id: row.tid,
         email: row.t_email,
         role: row.t_role,
+        // Effective permissions are the TARGET's, not the staff actor's — the
+        // point of impersonation is to see what the customer sees. Writes stay
+        // blocked at the requireCsrf chokepoint regardless of what these allow.
+        permissions: [...permissionsFor(row.t_role)],
         accountId: row.t_account_id || null,
         active: !!row.t_active,
         mustChangePassword: !!row.t_must_change_password,
@@ -105,6 +110,7 @@ export function getSession(sid) {
       id: row.uid,
       email: row.email,
       role: row.role,
+      permissions: [...permissionsFor(row.role)],
       accountId: row.account_id || null,
       active: !!row.active,
       mustChangePassword: !!row.must_change_password,

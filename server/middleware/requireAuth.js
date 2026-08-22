@@ -1,7 +1,8 @@
 // Auth + CSRF middleware.
 // - attachSession: best-effort lookup; never errors. Used for /me.
 // - requireAuth: 401 if no valid session.
-// - requireRole(...roles): 403 if role not allowed.
+// - requireRole(...roles): 403 if role not allowed. DEPRECATED — use requirePermission.
+// - requirePermission(...perms): 403 unless the session's role grants them all.
 // - requireCsrf: enforce double-submit token on state-changing requests.
 //   Cookie value must match X-CSRF-Token header.
 
@@ -30,11 +31,31 @@ export function requireAuth(req, res, next) {
   next();
 }
 
+// Deprecated in favour of requirePermission. Kept only so any route not yet
+// converted keeps working; do not add new callers.
 export function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.session) return res.status(401).json({ error: 'Unauthorized' });
     if (!roles.includes(req.session.user.role)) {
       return res.status(403).json({ error: 'Forbidden' });
+    }
+    next();
+  };
+}
+
+// Authorization gate. Every listed permission must be held (AND, not OR) —
+// routes that need "either of" should be split rather than loosened.
+//
+// This answers "what may you do". It deliberately says nothing about "whose
+// data is it" — that stays with canAccessAccount() and account_id, so widening
+// a permission can never widen tenancy.
+export function requirePermission(...permissions) {
+  return (req, res, next) => {
+    if (!req.session) return res.status(401).json({ error: 'Unauthorized' });
+    const held = req.session.user.permissions || [];
+    const missing = permissions.filter((p) => !held.includes(p));
+    if (missing.length > 0) {
+      return res.status(403).json({ error: 'Forbidden', missingPermission: missing[0] });
     }
     next();
   };
@@ -86,6 +107,20 @@ export function requireCsrf(req, res, next) {
       });
     }
   }
+  next();
+}
+
+// Tenancy gate for partner-wide admin surfaces.
+//
+// Permissions answer "what may you do"; they must never be able to answer
+// "whose data is it". A customer_admin legitimately holds users:write so they
+// can manage their own team via /api/customer-admin — that must not become a
+// key to /api/admin/users, which lists every user in the portal. Routers that
+// span all tenants therefore require partner scope (account_id null) in
+// addition to a permission.
+export function requirePartnerScope(req, res, next) {
+  if (!req.session) return res.status(401).json({ error: 'Unauthorized' });
+  if (req.session.user.accountId) return res.status(403).json({ error: 'Forbidden' });
   next();
 }
 
