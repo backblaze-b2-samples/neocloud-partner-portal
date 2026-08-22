@@ -15,6 +15,7 @@ import { attachSession } from '../../server/middleware/requireAuth.js';
 import adminRouter from '../../server/routes/admin.js';
 import rolesRouter from '../../server/routes/roles.js';
 import metadataRouter from '../../server/routes/customerMetadata.js';
+import resellerPlansRouter from '../../server/routes/resellerPlans.js';
 import {
   listRoles, findRole, permissionsFor, roleHasPermission,
   sanitizePermissions, isValidRoleId, createRole,
@@ -256,6 +257,45 @@ describe('/api/admin/roles', () => {
       .set('Cookie', `sid=${sid}; csrf=${csrf}`)
       .send({ id: 'nocsrf', name: 'N', scope: 'partner' })
       .expect(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reseller plans — scope asserted locally, not inherited from mount order
+// ---------------------------------------------------------------------------
+// This router sits under /api/admin, where another router's middleware happens
+// to run first. It must refuse tenant users on its own, so that reordering the
+// mounts in server/index.js can never expose partner plan pricing.
+
+describe('reseller plans scope', () => {
+  const plansApp = (() => {
+    const a = express();
+    a.use(express.json());
+    a.use(cookieParser());
+    a.use(attachSession);
+    a.use('/api/admin/reseller-plans', resellerPlansRouter);   // mounted ALONE
+    return a;
+  })();
+
+  it('lets partner staff read the plan tiers', async () => {
+    for (const who of ['admin', 'manager', 'support']) {
+      const { sid, csrf } = actors[who];
+      await request(plansApp).get('/api/admin/reseller-plans')
+        .set('Cookie', `sid=${sid}; csrf=${csrf}`).expect(200);
+    }
+  });
+
+  it('refuses a tenant user even with no other router in front of it', async () => {
+    const { sid, csrf } = actors.customer_admin;
+    await request(plansApp).get('/api/admin/reseller-plans')
+      .set('Cookie', `sid=${sid}; csrf=${csrf}`).expect(403);
+  });
+
+  it('still requires plans:write to edit', async () => {
+    const { sid, csrf } = actors.manager;
+    await request(plansApp).put('/api/admin/reseller-plans/standard')
+      .set('Cookie', `sid=${sid}; csrf=${csrf}`).set('X-CSRF-Token', csrf)
+      .send({ name: 'x' }).expect(403);
   });
 });
 

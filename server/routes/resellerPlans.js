@@ -75,14 +75,22 @@ function rowToJson(r) {
   };
 }
 
-// GET — list — readable by any authenticated user (used to compute customer billing).
-router.get('/', requireAuth, (_req, res) => {
+// Partner scope is asserted here rather than inherited from the /api/admin
+// router that happens to be mounted ahead of this one. Relying on mount order
+// meant a reordering could quietly expose the partner's own plan pricing to
+// tenant users.
+router.use(requireAuth, requirePartnerScope);
+
+// GET — list — readable by any partner staff member; the plan tiers are what
+// customer billing is computed from, and the sidebar offers this page to all of
+// them. Editing still requires plans:write.
+router.get('/', (_req, res) => {
   const rows = db.prepare('SELECT * FROM reseller_plans ORDER BY position, id').all();
   res.json({ plans: rows.map(rowToJson) });
 });
 
 // PUT — admin-only, CSRF required.
-router.put('/:id', requireAuth, requirePartnerScope, requirePermission(PLANS_WRITE), requireCsrf, (req, res) => {
+router.put('/:id', requirePermission(PLANS_WRITE), requireCsrf, (req, res) => {
   const { id } = req.params;
   const b = req.body || {};
 
