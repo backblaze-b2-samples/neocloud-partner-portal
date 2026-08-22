@@ -13,10 +13,13 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { V1, V2, DEPENDENTS } from '../fixtures/legacySchemas.mjs';
 
-const ROOT = path.resolve(import.meta.dirname, '../..');
+// fileURLToPath rather than import.meta.dirname: package.json declares node
+// >=20, and import.meta.dirname only landed in 20.11.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 let tmpDir;
 
 beforeAll(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'portal-migration-')); });
