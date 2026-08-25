@@ -333,6 +333,59 @@ Password sign-in always remains available alongside it.
 
 ---
 
+## Importing from the older b2-partner-portal
+
+`import-legacy-portal.mjs` moves portal users, roles, permissions, the audit
+trail, and OIDC group mappings across from
+[b2-partner-portal](https://github.com/backblaze-b2-samples/b2-partner-portal).
+
+```bash
+# dry run first — prints the plan, writes nothing
+node import-legacy-portal.mjs --from /path/to/old-portal.db
+
+# then apply
+node import-legacy-portal.mjs --from /path/to/old-portal.db --execute
+```
+
+Back up first, and include the WAL file — copying `app.db` on its own loses
+anything still in `app.db-wal`:
+
+```bash
+sqlite3 server/data/app.db ".backup backup.db"
+```
+
+**What it does**
+
+- Roles become operator-defined roles here, keeping their **exact** permission
+  set. Their ids are UUIDs and ours are slugs, so `Administrator` becomes
+  `administrator` and the original id is kept in `roles.legacy_id`.
+- A role whose name matches a built-in is **not** merged into it by default.
+  Our built-ins are broader than theirs, so merging would quietly widen access;
+  pass `--merge-builtins` if that is what you want.
+- Users import as partner staff (`account_id` is NULL — that portal has no
+  tenant concept), keeping their original `created_at`, active flag, and last
+  login. An account that already exists here is reported and left untouched.
+- Group mappings carry over, so SSO works against the same groups.
+- Audit entries keep their original actor where the user came across; targets
+  that are not portal users are preserved inside the details.
+
+**Passwords are not migrated.** That portal uses bcrypt and this one uses
+argon2id; a hash cannot be converted. Users import as SSO accounts by default
+(`--auth-source sso`) and sign in through your identity provider. With
+`--auth-source local` they are flagged for a password reset instead.
+
+**Not imported:** the credential vault (Fernet-encrypted with that portal's own
+key — re-provision through the Partner API, or decrypt and re-encrypt
+separately), the OIDC client secret, per-group pricing (that portal prices per
+partner group in $/TB; this one uses plan tiers with per-account overrides), and
+anything ephemeral such as sessions and cached reports.
+
+The script refuses to run if it would leave no active admin able to sign in
+without the identity provider. It is safe to re-run: already-imported rows are
+matched on `legacy_id` and skipped.
+
+---
+
 ## Security notes
 
 Worth understanding before you deploy this anywhere real:
