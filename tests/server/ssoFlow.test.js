@@ -12,10 +12,12 @@ import request from 'supertest';
 import { createMockIdp, installFetch, CLIENT_ID, CLIENT_SECRET } from '../fixtures/mockIdp.mjs';
 import { attachSession } from '../../server/middleware/requireAuth.js';
 import ssoRouter from '../../server/routes/sso.js';
+import ssoAdminRouter from '../../server/routes/ssoAdmin.js';
 import authRouter from '../../server/routes/auth.js';
 import { setConfig, createMapping } from '../../server/ssoStore.js';
 import { createRole } from '../../server/roles.js';
 import { createUser, findByEmail, setAuthSource } from '../../server/users.js';
+import { createSession } from '../../server/auth.js';
 import { clearDiscoveryCache, getDiscovery, exchangeCode, verifyIdToken } from '../../server/sso/oidcClient.js';
 import { resetRateLimits } from '../../server/rateLimit.js';
 import { db } from '../../server/db.js';
@@ -26,6 +28,7 @@ const app = (() => {
   a.use(cookieParser());
   a.use(attachSession);
   a.use('/api/auth/sso', ssoRouter);
+  a.use('/api/admin/sso', ssoAdminRouter);
   a.use('/api/auth', authRouter);
   return a;
 })();
@@ -421,5 +424,84 @@ describe('oidcClient units', () => {
     const forged = `${h}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${sig}`;
     await expect(verifyIdToken({ idToken: forged, issuerUrl: idp.issuer, clientId: CLIENT_ID }))
       .rejects.toThrow(/validation failed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Switching identity provider at runtime
+// ---------------------------------------------------------------------------
+// A second deployment, or a move to a different Entra tenant, should be a
+// configuration change and nothing more. This proves it: point the portal at a
+// different provider through the admin endpoint, with a different issuer,
+// client id and secret, and confirm sign in follows it over without a restart.
+
+describe('pointing the portal at a different identity provider', () => {
+  it('follows the new provider, and stops trusting the old one', async () => {
+    const A = await createMockIdp({ issuer: 'https://idp-a.test.example' });
+    const B = await createMockIdp({ issuer: 'https://idp-b.test.example' });
+    A.state.claims = { email: 'from-a@corp.example', groups: ['grp-ops'] };
+    B.state.claims = { email: 'from-b@corp.example', groups: ['grp-ops'] };
+
+    // One fetch that answers for whichever provider the URL belongs to, the way
+    // the internet would.
+    const route = (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      return url.includes('idp-b.test.example') ? B.handler(input, init) : A.handler(input, init);
+    };
+    const restore = installFetch(route);
+
+    // An admin, to drive the config endpoint like an operator would.
+    const admin = createUser({ email: 'switch-admin@test.com', passwordHash: 'h', role: 'admin' });
+    const s = createSession({ userId: admin.id, ip: '127.0.0.1', userAgent: 'test' });
+    const putConfig = (body) => request(app).put('/api/admin/sso/config')
+      .set('Cookie', `sid=${s.sid}; csrf=${s.csrf}`).set('X-CSRF-Token', s.csrf).send(body);
+
+    try {
+      await putConfig({
+        enabled: true, issuerUrl: A.issuer, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET,
+        groupsClaim: 'groups',
+      }).expect(200);
+      const cookiesA = await signIn();
+      const meA = await request(app).get('/api/auth/me').set('Cookie', cookiesA).expect(200);
+      expect(meA.body.user.email).toBe('from-a@corp.example');
+
+      // Now the "different Entra" case: new issuer, new client, new secret.
+      await putConfig({
+        enabled: true, issuerUrl: B.issuer, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET,
+        groupsClaim: 'groups',
+      }).expect(200);
+
+      const cookiesB = await signIn();
+      const meB = await request(app).get('/api/auth/me').set('Cookie', cookiesB).expect(200);
+      expect(meB.body.user.email).toBe('from-b@corp.example');
+
+      // The previous provider's signing key must no longer be accepted: the
+      // discovery and JWKS caches have to have been dropped on the config write.
+      const staleToken = await A.issueIdToken();
+      await expect(
+        verifyIdToken({ idToken: staleToken, issuerUrl: B.issuer, clientId: CLIENT_ID })
+      ).rejects.toThrow();
+    } finally {
+      restore();
+      clearDiscoveryCache();
+    }
+  });
+
+  it('sends users to the new provider authorize endpoint', async () => {
+    const B = await createMockIdp({ issuer: 'https://idp-b.test.example' });
+    const restore = installFetch(B.handler);
+    const admin = createUser({ email: 'switch-admin2@test.com', passwordHash: 'h', role: 'admin' });
+    const s = createSession({ userId: admin.id, ip: '127.0.0.1', userAgent: 'test' });
+    try {
+      await request(app).put('/api/admin/sso/config')
+        .set('Cookie', `sid=${s.sid}; csrf=${s.csrf}`).set('X-CSRF-Token', s.csrf)
+        .send({ enabled: true, issuerUrl: B.issuer, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET })
+        .expect(200);
+      const login = await request(app).get('/api/auth/sso/login').expect(302);
+      expect(new URL(login.headers.location).origin).toBe('https://idp-b.test.example');
+    } finally {
+      restore();
+      clearDiscoveryCache();
+    }
   });
 });
