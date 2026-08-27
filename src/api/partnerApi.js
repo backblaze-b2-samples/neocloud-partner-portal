@@ -182,6 +182,21 @@ function memberToCustomer(member, groupId) {
   };
 }
 
+/**
+ * Reseller plan tiers from the control plane (the runtime source of truth).
+ * Falls back to the static defaults when the endpoint is unreachable or has
+ * somehow been emptied — an empty plan list would silently bill every customer
+ * at B2 list price.
+ */
+export async function getResellerPlans() {
+  try {
+    const d = await api.get('/api/admin/reseller-plans');
+    return d?.plans?.length ? d.plans : RESELLER_PLANS;
+  } catch {
+    return RESELLER_PLANS;
+  }
+}
+
 // All customers across all groups (used by views that want a flat list).
 export async function getCustomers({ groupId } = {}) {
   if (useMocks()) {
@@ -270,10 +285,14 @@ export async function getCustomers({ groupId } = {}) {
   const customers = perGroup.flat().map((c) => {
     liveAccountIds.add(c.accountId);
     const stored = storedCreds.get(c.accountId);
-    if (stored?.region) {
-      return { ...c, region: normalizeRegion(stored.region) };
-    }
-    return c;
+    const withRegion = stored?.region ? { ...c, region: normalizeRegion(stored.region) } : c;
+    // Apply saved local metadata — plan, pricing overrides, display name,
+    // industry. Without this an active customer reaches computeBilling with
+    // plan === null and bills at DEFAULT_PLAN_NAME no matter what an admin
+    // assigned: the detail view (getCustomer) merged metadata, the list that
+    // feeds Cockpit and Billing did not.
+    const meta = metadata.get(c.accountId);
+    return meta ? mergeMetadata(withRegion, meta) : withRegion;
   });
 
   // Append stub rows for ejected sub-accounts (active=false). These are no
@@ -317,7 +336,7 @@ export async function getCustomers({ groupId } = {}) {
   const [csvUsage, objectCounts, plans] = await Promise.all([
     getCustomerUsageFromCsv(),
     (await import('./b2Adapter.js')).getObjectCounts().catch(() => new Map()),
-    api.get('/api/admin/reseller-plans').then((d) => d.plans).catch(() => RESELLER_PLANS),
+    getResellerPlans(),
   ]);
 
   // Sum object_counts per accountId so we can use it as a per-customer storage

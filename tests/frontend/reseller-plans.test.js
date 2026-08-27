@@ -159,3 +159,38 @@ describe('per-class override precedence', () => {
     expect(revenue).toBeCloseTo(50 + 0.03, 5);
   });
 });
+
+describe('storage override units', () => {
+  it('per-GB override (the column the UI actually writes) beats the plan rate', () => {
+    const { revenue } = computeBilling({
+      plan: 'Reseller — Tier 2',       // plan storage = $15/TB
+      price_per_gb_storage: 0.02,      // $0.02/GB = $20/TB
+      storageBytes: 1e12,
+    });
+    expect(revenue).toBeCloseTo(20, 5);
+  });
+
+  it('per-TB override wins when both forms are present', () => {
+    const { revenue } = computeBilling({
+      plan: 'Reseller — Tier 2',
+      price_per_tb_storage: 7,
+      price_per_gb_storage: 0.02,
+      storageBytes: 1e12,
+    });
+    expect(revenue).toBeCloseTo(7, 5);
+  });
+
+  it('a zero per-GB override means free, not "unset"', () => {
+    const { revenue } = computeBilling({
+      plan: 'Reseller — Tier 1',
+      price_per_gb_storage: 0,
+      storageBytes: 1e12,
+    });
+    expect(revenue).toBeCloseTo(0, 5);
+  });
+
+  it('no override → plan rate, unaffected by the per-GB path', () => {
+    const { revenue } = computeBilling({ plan: 'Reseller — Tier 1', storageBytes: 1e12 });
+    expect(revenue).toBeCloseTo(25, 5);
+  });
+});

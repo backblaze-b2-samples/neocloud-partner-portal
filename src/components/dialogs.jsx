@@ -10,18 +10,39 @@ import { GROUPS } from '../data/groups.js';
 import * as partner from '../api/partnerApi.js';
 import * as b2 from '../api/b2Adapter.js';
 import { useApp } from '../lib/AppContext.jsx';
+import { RESELLER_PLANS } from '../data/resellerPlans.js';
 import { CheckCircle2, AlertTriangle, DollarSign } from 'lucide-react';
 
 // Standard Backblaze pricing (reference defaults when no override is set)
 const STD_STORAGE_PER_GB  = 0.006;  // $/GB/month
 const STD_DOWNLOAD_PER_GB = 0.01;   // $/GB egress
 
-const PLAN_OPTIONS = [
-  'Reseller — Tier 1',
-  'Reseller — Tier 2',
-  'Reseller — Tier 3',
-  'Partner — Custom',
-];
+// A plan name that deliberately carries no rate card: "priced per account".
+// computeBilling finds no tier for it and falls back to B2 list, so the
+// per-customer overrides are what actually set the price — the Edit dialog
+// warns when neither is set.
+const CUSTOM_PLAN = 'Partner — Custom';
+
+// Default plan for a newly created sub-account.
+const CREATE_DEFAULT_PLAN = 'Reseller — Tier 3';
+
+/**
+ * Plan names for the dropdowns. Read from the control plane so a tier added or
+ * renamed in reseller_plans is assignable here, rather than from a hardcoded
+ * list that drifts from the table billing actually reads.
+ */
+function usePlanOptions(open) {
+  const [plans, setPlans] = useState(RESELLER_PLANS);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    partner.getResellerPlans()
+      .then((p) => { if (live && p?.length) setPlans(p); })
+      .catch(() => { /* keep the static defaults */ });
+    return () => { live = false; };
+  }, [open]);
+  return { plans, names: [...plans.map((p) => p.name), CUSTOM_PLAN] };
+}
 
 // =============================================================================
 // Create Customer (sub-account)
@@ -33,9 +54,10 @@ export function CreateCustomerDialog({ open, onClose, onCreated, defaultGroupId 
     contactEmail: '',
     industry: '',
     region: REGIONS[0].id,
-    plan: 'Reseller — Tier 3',
+    plan: CREATE_DEFAULT_PLAN,
     groupId: defaultGroupId || GROUPS[0].groupId,
   });
+  const { names: planNames } = usePlanOptions(open);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [created, setCreated] = useState(null);
@@ -81,7 +103,7 @@ export function CreateCustomerDialog({ open, onClose, onCreated, defaultGroupId 
   }
 
   function reset() {
-    setForm({ name: '', contactEmail: '', industry: '', region: REGIONS[0].id, plan: 'Reseller — Tier 3', groupId: defaultGroupId || GROUPS[0].groupId });
+    setForm({ name: '', contactEmail: '', industry: '', region: REGIONS[0].id, plan: CREATE_DEFAULT_PLAN, groupId: defaultGroupId || GROUPS[0].groupId });
     setCreated(null);
     setError(null);
     setLiveGroups(null);
@@ -123,7 +145,10 @@ export function CreateCustomerDialog({ open, onClose, onCreated, defaultGroupId 
             label="Plan"
             value={form.plan}
             onChange={(v) => setForm({ ...form, plan: v })}
-            options={PLAN_OPTIONS.map((v) => ({ value: v, label: v }))}
+            options={planNames.map((v) => ({ value: v, label: v }))}
+            help={form.plan === CUSTOM_PLAN
+              ? 'No rate card — set per-customer rates in Edit customer, or this account bills at Backblaze list price with no margin.'
+              : undefined}
           />
 
           {error && <ErrorBanner message={error} />}
@@ -180,6 +205,7 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
+  const { plans, names: planNames } = usePlanOptions(open);
 
   // Load current metadata whenever the dialog opens
   useEffect(() => {
@@ -193,7 +219,7 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
           newEmail: '',
           display_name: meta?.display_name || customer.name || '',
           industry:     meta?.industry     || customer.industry || '',
-          plan:         meta?.plan         || customer.plan     || PLAN_OPTIONS[2],
+          plan:         meta?.plan         || customer.plan     || CREATE_DEFAULT_PLAN,
           groupId:      customer.groupId   || '',
           price_per_gb_storage:  meta?.price_per_gb_storage  != null ? String(meta.price_per_gb_storage)  : '',
           price_per_gb_download: meta?.price_per_gb_download != null ? String(meta.price_per_gb_download) : '',
@@ -206,7 +232,7 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
           newEmail: '',
           display_name: customer.name     || '',
           industry:     customer.industry || '',
-          plan:         customer.plan     || PLAN_OPTIONS[2],
+          plan:         customer.plan     || CREATE_DEFAULT_PLAN,
           groupId:      customer.groupId  || '',
           price_per_gb_storage: '',
           price_per_gb_download: '',
@@ -252,6 +278,12 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
 
   const storagePrice  = form.price_per_gb_storage  ? Number(form.price_per_gb_storage)  : STD_STORAGE_PER_GB;
   const downloadPrice = form.price_per_gb_download ? Number(form.price_per_gb_download) : STD_DOWNLOAD_PER_GB;
+
+  // "Partner — Custom" (or any plan name with no row in reseller_plans) has no
+  // rate card: computeBilling falls through to B2 list and the customer bills
+  // at cost. Only the per-customer overrides can rescue that, so say so.
+  const planHasNoRates = !!form.plan && !plans.some((p) => p.name === form.plan);
+  const hasOverride    = !!(form.price_per_gb_storage || form.price_per_gb_download);
 
   return (
     <Modal open={open} onClose={handleClose} title={`Edit: ${customer?.name || 'customer'}`} subtitle="Local metadata is saved to the control plane. Email changes call the B2 Partner API." size="lg">
@@ -302,9 +334,9 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
               />
               <Select
                 label="Plan"
-                value={form.plan || PLAN_OPTIONS[2]}
+                value={form.plan || CREATE_DEFAULT_PLAN}
                 onChange={(v) => setForm({ ...form, plan: v })}
-                options={PLAN_OPTIONS.map((v) => ({ value: v, label: v }))}
+                options={planNames.map((v) => ({ value: v, label: v }))}
               />
               {/* Group is read-only — B2 Partner API does not support moving
                   members between groups. Re-assignment requires the web UI. */}
@@ -344,6 +376,15 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
                 mono
               />
             </div>
+            {planHasNoRates && !hasOverride && (
+              <div className="flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                <span>
+                  <span className="font-mono">{form.plan}</span> has no rate card, so this customer bills at
+                  Backblaze list price — zero margin. Set a storage or download rate below.
+                </span>
+              </div>
+            )}
             <div className="rounded-md bg-ink-900/60 px-3 py-2 text-[11px] text-ink-300 space-y-0.5">
               <p>
                 Your rates → Storage: <span className="font-mono text-accent-teal">${storagePrice}/GB/mo</span>

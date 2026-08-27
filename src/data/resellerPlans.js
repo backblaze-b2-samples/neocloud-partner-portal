@@ -74,7 +74,8 @@ export function planByName(name, plans = RESELLER_PLANS) {
  * { revenue, cogs, margin } in dollars (number, not currency-formatted).
  *
  * Pricing precedence:
- *   1. Per-customer override (customer.price_per_tb_storage, etc.) — if set, win
+ *   1. Per-customer override (customer.price_per_gb_storage / price_per_gb_download,
+ *      etc.) — if set, wins
  *   2. Plan default from RESELLER_PLANS — if customer.plan matches a tier
  *   3. B2 list price — if neither is set, customer is at-cost (no margin)
  *
@@ -86,7 +87,14 @@ export function planByName(name, plans = RESELLER_PLANS) {
 export function computeBilling(customer, plans = RESELLER_PLANS) {
   const plan = planByName(customer.plan, plans);
 
-  const storagePerTb = customer.price_per_tb_storage  ?? plan?.storagePerTb ?? B2_LIST_PRICE.storagePerTb;
+  // The stored storage override is $/GB — customer_metadata.price_per_gb_storage
+  // is what the Edit Customer dialog collects — while plans quote $/TB. Accept
+  // either form and convert, so a saved override actually reaches the math
+  // instead of silently falling through to the plan rate.
+  const storageOverridePerTb = customer.price_per_tb_storage
+    ?? (customer.price_per_gb_storage != null ? customer.price_per_gb_storage * 1000 : null);
+
+  const storagePerTb = storageOverridePerTb ?? plan?.storagePerTb ?? B2_LIST_PRICE.storagePerTb;
   const egressPerGb  = customer.price_per_gb_download ?? plan?.egressPerGb  ?? B2_LIST_PRICE.egressPerGb;
   const classAPer10k = customer.price_per_10k_class_a ?? plan?.classAPer10k ?? B2_LIST_PRICE.classAPer10k;
   const classBPer10k = customer.price_per_10k_class_b ?? plan?.classBPer10k ?? B2_LIST_PRICE.classBPer10k;
