@@ -384,10 +384,15 @@ db.exec(`
   );
 `);
 
-// Migration: negotiated transaction costs per group. Class A/B/C are free at B2
-// list, so these are null on a standard contract and only carry a value where
-// the partner has negotiated one. Null means "use list", not "free" — the two
-// happen to coincide at list today, and would stop coinciding if list changed.
+// Migration: negotiated egress and transaction costs per group. Null on any of
+// these means "use B2 list for that component", not "free" — for Class A/B/C
+// the two happen to coincide at list today, and would stop coinciding if list
+// pricing changed.
+//
+// The negotiated egress rate replaces the per-GB price only. B2's free
+// allowance of 3x stored bytes per month still applies on top; a contract that
+// removes the free tier instead of repricing it is not expressible here.
+addColumnIfMissing('group_costs', 'cost_per_gb_egress',  'REAL');
 addColumnIfMissing('group_costs', 'cost_per_10k_class_a', 'REAL');
 addColumnIfMissing('group_costs', 'cost_per_10k_class_b', 'REAL');
 addColumnIfMissing('group_costs', 'cost_per_10k_class_c', 'REAL');

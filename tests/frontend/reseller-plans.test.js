@@ -405,3 +405,42 @@ describe('group-negotiated transaction costs', () => {
     expect(cogs).toBeCloseTo(B2_LIST_PRICE.classDPer10k, 10);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Negotiated egress. The rate is repriced; B2's free allowance of 3x stored
+// bytes per month still applies on top.
+// ---------------------------------------------------------------------------
+describe('group-negotiated egress cost', () => {
+  // 1 TB stored gives 3 TB free egress, so 4 TB egress leaves 1 TB (1000 GB) billable.
+  const usage = { storageBytes: 1e12, egressBytes30d: 4e12, costPerTbStorage: 0 };
+
+  it('costs billable egress at B2 list when not negotiated', () => {
+    const { cogs } = computeBilling(usage);
+    expect(cogs).toBeCloseTo(1000 * B2_LIST_PRICE.egressPerGb, 6);
+  });
+
+  it('uses the negotiated rate when set', () => {
+    const { cogs } = computeBilling({ ...usage, costPerGbEgress: 0.005 });
+    expect(cogs).toBeCloseTo(1000 * 0.005, 6);
+  });
+
+  it('honours a zero rate rather than treating it as unset', () => {
+    const { cogs } = computeBilling({ ...usage, costPerGbEgress: 0 });
+    expect(cogs).toBe(0);
+  });
+
+  it('still applies the 3x free allowance before the negotiated rate', () => {
+    // All 3 TB of egress is inside the free allowance, so nothing is billable.
+    const { cogs } = computeBilling({
+      storageBytes: 1e12, egressBytes30d: 3e12, costPerTbStorage: 0, costPerGbEgress: 0.005,
+    });
+    expect(cogs).toBe(0);
+  });
+
+  it('is independent of the other negotiated components', () => {
+    const { cogs } = computeBilling({
+      ...usage, costPerGbEgress: 0.005, costPer10kClassA: 0.002, txnA30d: 10_000,
+    });
+    expect(cogs).toBeCloseTo(1000 * 0.005 + 0.002, 6);
+  });
+});

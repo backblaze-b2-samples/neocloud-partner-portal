@@ -44,6 +44,36 @@ const ap  = (p, body) => request(app).put(p)
 const adel = (p) => request(app).delete(p)
   .set('Cookie', `sid=${adminSid}; csrf=${adminCsrf}`).set('X-CSRF-Token', adminCsrf);
 
+describe('PUT /:groupId — egress cost', () => {
+  it('stores a negotiated egress rate', async () => {
+    const r = await ap('/api/admin/group-costs/166701', { costPerTb: 3.42, costPerGbEgress: 0.005 });
+    expect(r.status).toBe(200);
+    expect(r.body.cost.costPerGbEgress).toBe(0.005);
+  });
+
+  it('leaves it null when not negotiated — meaning list, not free', async () => {
+    const r = await ap('/api/admin/group-costs/166701', { costPerTb: 3.42 });
+    expect(r.body.cost.costPerGbEgress).toBeNull();
+  });
+
+  it('stores zero distinctly from unset', async () => {
+    const r = await ap('/api/admin/group-costs/166701', { costPerTb: 1, costPerGbEgress: 0 });
+    expect(r.body.cost.costPerGbEgress).toBe(0);
+  });
+
+  it('clears when sent empty', async () => {
+    await ap('/api/admin/group-costs/166701', { costPerTb: 1, costPerGbEgress: 0.005 });
+    const r = await ap('/api/admin/group-costs/166701', { costPerTb: 1, costPerGbEgress: '' });
+    expect(r.body.cost.costPerGbEgress).toBeNull();
+  });
+
+  it('rejects a negative or non-numeric rate, and stores nothing', async () => {
+    expect((await ap('/api/admin/group-costs/g8', { costPerTb: 1, costPerGbEgress: -1 })).status).toBe(400);
+    expect((await ap('/api/admin/group-costs/g8', { costPerTb: 1, costPerGbEgress: 'free' })).status).toBe(400);
+    expect((await ag('/api/admin/group-costs')).body.costs).toHaveLength(0);
+  });
+});
+
 describe('PUT /:groupId — transaction costs', () => {
   it('stores Class A/B/C alongside storage', async () => {
     const r = await ap('/api/admin/group-costs/166701', {

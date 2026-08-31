@@ -100,9 +100,12 @@ export function planByName(name, plans = RESELLER_PLANS) {
  *
  * Cost (what the partner PAYS Backblaze) is a separate axis, negotiated per B2
  * partner group and resolved from that group's row in group_costs onto the
- * customer as costPerTbStorage and costPer10kClassA/B/C. Each is independent:
- * null on any one of them means "B2 list for that component", not free.
- * Egress and Class D COGS stay at B2 list — not negotiated per group today.
+ * customer as costPerTbStorage, costPerGbEgress and costPer10kClassA/B/C. Each
+ * is independent: null on any one means "B2 list for that component", not free.
+ *
+ * A negotiated egress rate reprices the billable GB; B2's free allowance of 3x
+ * stored bytes per month still applies on top. Class D COGS stays at B2 list —
+ * not negotiated per group today.
  *
  * Usage:
  *   storageBytes        — current snapshot bytes (or 30-day average)
@@ -142,12 +145,12 @@ export function computeBilling(customer, plans = RESELLER_PLANS) {
                 + (classCCount / 10_000) * classCPer10k
                 + (classDCount / 10_000) * classDPer10k;
 
-  // COGS — what the partner pays Backblaze. Storage and Class A/B/C use the
-  // group's negotiated rates where set: a partner at 30 PB does not pay list,
-  // and costing them at list makes every margin figure wrong. Egress and Class
-  // D still mirror B2's published pricing (D has a daily free tier then a
-  // per-10k rate).
+  // COGS — what the partner pays Backblaze. Storage, egress and Class A/B/C use
+  // the group's negotiated rates where set: a partner at 30 PB does not pay
+  // list, and costing them at list makes every margin figure wrong. The free
+  // egress allowance (3x stored) and Class D still follow B2's published terms.
   const costPerTb    = customer.costPerTbStorage    ?? B2_LIST_PRICE.storagePerTb;
+  const costEgressGb = customer.costPerGbEgress     ?? B2_LIST_PRICE.egressPerGb;
   const costClassA   = customer.costPer10kClassA    ?? B2_LIST_PRICE.classAPer10k;
   const costClassB   = customer.costPer10kClassB    ?? B2_LIST_PRICE.classBPer10k;
   const costClassC   = customer.costPer10kClassC    ?? B2_LIST_PRICE.classCPer10k;
@@ -159,7 +162,7 @@ export function computeBilling(customer, plans = RESELLER_PLANS) {
   const billableClassD   = Math.max(0, classDCount - freeClassD);
 
   const cogs = storageTb * costPerTb
-             + billableEgressGb * B2_LIST_PRICE.egressPerGb
+             + billableEgressGb * costEgressGb
              + (classACount / 10_000) * costClassA
              + (classBCount / 10_000) * costClassB
              + (classCCount / 10_000) * costClassC

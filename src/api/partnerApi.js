@@ -239,9 +239,10 @@ export function aggregateObjectCounts(objectCounts) {
 /**
  * Negotiated costs per B2 partner group — what the partner PAYS Backblaze, as
  * opposed to the reseller plans, which say what they charge. Covers storage per
- * TB and Class A/B/C per 10k transactions.
+ * TB, egress per GB, and Class A/B/C per 10k transactions.
  *
- * Returns Map<groupId, { costPerTb, costPer10kClassA/B/C }>. An empty map means
+ * Returns Map<groupId, { costPerTb, costPerGbEgress, costPer10kClassA/B/C }>.
+ * An empty map means
  * nothing is negotiated and every group falls back to B2 list; a failed request
  * is treated the same way, since guessing a cost would silently misstate margin.
  */
@@ -250,6 +251,7 @@ export async function getGroupCosts() {
     const d = await api.get('/api/admin/group-costs');
     return new Map((d?.costs || []).map((c) => [String(c.groupId), {
       costPerTb:        c.costPerTb,
+      costPerGbEgress:  c.costPerGbEgress ?? null,
       costPer10kClassA: c.costPer10kClassA ?? null,
       costPer10kClassB: c.costPer10kClassB ?? null,
       costPer10kClassC: c.costPer10kClassC ?? null,
@@ -453,6 +455,7 @@ export async function getCustomers({ groupId } = {}) {
     const gc = groupCosts.get(String(c.groupId));
     const cost = {
       costPerTbStorage: gc?.costPerTb,
+      costPerGbEgress:  gc?.costPerGbEgress ?? undefined,
       costPer10kClassA: gc?.costPer10kClassA ?? undefined,
       costPer10kClassB: gc?.costPer10kClassB ?? undefined,
       costPer10kClassC: gc?.costPer10kClassC ?? undefined,

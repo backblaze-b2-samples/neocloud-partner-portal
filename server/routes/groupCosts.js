@@ -5,9 +5,9 @@
 // different axes:
 //
 //   cost  — negotiated with Backblaze per partner group, so it belongs to the
-//           group (this table): storage per TB and Class A/B/C per 10k. No row,
-//           or a null column, means not negotiated: billing falls back to B2
-//           list price for that component.
+//           group (this table): storage per TB, egress per GB, and Class A/B/C
+//           per 10k. No row, or a null column, means not negotiated: billing
+//           falls back to B2 list price for that component.
 //   price — what the partner charges, set per reseller plan tier, with
 //           per-account overrides (see resellerPlans.js / customerMetadata.js).
 //
@@ -38,6 +38,7 @@ function rowToJson(r) {
     costPerTb: r.cost_per_tb,
     // Null means "use B2 list", not "free". At list A/B/C happen to be free, so
     // the two coincide today — they would not if list pricing changed.
+    costPerGbEgress:  r.cost_per_gb_egress ?? null,
     costPer10kClassA: r.cost_per_10k_class_a ?? null,
     costPer10kClassB: r.cost_per_10k_class_b ?? null,
     costPer10kClassC: r.cost_per_10k_class_c ?? null,
@@ -46,14 +47,18 @@ function rowToJson(r) {
   };
 }
 
-// Optional per-class costs. Absent or empty clears back to list; anything
-// present must be a finite non-negative number, since a stored NaN would
-// poison every COGS figure computed from it.
-const CLASS_KEYS = ['costPer10kClassA', 'costPer10kClassB', 'costPer10kClassC'];
+// Optional components — egress and the three transaction classes. Absent or
+// empty clears back to B2 list; anything present must be a finite non-negative
+// number, since a stored NaN would poison every COGS figure computed from it.
+// Storage is handled separately because it is the one required field.
+const OPTIONAL_COST_KEYS = [
+  'costPerGbEgress',
+  'costPer10kClassA', 'costPer10kClassB', 'costPer10kClassC',
+];
 
-function readClassCosts(body) {
+function readOptionalCosts(body) {
   const out = {};
-  for (const k of CLASS_KEYS) {
+  for (const k of OPTIONAL_COST_KEYS) {
     const v = body?.[k];
     if (v === undefined || v === null || v === '') { out[k] = null; continue; }
     const n = Number(v);
@@ -87,33 +92,35 @@ router.put('/:groupId', requirePermission(PLANS_WRITE), requireCsrf, (req, res) 
     return res.status(400).json({ error: 'costPerTb must be a non-negative number' });
   }
 
-  const { values: classCosts, error: classErr } = readClassCosts(req.body);
-  if (classErr) return res.status(400).json({ error: classErr });
+  const { values: optional, error: optErr } = readOptionalCosts(req.body);
+  if (optErr) return res.status(400).json({ error: optErr });
 
   const notes = req.body?.notes !== undefined ? String(req.body.notes).slice(0, 200) : null;
   const now   = new Date().toISOString();
 
   db.prepare(`
     INSERT INTO group_costs
-      (group_id, cost_per_tb, cost_per_10k_class_a, cost_per_10k_class_b, cost_per_10k_class_c, notes, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (group_id, cost_per_tb, cost_per_gb_egress,
+       cost_per_10k_class_a, cost_per_10k_class_b, cost_per_10k_class_c, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(group_id) DO UPDATE SET
       cost_per_tb          = excluded.cost_per_tb,
+      cost_per_gb_egress   = excluded.cost_per_gb_egress,
       cost_per_10k_class_a = excluded.cost_per_10k_class_a,
       cost_per_10k_class_b = excluded.cost_per_10k_class_b,
       cost_per_10k_class_c = excluded.cost_per_10k_class_c,
       notes                = excluded.notes,
       updated_at           = excluded.updated_at
   `).run(
-    groupId, costPerTb,
-    classCosts.costPer10kClassA, classCosts.costPer10kClassB, classCosts.costPer10kClassC,
+    groupId, costPerTb, optional.costPerGbEgress,
+    optional.costPer10kClassA, optional.costPer10kClassB, optional.costPer10kClassC,
     notes, now,
   );
 
   audit({
     actorId: req.session.user.id,
     action: 'group_cost.set',
-    details: { groupId, costPerTb, ...classCosts },
+    details: { groupId, costPerTb, ...optional },
     ip: req.ip,
   });
 

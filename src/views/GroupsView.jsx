@@ -287,10 +287,13 @@ function GroupDetail({ groupId }) {
 // back to B2 list independently when it has not been negotiated, so a blank
 // Class A means "list", not "free" — those coincide at list today and would
 // stop coinciding if list pricing changed.
-const CLASS_FIELDS = [
-  ['costPer10kClassA', 'Class A', 'uploads',       'classAPer10k'],
-  ['costPer10kClassB', 'Class B', 'downloads',     'classBPer10k'],
-  ['costPer10kClassC', 'Class C', 'list/metadata', 'classCPer10k'],
+// Every optional component: key, label, hint, the B2_LIST_PRICE key it falls
+// back to, and the input step. Storage is separate — it is the one required field.
+const COST_FIELDS = [
+  { key: 'costPerGbEgress',  label: 'Egress / GB', hint: 'after 3x free', listKey: 'egressPerGb',  step: '0.001',  decimals: 3 },
+  { key: 'costPer10kClassA', label: 'Class A / 10k', hint: 'uploads',       listKey: 'classAPer10k', step: '0.0001', decimals: 4 },
+  { key: 'costPer10kClassB', label: 'Class B / 10k', hint: 'downloads',     listKey: 'classBPer10k', step: '0.0001', decimals: 4 },
+  { key: 'costPer10kClassC', label: 'Class C / 10k', hint: 'list/metadata', listKey: 'classCPer10k', step: '0.0001', decimals: 4 },
 ];
 
 function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
@@ -312,7 +315,7 @@ function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
     setError('');
     try {
       const payload = { costPerTb: n };
-      for (const [key] of CLASS_FIELDS) {
+      for (const { key } of COST_FIELDS) {
         payload[key] = form[key] === '' ? null : Number(form[key]);
       }
       await api.put(`/api/admin/group-costs/${encodeURIComponent(groupId)}`, payload);
@@ -373,20 +376,20 @@ function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
       </div>
 
       {!editing ? (
-        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Stat
             label="Storage / TB"
             value={currency(effectiveTb)}
             mono
             accent={cost ? 'text-ink-100' : 'text-ink-500'}
           />
-          {CLASS_FIELDS.map(([key, label, hint, listKey]) => (
+          {COST_FIELDS.map(({ key, label, listKey, decimals }) => (
             <Stat
               key={key}
-              label={`${label} / 10k`}
+              label={label}
               value={cost?.[key] != null
-                ? currency(cost[key], { decimals: 4 })
-                : (B2_LIST_PRICE[listKey] > 0 ? currency(B2_LIST_PRICE[listKey], { decimals: 4 }) : 'free')}
+                ? currency(cost[key], { decimals })
+                : (B2_LIST_PRICE[listKey] > 0 ? currency(B2_LIST_PRICE[listKey], { decimals }) : 'free')}
               mono
               accent={cost?.[key] != null ? 'text-ink-100' : 'text-ink-500'}
             />
@@ -399,12 +402,12 @@ function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
               <div className="mb-1 text-[10.5px] uppercase tracking-wider text-ink-400">Storage / TB</div>
               <CostInput field="costPerTb" step="0.01" />
             </label>
-            {CLASS_FIELDS.map(([key, label, hint]) => (
+            {COST_FIELDS.map(({ key, label, hint, step }) => (
               <label key={key} className="block">
                 <div className="mb-1 text-[10.5px] uppercase tracking-wider text-ink-400">
-                  {label} / 10k <span className="normal-case text-ink-500">{hint}</span>
+                  {label} <span className="normal-case text-ink-500">{hint}</span>
                 </div>
-                <CostInput field={key} step="0.0001" />
+                <CostInput field={key} step={step} />
               </label>
             ))}
           </div>
@@ -441,7 +444,7 @@ function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
         {cost
           ? `Storage ≈ ${currency(monthly, { compact: true })}/mo at current usage.`
           : 'No negotiated rates — this group is costed at B2 list price.'}
-        {' '}Egress and Class D always use B2 list.
+        {' '}The 3x free egress allowance and Class D always follow B2's published terms.
       </p>
       {error && <p className="mt-2 text-[11px] text-bb-red">{error}</p>}
     </Card>
@@ -450,7 +453,7 @@ function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
 
 function toForm(cost) {
   const f = { costPerTb: cost?.costPerTb != null ? String(cost.costPerTb) : '' };
-  for (const [key] of CLASS_FIELDS) {
+  for (const { key } of COST_FIELDS) {
     f[key] = cost?.[key] != null ? String(cost[key]) : '';
   }
   return f;
