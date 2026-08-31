@@ -349,6 +349,24 @@ addColumnIfMissing('customer_metadata', 'price_per_10k_class_d', 'REAL');
 //   'skipped_too_large' — over the ceiling; counts are 0 and must not be trusted
 addColumnIfMissing('object_counts', 'index_status', "TEXT NOT NULL DEFAULT 'indexed'");
 
+// Small key/value table for one-off control-plane state that doesn't warrant a
+// table of its own. First use: remembering that the reseller_plans defaults have
+// been seeded, so an operator who deletes them is not handed them back on the
+// next server start.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  );
+`);
+
+// Plan names are the join key — customer_metadata.plan stores the name, not the
+// id — so two plans sharing one would make planByName pick between them at
+// random. Enforced here rather than trusted to the callers.
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reseller_plans_name ON reseller_plans(name);
+`);
+
 // Migration: support read-only impersonation. When non-null, the session is
 // acting *as* the impersonating_user_id (effective identity); the original
 // sessions.user_id remains the staff actor for audit purposes.

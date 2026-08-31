@@ -184,14 +184,18 @@ function memberToCustomer(member, groupId) {
 
 /**
  * Reseller plan tiers from the control plane (the runtime source of truth).
- * Falls back to the static defaults when the endpoint is unreachable or has
- * somehow been emptied — an empty plan list would silently bill every customer
- * at B2 list price.
+ *
+ * Falls back to the static defaults only when the request FAILS. A successful
+ * empty response is taken at face value and returned as []: now that operators
+ * manage their own catalog, an empty one means "no tiers defined yet", and
+ * answering that with the sample tiers would invent prices nobody set. Every
+ * customer then bills at B2 list, which computeBilling already handles and the
+ * Reseller plans screen calls out.
  */
 export async function getResellerPlans() {
   try {
     const d = await api.get('/api/admin/reseller-plans');
-    return d?.plans?.length ? d.plans : RESELLER_PLANS;
+    return d?.plans ?? RESELLER_PLANS;
   } catch {
     return RESELLER_PLANS;
   }

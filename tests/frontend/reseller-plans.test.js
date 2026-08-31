@@ -1,6 +1,6 @@
 // Tests for src/data/resellerPlans.js — plan lookup, computeBilling math,
 // per-customer override precedence, and ejected-customer zeroing.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   RESELLER_PLANS,
   B2_LIST_PRICE,
@@ -263,5 +263,43 @@ describe('per-customer transaction overrides reach billing', () => {
       price_per_10k_class_d: 0,
     }, plans);
     expect(revenue).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getResellerPlans: a catalog the operator emptied on purpose is not the same
+// thing as an unreachable endpoint. Answering the first with the sample tiers
+// would invent prices nobody set.
+// ---------------------------------------------------------------------------
+describe('getResellerPlans empty vs failed', () => {
+  let getResellerPlans, api;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    api = (await import('../../src/lib/apiClient.js')).api;
+    ({ getResellerPlans } = await import('../../src/api/partnerApi.js'));
+  });
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('returns the operator catalog when there is one', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ plans: [{ id: 'p1', name: 'Aylo Hot', storagePerTb: 3.42 }] });
+    const plans = await getResellerPlans();
+    expect(plans.map((p) => p.name)).toEqual(['Aylo Hot']);
+  });
+
+  it('returns empty for a successful empty response, not the sample tiers', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ plans: [] });
+    expect(await getResellerPlans()).toEqual([]);
+  });
+
+  it('falls back to the static defaults when the request fails', async () => {
+    vi.spyOn(api, 'get').mockRejectedValue(new Error('network down'));
+    expect(await getResellerPlans()).toEqual(RESELLER_PLANS);
+  });
+
+  it('falls back when the response has no plans key at all', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({});
+    expect(await getResellerPlans()).toEqual(RESELLER_PLANS);
   });
 });
