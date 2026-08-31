@@ -20,7 +20,12 @@ const BLANK_PLAN = {
 };
 
 export default function ResellerPlansView() {
-  const { isAdmin } = useApp();
+  // Gate on the permission, not on role === 'admin'. plans:write is held by the
+  // Commercial role too, so gating on admin hid every control from exactly the
+  // people whose job this screen is — while the server happily accepted their
+  // writes. Matches how RolesView / UserManagementView gate.
+  const { can } = useApp();
+  const mayWrite = can('plans:write');
   const [plans, setPlans]       = useState(null);
   const [error, setError]       = useState('');
   const [adding, setAdding]     = useState(false);
@@ -45,12 +50,12 @@ export default function ResellerPlansView() {
       <PageHeader
         eyebrow="System"
         title="Reseller plans"
-        subtitle={isAdmin
+        subtitle={mayWrite
           ? 'Set the markup over Backblaze list pricing for each tier. Changes apply to every customer assigned to that plan unless they have a per-customer override.'
-          : 'Read-only view of plan tiers. An admin can edit pricing.'}
+          : 'Read-only view of plan tiers. Editing requires the plans:write permission.'}
         actions={
           <div className="flex items-center gap-2">
-            {isAdmin && (
+            {mayWrite && (
               <button
                 onClick={() => { setError(''); setAdding(true); }}
                 className="inline-flex items-center gap-1 rounded border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-[11px] font-medium text-ink-100 hover:bg-ink-800"
@@ -107,7 +112,7 @@ export default function ResellerPlansView() {
               <TH className="text-right">Class D / 10k</TH>
               <TH className="text-right">Accounts</TH>
               <TH className="text-right">Margin vs list</TH>
-              <TH className="text-right">{isAdmin && 'Actions'}</TH>
+              <TH className="text-right">{mayWrite && 'Actions'}</TH>
             </TR>
           </THead>
           <TBody>
@@ -115,7 +120,7 @@ export default function ResellerPlansView() {
               <PlanRow
                 plan={BLANK_PLAN}
                 isNew
-                isAdmin={isAdmin}
+                mayWrite={mayWrite}
                 onSaved={() => { setAdding(false); reload(); }}
                 onCancel={() => setAdding(false)}
                 onError={setError}
@@ -125,7 +130,7 @@ export default function ResellerPlansView() {
               <PlanRow
                 key={p.id}
                 plan={p}
-                isAdmin={isAdmin}
+                mayWrite={mayWrite}
                 onSaved={reload}
                 onDelete={() => { setError(''); setDeleting(p); }}
                 onError={setError}
@@ -161,7 +166,7 @@ export default function ResellerPlansView() {
   );
 }
 
-function PlanRow({ plan, isAdmin, isNew = false, onSaved, onCancel, onDelete, onError }) {
+function PlanRow({ plan, mayWrite, isNew = false, onSaved, onCancel, onDelete, onError }) {
   const [editing, setEditing] = useState(isNew);
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
@@ -237,7 +242,7 @@ function PlanRow({ plan, isAdmin, isNew = false, onSaved, onCancel, onDelete, on
         </TD>
         <TD className="text-right font-mono text-accent-green">{percent(storageMargin, 0)}</TD>
         <TD className="text-right">
-          {isAdmin && (
+          {mayWrite && (
             <div className="inline-flex items-center gap-1.5">
               <button
                 onClick={() => setEditing(true)}

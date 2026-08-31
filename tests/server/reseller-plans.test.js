@@ -5,6 +5,8 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { createUser } from '../../server/users.js';
+import { createRole, invalidatePermissionCache } from '../../server/roles.js';
+import { ALL_PERMISSIONS } from '../../server/rbac.js';
 import { createSession } from '../../server/auth.js';
 import { attachSession } from '../../server/middleware/requireAuth.js';
 import resellerPlansRouter from '../../server/routes/resellerPlans.js';
@@ -380,5 +382,61 @@ describe('DELETE /:id', () => {
       .set('X-CSRF-Token', userCsrf);
     expect(r.status).toBe(403);
     expect(await planNamed('Guarded')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// plans:write is not an admin-only permission — the built-in Commercial group
+// carries it (rbac.js PERMISSION_GROUPS). The screen used to gate its controls
+// on role === 'admin', so a user with the permission saw no buttons while the
+// server accepted their writes. These lock the server side of that contract.
+// ---------------------------------------------------------------------------
+describe('plans:write without the admin role', () => {
+  let cSid, cCsrf;
+
+  beforeAll(() => {
+    createRole({
+      id: 'commercial', name: 'Commercial', scope: 'partner',
+      permissions: ['billing:read', 'plans:write'],
+    });
+    invalidatePermissionCache();
+    const u = createUser({ email: 'rp-commercial@test.com', passwordHash: 'h', role: 'commercial' });
+    const s = createSession({ userId: u.id });
+    cSid = s.sid; cCsrf = s.csrf;
+  });
+
+  const cput = (path, body) => request(app).put(path)
+    .set('Cookie', `sid=${cSid}; csrf=${cCsrf}`).set('X-CSRF-Token', cCsrf).send(body);
+  const cpost = (path, body) => request(app).post(path)
+    .set('Cookie', `sid=${cSid}; csrf=${cCsrf}`).set('X-CSRF-Token', cCsrf).send(body);
+  const cdel = (path) => request(app).delete(path)
+    .set('Cookie', `sid=${cSid}; csrf=${cCsrf}`).set('X-CSRF-Token', cCsrf);
+
+  it('admin still holds plans:write', () => {
+    expect(ALL_PERMISSIONS).toContain('plans:write');
+  });
+
+  it('can create a plan', async () => {
+    const r = await cpost('/api/admin/reseller-plans', { name: 'Commercial Made', storagePerTb: 7 });
+    expect(r.status).toBe(201);
+  });
+
+  it('can edit a plan', async () => {
+    const created = await cpost('/api/admin/reseller-plans', { name: 'Commercial Edits', storagePerTb: 7 });
+    const r = await cput(`/api/admin/reseller-plans/${created.body.plan.id}`, { storagePerTb: 8 });
+    expect(r.status).toBe(200);
+    expect(r.body.plan.storagePerTb).toBe(8);
+  });
+
+  it('can delete a plan', async () => {
+    const created = await cpost('/api/admin/reseller-plans', { name: 'Commercial Deletes', storagePerTb: 7 });
+    expect((await cdel(`/api/admin/reseller-plans/${created.body.plan.id}`)).status).toBe(200);
+  });
+
+  it('a role without plans:write still cannot', async () => {
+    const r = await request(app).post('/api/admin/reseller-plans')
+      .set('Cookie', `sid=${userSid}; csrf=${userCsrf}`).set('X-CSRF-Token', userCsrf)
+      .send({ name: 'Manager Attempt', storagePerTb: 1 });
+    expect(r.status).toBe(403);
   });
 });

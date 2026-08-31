@@ -297,7 +297,11 @@ const COST_FIELDS = [
 ];
 
 function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
-  const { isAdmin } = useApp();
+  // Same permission the server enforces on /api/admin/group-costs. Gating on
+  // role === 'admin' would hide these from the Commercial role, which holds
+  // plans:write and is precisely who negotiates these rates.
+  const { can } = useApp();
+  const mayWrite = can('plans:write');
   const [editing, setEditing] = useState(false);
   const [form, setForm]       = useState(() => toForm(cost));
   const [saving, setSaving]   = useState(false);
@@ -365,7 +369,7 @@ function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
             the gap is your margin. Blank means B2 list price for that component.
           </p>
         </div>
-        {isAdmin && !editing && (
+        {mayWrite && !editing && (
           <button
             onClick={() => setEditing(true)}
             className="rounded border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-[11px] text-ink-200 hover:bg-ink-800"
