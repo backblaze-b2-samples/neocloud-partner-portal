@@ -106,7 +106,7 @@ function GroupsList() {
                 <Stat
                   label="Cost / TB"
                   value={groupCosts.has(g.groupId)
-                    ? currency(groupCosts.get(g.groupId))
+                    ? currency(groupCosts.get(g.groupId).costPerTb)
                     : `${currency(B2_LIST_PRICE.storagePerTb)} list`}
                   mono
                   accent={groupCosts.has(g.groupId) ? 'text-ink-100' : 'text-ink-500'}
@@ -145,7 +145,7 @@ function GroupDetail({ groupId }) {
   const [loading, setLoading] = useState(true);
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
-  const [costPerTb, setCostPerTb] = useState(null);
+  const [cost, setCost] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState(null);
 
@@ -156,7 +156,7 @@ function GroupDetail({ groupId }) {
       .then(([g, { customers }, costs]) => {
         setGroup(g);
         setMembers(customers);
-        setCostPerTb(costs.has(String(groupId)) ? costs.get(String(groupId)) : null);
+        setCost(costs.get(String(groupId)) ?? null);
       })
       .catch((err) => setError(err?.message || String(err)))
       .finally(() => setLoading(false));
@@ -219,7 +219,7 @@ function GroupDetail({ groupId }) {
 
       <GroupCostCard
         groupId={group.groupId}
-        costPerTb={costPerTb}
+        cost={cost}
         storageBytes={totals.storage}
         onSaved={load}
       />
@@ -282,37 +282,44 @@ function GroupDetail({ groupId }) {
   );
 }
 
-// The partner's own purchase rate for this group — the COGS half of margin.
-// The reseller plan holds the other half, what they charge. A group with no
-// negotiated rate falls back to B2 list, which for a partner storing petabytes
-// overstates cost and understates margin, so say so plainly rather than showing
-// a number that looks settled.
-function GroupCostCard({ groupId, costPerTb, storageBytes, onSaved }) {
+// The partner's own purchase rates for this group — the COGS half of margin.
+// Reseller plans hold the other half, what they charge. Each component falls
+// back to B2 list independently when it has not been negotiated, so a blank
+// Class A means "list", not "free" — those coincide at list today and would
+// stop coinciding if list pricing changed.
+const CLASS_FIELDS = [
+  ['costPer10kClassA', 'Class A', 'uploads',       'classAPer10k'],
+  ['costPer10kClassB', 'Class B', 'downloads',     'classBPer10k'],
+  ['costPer10kClassC', 'Class C', 'list/metadata', 'classCPer10k'],
+];
+
+function GroupCostCard({ groupId, cost, storageBytes, onSaved }) {
   const { isAdmin } = useApp();
   const [editing, setEditing] = useState(false);
-  const [value, setValue]     = useState(costPerTb != null ? String(costPerTb) : '');
+  const [form, setForm]       = useState(() => toForm(cost));
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState('');
 
-  useEffect(() => {
-    setValue(costPerTb != null ? String(costPerTb) : '');
-    setEditing(false);
-  }, [costPerTb, groupId]);
+  useEffect(() => { setForm(toForm(cost)); setEditing(false); }, [cost, groupId]);
 
-  const effective = costPerTb ?? B2_LIST_PRICE.storagePerTb;
-  const monthly   = (storageBytes / 1e12) * effective;
+  const effectiveTb = cost?.costPerTb ?? B2_LIST_PRICE.storagePerTb;
+  const monthly     = (storageBytes / 1e12) * effectiveTb;
 
   const save = async () => {
-    const n = parseFloat(value);
-    if (!Number.isFinite(n) || n < 0) { setError('Enter a non-negative number.'); return; }
+    const n = parseFloat(form.costPerTb);
+    if (!Number.isFinite(n) || n < 0) { setError('Enter a non-negative storage cost.'); return; }
     setSaving(true);
     setError('');
     try {
-      await api.put(`/api/admin/group-costs/${encodeURIComponent(groupId)}`, { costPerTb: n });
+      const payload = { costPerTb: n };
+      for (const [key] of CLASS_FIELDS) {
+        payload[key] = form[key] === '' ? null : Number(form[key]);
+      }
+      await api.put(`/api/admin/group-costs/${encodeURIComponent(groupId)}`, payload);
       setEditing(false);
       onSaved();
     } catch (e) {
-      setError(e?.body?.error || 'Could not save cost.');
+      setError(e?.body?.error || 'Could not save costs.');
     } finally {
       setSaving(false);
     }
@@ -326,58 +333,82 @@ function GroupCostCard({ groupId, costPerTb, storageBytes, onSaved }) {
       setEditing(false);
       onSaved();
     } catch (e) {
-      setError(e?.body?.error || 'Could not clear cost.');
+      setError(e?.body?.error || 'Could not clear costs.');
     } finally {
       setSaving(false);
     }
   };
 
+  const CostInput = ({ field, step }) => (
+    <input
+      type="number"
+      step={step}
+      min="0"
+      value={form[field]}
+      onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+      aria-label={field}
+      placeholder="list"
+      className="h-8 w-24 rounded border border-ink-700 bg-ink-900 px-2 text-right font-mono text-xs text-ink-100"
+    />
+  );
+
   return (
     <Card padding="p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-ink-100">Your cost for this group</h3>
           <p className="mt-0.5 text-[11.5px] text-ink-400">
-            What you pay Backblaze to store, per TB per month. Reseller plans set what you
-            charge; the gap is your margin.
+            What you pay Backblaze for this group. Reseller plans set what you charge;
+            the gap is your margin. Blank means B2 list price for that component.
           </p>
         </div>
+        {isAdmin && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="rounded border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-[11px] text-ink-200 hover:bg-ink-800"
+          >
+            {cost ? 'Edit costs' : 'Set costs'}
+          </button>
+        )}
+      </div>
 
-        {!editing ? (
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="font-mono text-lg text-ink-100">{currency(effective)}<span className="text-xs text-ink-400">/TB</span></div>
-              <div className="text-[10.5px] text-ink-400">
-                {costPerTb != null
-                  ? `≈ ${currency(monthly, { compact: true })}/mo at current storage`
-                  : 'B2 list price — no negotiated rate set'}
-              </div>
-            </div>
-            {isAdmin && (
-              <button
-                onClick={() => setEditing(true)}
-                className="rounded border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-[11px] text-ink-200 hover:bg-ink-800"
-              >
-                {costPerTb != null ? 'Edit' : 'Set cost'}
-              </button>
-            )}
+      {!editing ? (
+        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat
+            label="Storage / TB"
+            value={currency(effectiveTb)}
+            mono
+            accent={cost ? 'text-ink-100' : 'text-ink-500'}
+          />
+          {CLASS_FIELDS.map(([key, label, hint, listKey]) => (
+            <Stat
+              key={key}
+              label={`${label} / 10k`}
+              value={cost?.[key] != null
+                ? currency(cost[key], { decimals: 4 })
+                : (B2_LIST_PRICE[listKey] > 0 ? currency(B2_LIST_PRICE[listKey], { decimals: 4 }) : 'free')}
+              mono
+              accent={cost?.[key] != null ? 'text-ink-100' : 'text-ink-500'}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap items-end gap-4">
+            <label className="block">
+              <div className="mb-1 text-[10.5px] uppercase tracking-wider text-ink-400">Storage / TB</div>
+              <CostInput field="costPerTb" step="0.01" />
+            </label>
+            {CLASS_FIELDS.map(([key, label, hint]) => (
+              <label key={key} className="block">
+                <div className="mb-1 text-[10.5px] uppercase tracking-wider text-ink-400">
+                  {label} / 10k <span className="normal-case text-ink-500">{hint}</span>
+                </div>
+                <CostInput field={key} step="0.0001" />
+              </label>
+            ))}
           </div>
-        ) : (
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-ink-400">$</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                autoFocus
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                aria-label="Cost per TB"
-                className="h-8 w-28 rounded border border-ink-700 bg-ink-900 px-2 text-right font-mono text-xs text-ink-100"
-              />
-              <span className="text-xs text-ink-400">/TB</span>
-            </div>
             <button
               onClick={save}
               disabled={saving}
@@ -385,7 +416,7 @@ function GroupCostCard({ groupId, costPerTb, storageBytes, onSaved }) {
             >
               {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} Save
             </button>
-            {costPerTb != null && (
+            {cost && (
               <button
                 onClick={clear}
                 disabled={saving}
@@ -396,18 +427,33 @@ function GroupCostCard({ groupId, costPerTb, storageBytes, onSaved }) {
               </button>
             )}
             <button
-              onClick={() => { setEditing(false); setError(''); setValue(costPerTb != null ? String(costPerTb) : ''); }}
+              onClick={() => { setEditing(false); setError(''); setForm(toForm(cost)); }}
               disabled={saving}
               className="rounded border border-ink-700 bg-ink-850 px-2 py-1.5 text-[11px] text-ink-300 hover:text-ink-100"
             >
               <X size={11} />
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      <p className="mt-3 text-[10.5px] text-ink-400">
+        {cost
+          ? `Storage ≈ ${currency(monthly, { compact: true })}/mo at current usage.`
+          : 'No negotiated rates — this group is costed at B2 list price.'}
+        {' '}Egress and Class D always use B2 list.
+      </p>
       {error && <p className="mt-2 text-[11px] text-bb-red">{error}</p>}
     </Card>
   );
+}
+
+function toForm(cost) {
+  const f = { costPerTb: cost?.costPerTb != null ? String(cost.costPerTb) : '' };
+  for (const [key] of CLASS_FIELDS) {
+    f[key] = cost?.[key] != null ? String(cost[key]) : '';
+  }
+  return f;
 }
 
 function Stat({ label, value, mono, accent }) {

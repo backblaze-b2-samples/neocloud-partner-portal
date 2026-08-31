@@ -384,6 +384,14 @@ db.exec(`
   );
 `);
 
+// Migration: negotiated transaction costs per group. Class A/B/C are free at B2
+// list, so these are null on a standard contract and only carry a value where
+// the partner has negotiated one. Null means "use list", not "free" — the two
+// happen to coincide at list today, and would stop coinciding if list changed.
+addColumnIfMissing('group_costs', 'cost_per_10k_class_a', 'REAL');
+addColumnIfMissing('group_costs', 'cost_per_10k_class_b', 'REAL');
+addColumnIfMissing('group_costs', 'cost_per_10k_class_c', 'REAL');
+
 // Migration: support read-only impersonation. When non-null, the session is
 // acting *as* the impersonating_user_id (effective identity); the original
 // sessions.user_id remains the staff actor for audit purposes.

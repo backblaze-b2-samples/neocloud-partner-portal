@@ -357,3 +357,51 @@ describe('group-negotiated storage cost', () => {
     expect(cogs).toBeCloseTo(1000 * B2_LIST_PRICE.egressPerGb, 6);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Class A/B/C are free at B2 list, so a partner who has negotiated a rate for
+// them is paying something the portal previously treated as costless.
+// ---------------------------------------------------------------------------
+describe('group-negotiated transaction costs', () => {
+  const txns = { txnA30d: 10_000, txnB30d: 10_000, txnC30d: 10_000 };
+
+  it('costs Class A/B/C at zero by default, matching B2 list', () => {
+    const { cogs } = computeBilling({ ...txns, costPerTbStorage: 0 });
+    expect(cogs).toBe(0);
+  });
+
+  it('adds each negotiated class rate to COGS', () => {
+    const { cogs } = computeBilling({
+      ...txns,
+      costPerTbStorage: 0,
+      costPer10kClassA: 0.002,
+      costPer10kClassB: 0.0015,
+      costPer10kClassC: 0.001,
+    });
+    expect(cogs).toBeCloseTo(0.002 + 0.0015 + 0.001, 10);
+  });
+
+  it('treats each class independently — an unset one stays at list', () => {
+    const { cogs } = computeBilling({ ...txns, costPerTbStorage: 0, costPer10kClassB: 0.0015 });
+    expect(cogs).toBeCloseTo(0.0015, 10);
+  });
+
+  it('leaves revenue untouched — these are cost, not price', () => {
+    const plans = [{ id: 'p', name: 'P', storagePerTb: 0, egressPerGb: 0,
+      classAPer10k: 0.004, classBPer10k: 0, classCPer10k: 0, classDPer10k: 0 }];
+    const base = { ...txns, plan: 'P', costPerTbStorage: 0 };
+    const without = computeBilling(base, plans);
+    const with_   = computeBilling({ ...base, costPer10kClassA: 0.002 }, plans);
+    expect(with_.revenue).toBe(without.revenue);
+    expect(with_.cogs).toBeGreaterThan(without.cogs);
+    expect(with_.margin).toBeLessThan(without.margin);
+  });
+
+  it('still bills Class D at list, which is not negotiated per group', () => {
+    // 10k Class D beyond the 75,000/month free tier.
+    const { cogs } = computeBilling({
+      txnD30d: 85_000, costPerTbStorage: 0,
+    });
+    expect(cogs).toBeCloseTo(B2_LIST_PRICE.classDPer10k, 10);
+  });
+});

@@ -237,17 +237,23 @@ export function aggregateObjectCounts(objectCounts) {
 }
 
 /**
- * Negotiated storage cost per B2 partner group — what the partner PAYS
- * Backblaze, as opposed to the reseller plans, which say what they charge.
+ * Negotiated costs per B2 partner group — what the partner PAYS Backblaze, as
+ * opposed to the reseller plans, which say what they charge. Covers storage per
+ * TB and Class A/B/C per 10k transactions.
  *
- * Returns Map<groupId, costPerTb>. An empty map means nothing is negotiated and
- * every group falls back to B2 list price; a failed request is treated the same
- * way, since guessing a cost would silently misstate margin.
+ * Returns Map<groupId, { costPerTb, costPer10kClassA/B/C }>. An empty map means
+ * nothing is negotiated and every group falls back to B2 list; a failed request
+ * is treated the same way, since guessing a cost would silently misstate margin.
  */
 export async function getGroupCosts() {
   try {
     const d = await api.get('/api/admin/group-costs');
-    return new Map((d?.costs || []).map((c) => [String(c.groupId), c.costPerTb]));
+    return new Map((d?.costs || []).map((c) => [String(c.groupId), {
+      costPerTb:        c.costPerTb,
+      costPer10kClassA: c.costPer10kClassA ?? null,
+      costPer10kClassB: c.costPer10kClassB ?? null,
+      costPer10kClassC: c.costPer10kClassC ?? null,
+    }]));
   } catch {
     return new Map();
   }
@@ -441,16 +447,22 @@ export async function getCustomers({ groupId } = {}) {
     // margin, which is visibly wrong and gets noticed.
     const plan = c.plan || planByGroup.get(String(c.groupId)) || null;
     const planSource = c.plan ? 'account' : (plan ? 'group' : null);
-    // What this account's group costs the partner. Undefined (not 0) when the
-    // group has no negotiated rate, so computeBilling falls back to B2 list
-    // rather than treating storage as free.
-    const costPerTbStorage = groupCosts.get(String(c.groupId));
+    // What this account's group costs the partner. Null/undefined rather than 0
+    // for anything unnegotiated, so computeBilling falls back to B2 list per
+    // component rather than treating it as free.
+    const gc = groupCosts.get(String(c.groupId));
+    const cost = {
+      costPerTbStorage: gc?.costPerTb,
+      costPer10kClassA: gc?.costPer10kClassA ?? undefined,
+      costPer10kClassB: gc?.costPer10kClassB ?? undefined,
+      costPer10kClassC: gc?.costPer10kClassC ?? undefined,
+    };
 
     const billingInput = {
       ...c,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       plan,
-      costPerTbStorage,
+      ...cost,
     };
     const { revenue, cogs } = computeBilling(billingInput, plans);
 
@@ -463,7 +475,7 @@ export async function getCustomers({ groupId } = {}) {
       ...c,
       plan,
       planSource,
-      costPerTbStorage: costPerTbStorage ?? null,
+      costPerTbStorage: cost.costPerTbStorage ?? null,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       objectCount,
       revenue30d: revenue,

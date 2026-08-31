@@ -98,11 +98,11 @@ export function planByName(name, plans = RESELLER_PLANS) {
  *      (the plan itself may have been resolved from the account's group pin)
  *   3. B2 list price — if neither is set, customer is at-cost (no margin)
  *
- * Cost (what the partner PAYS Backblaze) is a separate axis: storage is
- * negotiated per B2 partner group, so it arrives on the customer as
- * costPerTbStorage, resolved from the group's row in group_costs. Absent that,
- * B2 list applies. Egress and Class D COGS stay at B2 list — they are not
- * negotiated per group today.
+ * Cost (what the partner PAYS Backblaze) is a separate axis, negotiated per B2
+ * partner group and resolved from that group's row in group_costs onto the
+ * customer as costPerTbStorage and costPer10kClassA/B/C. Each is independent:
+ * null on any one of them means "B2 list for that component", not free.
+ * Egress and Class D COGS stay at B2 list — not negotiated per group today.
  *
  * Usage:
  *   storageBytes        — current snapshot bytes (or 30-day average)
@@ -142,12 +142,15 @@ export function computeBilling(customer, plans = RESELLER_PLANS) {
                 + (classCCount / 10_000) * classCPer10k
                 + (classDCount / 10_000) * classDPer10k;
 
-  // COGS — what the partner pays Backblaze. Egress and Class D mirror B2's
-  // published pricing (A/B/C are always free, D has a daily free tier then a
-  // per-10k rate). Storage uses the group's negotiated rate where one is set:
-  // a partner at 30 PB does not pay list, and costing them at list makes every
-  // margin figure wrong.
-  const costPerTb = customer.costPerTbStorage ?? B2_LIST_PRICE.storagePerTb;
+  // COGS — what the partner pays Backblaze. Storage and Class A/B/C use the
+  // group's negotiated rates where set: a partner at 30 PB does not pay list,
+  // and costing them at list makes every margin figure wrong. Egress and Class
+  // D still mirror B2's published pricing (D has a daily free tier then a
+  // per-10k rate).
+  const costPerTb    = customer.costPerTbStorage    ?? B2_LIST_PRICE.storagePerTb;
+  const costClassA   = customer.costPer10kClassA    ?? B2_LIST_PRICE.classAPer10k;
+  const costClassB   = customer.costPer10kClassB    ?? B2_LIST_PRICE.classBPer10k;
+  const costClassC   = customer.costPer10kClassC    ?? B2_LIST_PRICE.classCPer10k;
 
   const storageGb        = (customer.storageBytes || 0) / 1e9;
   const freeEgressGb     = storageGb * B2_LIST_PRICE.egressFreeMultiplier;
@@ -157,6 +160,9 @@ export function computeBilling(customer, plans = RESELLER_PLANS) {
 
   const cogs = storageTb * costPerTb
              + billableEgressGb * B2_LIST_PRICE.egressPerGb
+             + (classACount / 10_000) * costClassA
+             + (classBCount / 10_000) * costClassB
+             + (classCCount / 10_000) * costClassC
              + (billableClassD / 10_000) * B2_LIST_PRICE.classDPer10k;
 
   const margin = revenue > 0 ? (revenue - cogs) / revenue : 0;
