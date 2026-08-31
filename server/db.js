@@ -316,6 +316,28 @@ addColumnIfMissing('customer_metadata', 'ejected_email',    'TEXT');
 addColumnIfMissing('customer_metadata', 'ejected_group_id', 'TEXT');
 addColumnIfMissing('customer_metadata', 'ejected_region',   'TEXT');
 
+// Migration: pin a reseller plan to a B2 partner group. When set, every member
+// of that group bills at this plan unless the account carries its own explicit
+// plan. Partner-API group members arrive with no plan at all, so without this
+// a newly added account silently inherited DEFAULT_PLAN_NAME — the most
+// expensive tier — which is a misbilling, not a sane default.
+addColumnIfMissing('reseller_plans', 'group_id', 'TEXT');
+
+// One plan per group, or "which plan applies to this group" has no answer.
+// Partial index: unpinned plans (group_id IS NULL) are unconstrained.
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reseller_plans_group
+    ON reseller_plans(group_id) WHERE group_id IS NOT NULL;
+`);
+
+// Migration: per-customer transaction-rate overrides. computeBilling has always
+// read these four fields, but nothing stored them, so a negotiated Class A/B/C/D
+// rate had nowhere to live and silently fell back to the plan rate.
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_a', 'REAL');
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_b', 'REAL');
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_c', 'REAL');
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_d', 'REAL');
+
 // Migration: support read-only impersonation. When non-null, the session is
 // acting *as* the impersonating_user_id (effective identity); the original
 // sessions.user_id remains the staff actor for audit purposes.

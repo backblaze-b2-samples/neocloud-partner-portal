@@ -199,6 +199,10 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
     groupId: '',
     price_per_gb_storage: '',
     price_per_gb_download: '',
+    price_per_10k_class_a: '',
+    price_per_10k_class_b: '',
+    price_per_10k_class_c: '',
+    price_per_10k_class_d: '',
     notes: '',
   });
   const [metaLoaded, setMetaLoaded] = useState(false);
@@ -219,10 +223,14 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
           newEmail: '',
           display_name: meta?.display_name || customer.name || '',
           industry:     meta?.industry     || customer.industry || '',
-          plan:         meta?.plan         || customer.plan     || CREATE_DEFAULT_PLAN,
+          plan:         meta?.plan         || '',
           groupId:      customer.groupId   || '',
           price_per_gb_storage:  meta?.price_per_gb_storage  != null ? String(meta.price_per_gb_storage)  : '',
           price_per_gb_download: meta?.price_per_gb_download != null ? String(meta.price_per_gb_download) : '',
+          price_per_10k_class_a: meta?.price_per_10k_class_a != null ? String(meta.price_per_10k_class_a) : '',
+          price_per_10k_class_b: meta?.price_per_10k_class_b != null ? String(meta.price_per_10k_class_b) : '',
+          price_per_10k_class_c: meta?.price_per_10k_class_c != null ? String(meta.price_per_10k_class_c) : '',
+          price_per_10k_class_d: meta?.price_per_10k_class_d != null ? String(meta.price_per_10k_class_d) : '',
           notes: meta?.notes || '',
         });
         setMetaLoaded(true);
@@ -232,10 +240,14 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
           newEmail: '',
           display_name: customer.name     || '',
           industry:     customer.industry || '',
-          plan:         customer.plan     || CREATE_DEFAULT_PLAN,
+          plan:         '',
           groupId:      customer.groupId  || '',
           price_per_gb_storage: '',
           price_per_gb_download: '',
+          price_per_10k_class_a: '',
+          price_per_10k_class_b: '',
+          price_per_10k_class_c: '',
+          price_per_10k_class_d: '',
           notes: '',
         });
         setMetaLoaded(true);
@@ -259,6 +271,10 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
         plan:                  form.plan                || null,
         price_per_gb_storage:  form.price_per_gb_storage  ? Number(form.price_per_gb_storage)  : null,
         price_per_gb_download: form.price_per_gb_download ? Number(form.price_per_gb_download) : null,
+        price_per_10k_class_a: form.price_per_10k_class_a ? Number(form.price_per_10k_class_a) : null,
+        price_per_10k_class_b: form.price_per_10k_class_b ? Number(form.price_per_10k_class_b) : null,
+        price_per_10k_class_c: form.price_per_10k_class_c ? Number(form.price_per_10k_class_c) : null,
+        price_per_10k_class_d: form.price_per_10k_class_d ? Number(form.price_per_10k_class_d) : null,
         notes:                 form.notes.trim()        || null,
       });
 
@@ -282,8 +298,24 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
   // "Partner — Custom" (or any plan name with no row in reseller_plans) has no
   // rate card: computeBilling falls through to B2 list and the customer bills
   // at cost. Only the per-customer overrides can rescue that, so say so.
-  const planHasNoRates = !!form.plan && !plans.some((p) => p.name === form.plan);
-  const hasOverride    = !!(form.price_per_gb_storage || form.price_per_gb_download);
+  // The plan pinned to this customer's B2 group, used when no explicit plan is
+  // set on the account itself.
+  const groupPlanName = plans.find(
+    (p) => p.groupId != null && String(p.groupId) === String(form.groupId),
+  )?.name || null;
+
+  // What the customer actually bills at once the dialog is saved.
+  const effectivePlan = form.plan || groupPlanName || null;
+
+  // A plan name with no row in reseller_plans (e.g. "Partner — Custom") has no
+  // rate card, and so does no plan at all: computeBilling falls through to B2
+  // list and the customer bills at cost. Only per-customer overrides rescue it.
+  const planHasNoRates = !effectivePlan || !plans.some((p) => p.name === effectivePlan);
+  const hasOverride    = !!(
+    form.price_per_gb_storage || form.price_per_gb_download ||
+    form.price_per_10k_class_a || form.price_per_10k_class_b ||
+    form.price_per_10k_class_c || form.price_per_10k_class_d
+  );
 
   return (
     <Modal open={open} onClose={handleClose} title={`Edit: ${customer?.name || 'customer'}`} subtitle="Local metadata is saved to the control plane. Email changes call the B2 Partner API." size="lg">
@@ -334,9 +366,12 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
               />
               <Select
                 label="Plan"
-                value={form.plan || CREATE_DEFAULT_PLAN}
+                value={form.plan}
                 onChange={(v) => setForm({ ...form, plan: v })}
-                options={planNames.map((v) => ({ value: v, label: v }))}
+                options={[
+                  { value: '', label: groupPlanName ? `Inherit from group — ${groupPlanName}` : 'Unassigned — bills at B2 list' },
+                  ...planNames.map((v) => ({ value: v, label: v })),
+                ]}
               />
               {/* Group is read-only — B2 Partner API does not support moving
                   members between groups. Re-assignment requires the web UI. */}
@@ -376,12 +411,34 @@ export function EditCustomerDialog({ open, onClose, onSaved, customer }) {
                 mono
               />
             </div>
+            <p className="text-[11px] text-ink-400">
+              Transaction rates ($ per 10,000). Leave blank to use the plan rate.
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                ['a', 'Class A', 'uploads'],
+                ['b', 'Class B', 'downloads'],
+                ['c', 'Class C', 'list/metadata'],
+                ['d', 'Class D', 'notifications'],
+              ].map(([k, label, hint]) => (
+                <Field
+                  key={k}
+                  label={`${label} · ${hint}`}
+                  placeholder="0.000"
+                  value={form[`price_per_10k_class_${k}`]}
+                  onChange={(v) => setForm({ ...form, [`price_per_10k_class_${k}`]: v })}
+                  mono
+                />
+              ))}
+            </div>
             {planHasNoRates && !hasOverride && (
               <div className="flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                 <span>
-                  <span className="font-mono">{form.plan}</span> has no rate card, so this customer bills at
-                  Backblaze list price — zero margin. Set a storage or download rate below.
+                  {effectivePlan
+                    ? <><span className="font-mono">{effectivePlan}</span> has no rate card, so this customer bills at Backblaze list price — zero margin.</>
+                    : <>This customer has no plan and its group has none pinned, so it bills at Backblaze list price — zero margin.</>}
+                  {' '}Set a rate below, or pin a plan to the group in Reseller plans.
                 </span>
               </div>
             )}

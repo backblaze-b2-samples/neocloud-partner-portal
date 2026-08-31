@@ -19,6 +19,10 @@ export const B2_LIST_PRICE = {
   classDFreePerDay: 2500,
 };
 
+// A plan may also carry `groupId`, pinning it to a B2 partner group so every
+// member of that group bills at this tier without per-account assignment. The
+// static defaults below are unpinned; pinning is done through the API.
+//
 // Defaults are seeded into the `reseller_plans` DB table on first boot.
 // Admins can edit them via Reseller plans in the System sidebar; the API is
 // the runtime source of truth. This array is only used to seed and as a
@@ -61,8 +65,22 @@ export const RESELLER_PLANS = [
 
 export const PLAN_NAMES = RESELLER_PLANS.map((p) => p.name);
 
-/** Default plan name assigned to customers that have no explicit plan. */
+/**
+ * Fallback tier for demo data and for seeding only.
+ *
+ * NOT a default for live customers: Partner-API group members arrive with no
+ * plan, so defaulting them here billed every unassigned account at the most
+ * expensive tier. Live plan resolution is explicit account plan -> the plan
+ * pinned to the account's group (plan.groupId) -> unassigned (B2 list, zero
+ * margin). See getCustomers in src/api/partnerApi.js.
+ */
 export const DEFAULT_PLAN_NAME = 'Reseller — Tier 1';
+
+/** The plan pinned to a B2 partner group, if any. */
+export function planForGroup(groupId, plans = RESELLER_PLANS) {
+  if (groupId == null || groupId === '') return null;
+  return plans.find((p) => p.groupId != null && String(p.groupId) === String(groupId)) || null;
+}
 
 /** Look up a plan by its display name (matches the value stored on customers). */
 export function planByName(name, plans = RESELLER_PLANS) {
@@ -74,9 +92,10 @@ export function planByName(name, plans = RESELLER_PLANS) {
  * { revenue, cogs, margin } in dollars (number, not currency-formatted).
  *
  * Pricing precedence:
- *   1. Per-customer override (customer.price_per_gb_storage / price_per_gb_download,
- *      etc.) — if set, wins
+ *   1. Per-customer override (customer.price_per_gb_storage / price_per_gb_download
+ *      / price_per_10k_class_a..d) — if set, wins
  *   2. Plan default from RESELLER_PLANS — if customer.plan matches a tier
+ *      (the plan itself may have been resolved from the account's group pin)
  *   3. B2 list price — if neither is set, customer is at-cost (no margin)
  *
  * Usage:

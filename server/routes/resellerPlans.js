@@ -70,6 +70,7 @@ function rowToJson(r) {
     classBPer10k: r.class_b_per_10k,
     classCPer10k: r.class_c_per_10k,
     classDPer10k: r.class_d_per_10k,
+    groupId:      r.group_id ?? null,
     position:     r.position,
     updatedAt:    r.updated_at,
   };
@@ -110,8 +111,32 @@ router.put('/:id', requirePermission(PLANS_WRITE), requireCsrf, (req, res) => {
   }
   if (b.description !== undefined) values.description = String(b.description).slice(0, 200);
 
+  // groupId pins this plan to a B2 partner group: every member of that group
+  // bills at this plan unless the account has its own explicit plan. Empty
+  // string and null both mean "unpin".
+  let groupIdProvided = false;
+  if (b.groupId !== undefined) {
+    groupIdProvided = true;
+    values.group_id = b.groupId === null || String(b.groupId).trim() === ''
+      ? null
+      : String(b.groupId).trim().slice(0, 64);
+  }
+
   const existing = db.prepare('SELECT * FROM reseller_plans WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ error: 'Plan not found' });
+
+  // A group resolves to exactly one plan. Reject the collision here rather
+  // than letting the unique index throw a 500.
+  if (groupIdProvided && values.group_id !== null) {
+    const clash = db.prepare(
+      'SELECT id, name FROM reseller_plans WHERE group_id = ? AND id != ?'
+    ).get(values.group_id, id);
+    if (clash) {
+      return res.status(409).json({
+        error: `Group ${values.group_id} is already pinned to plan "${clash.name}"`,
+      });
+    }
+  }
 
   // Apply only the fields actually provided in the body.
   const merged = {
@@ -123,6 +148,7 @@ router.put('/:id', requirePermission(PLANS_WRITE), requireCsrf, (req, res) => {
     class_b_per_10k:  values.classBPer10k      ?? existing.class_b_per_10k,
     class_c_per_10k:  values.classCPer10k      ?? existing.class_c_per_10k,
     class_d_per_10k:  values.classDPer10k      ?? existing.class_d_per_10k,
+    group_id:         groupIdProvided ? values.group_id : existing.group_id,
     updated_at:       new Date().toISOString(),
   };
 
@@ -130,12 +156,12 @@ router.put('/:id', requirePermission(PLANS_WRITE), requireCsrf, (req, res) => {
     UPDATE reseller_plans
     SET description=?, storage_per_tb=?, egress_per_gb=?,
         class_a_per_10k=?, class_b_per_10k=?, class_c_per_10k=?, class_d_per_10k=?,
-        updated_at=?
+        group_id=?, updated_at=?
     WHERE id=?
   `).run(
     merged.description, merged.storage_per_tb, merged.egress_per_gb,
     merged.class_a_per_10k, merged.class_b_per_10k, merged.class_c_per_10k, merged.class_d_per_10k,
-    merged.updated_at, id,
+    merged.group_id, merged.updated_at, id,
   );
 
   audit({

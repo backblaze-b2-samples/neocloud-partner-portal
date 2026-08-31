@@ -16,7 +16,7 @@ import { CUSTOMERS, aggregate } from '../data/customers.js';
 import { GROUPS } from '../data/groups.js';
 import { authorizeAccount, getCustomerUsageFromCsv, readCsrfCookie } from './b2Adapter.js';
 import { api } from '../lib/apiClient.js';
-import { computeBilling, DEFAULT_PLAN_NAME, RESELLER_PLANS } from '../data/resellerPlans.js';
+import { computeBilling, RESELLER_PLANS } from '../data/resellerPlans.js';
 
 const wait = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
@@ -288,9 +288,9 @@ export async function getCustomers({ groupId } = {}) {
     const withRegion = stored?.region ? { ...c, region: normalizeRegion(stored.region) } : c;
     // Apply saved local metadata — plan, pricing overrides, display name,
     // industry. Without this an active customer reaches computeBilling with
-    // plan === null and bills at DEFAULT_PLAN_NAME no matter what an admin
-    // assigned: the detail view (getCustomer) merged metadata, the list that
-    // feeds Cockpit and Billing did not.
+    // plan === null no matter what an admin assigned: the detail view
+    // (getCustomer) merged metadata, the list that feeds Cockpit and Billing
+    // did not.
     const meta = metadata.get(c.accountId);
     return meta ? mergeMetadata(withRegion, meta) : withRegion;
   });
@@ -339,6 +339,15 @@ export async function getCustomers({ groupId } = {}) {
     getResellerPlans(),
   ]);
 
+  // groupId -> plan name, for accounts with no explicit plan of their own.
+  // Pricing is a property of the B2 group for partners who price per group
+  // (the common reseller shape), so this is the assignment that scales: add an
+  // account to a group in B2 and it bills correctly without anyone editing it.
+  const planByGroup = new Map();
+  for (const p of plans) {
+    if (p.groupId != null && String(p.groupId) !== '') planByGroup.set(String(p.groupId), p.name);
+  }
+
   // Sum object_counts per accountId so we can use it as a per-customer storage
   // source, and roll the file counts up the same way for the Objects column.
   const bytesByAccount   = new Map();
@@ -372,8 +381,14 @@ export async function getCustomers({ groupId } = {}) {
     const txnC30d        = csv?.txnC30d        > 0 ? csv.txnC30d        : (c.txnC30d        ?? 0);
     const txnD30d        = csv?.txnD30d        > 0 ? csv.txnD30d        : (c.txnD30d        ?? 0);
 
-    // Default-assign a plan to every active customer that doesn't already have one.
-    const plan = c.plan || DEFAULT_PLAN_NAME;
+    // Resolve the plan: an explicit per-account assignment wins, otherwise the
+    // plan pinned to the account's B2 group. Deliberately no default tier — the
+    // Partner API returns no plan, so defaulting meant an unassigned account
+    // billed at DEFAULT_PLAN_NAME (the most expensive tier) and looked
+    // plausible while being wrong. Unassigned now bills at B2 list, i.e. zero
+    // margin, which is visibly wrong and gets noticed.
+    const plan = c.plan || planByGroup.get(String(c.groupId)) || null;
+    const planSource = c.plan ? 'account' : (plan ? 'group' : null);
     const billingInput = {
       ...c,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
@@ -389,6 +404,7 @@ export async function getCustomers({ groupId } = {}) {
     return {
       ...c,
       plan,
+      planSource,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       objectCount,
       revenue30d: revenue,
@@ -432,6 +448,12 @@ function mergeMetadata(customer, meta) {
     plan:     meta.plan          || customer.plan,
     price_per_gb_storage:  meta.price_per_gb_storage  ?? null,
     price_per_gb_download: meta.price_per_gb_download ?? null,
+    // computeBilling reads these four; before they were carried here they were
+    // dead reads and a saved transaction override never reached billing.
+    price_per_10k_class_a: meta.price_per_10k_class_a ?? null,
+    price_per_10k_class_b: meta.price_per_10k_class_b ?? null,
+    price_per_10k_class_c: meta.price_per_10k_class_c ?? null,
+    price_per_10k_class_d: meta.price_per_10k_class_d ?? null,
     _notes:   meta.notes         || null,
   };
 }

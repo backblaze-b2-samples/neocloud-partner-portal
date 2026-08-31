@@ -6,6 +6,7 @@ import {
   B2_LIST_PRICE,
   DEFAULT_PLAN_NAME,
   planByName,
+  planForGroup,
   computeBilling,
 } from '../../src/data/resellerPlans.js';
 
@@ -192,5 +193,75 @@ describe('storage override units', () => {
   it('no override → plan rate, unaffected by the per-GB path', () => {
     const { revenue } = computeBilling({ plan: 'Reseller — Tier 1', storageBytes: 1e12 });
     expect(revenue).toBeCloseTo(25, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group pinning + transaction-rate overrides. Aylo prices per B2 group
+// ("Hot" / "Cool"), so the plan a member bills at has to be derivable from its
+// group rather than typed onto each account.
+// ---------------------------------------------------------------------------
+describe('planForGroup', () => {
+  const PINNED = [
+    { ...RESELLER_PLANS[0], name: 'Hot',  groupId: '166701', storagePerTb: 3.42 },
+    { ...RESELLER_PLANS[1], name: 'Cool', groupId: '166702', storagePerTb: 2.10 },
+    { ...RESELLER_PLANS[2], name: 'Unpinned', groupId: null },
+  ];
+
+  it('resolves a plan from its pinned group id', () => {
+    expect(planForGroup('166701', PINNED).name).toBe('Hot');
+    expect(planForGroup('166702', PINNED).name).toBe('Cool');
+  });
+
+  it('matches across string/number group ids', () => {
+    expect(planForGroup(166701, PINNED).name).toBe('Hot');
+  });
+
+  it('returns null for an unpinned or unknown group', () => {
+    expect(planForGroup('999999', PINNED)).toBeNull();
+    expect(planForGroup(null, PINNED)).toBeNull();
+    expect(planForGroup('', PINNED)).toBeNull();
+  });
+
+  it('never matches the plans that carry no groupId', () => {
+    expect(planForGroup(undefined, PINNED)).toBeNull();
+  });
+});
+
+describe('per-customer transaction overrides reach billing', () => {
+  const plans = [{
+    ...RESELLER_PLANS[0], name: 'Hot', storagePerTb: 3.42, egressPerGb: 0.01,
+    classAPer10k: 0.004, classBPer10k: 0.004, classCPer10k: 0.002, classDPer10k: 0.012,
+  }];
+  const base = {
+    plan: 'Hot',
+    storageBytes: 0,
+    egressBytes30d: 0,
+    txnA30d: 10_000, txnB30d: 10_000, txnC30d: 10_000, txnD30d: 10_000,
+  };
+
+  it('bills transactions at the plan rate when no override is set', () => {
+    const { revenue } = computeBilling(base, plans);
+    expect(revenue).toBeCloseTo(0.004 + 0.004 + 0.002 + 0.012, 10);
+  });
+
+  it('each class override wins over the plan rate independently', () => {
+    const { revenue } = computeBilling({
+      ...base,
+      price_per_10k_class_a: 0.001,
+      price_per_10k_class_c: 0.005,
+    }, plans);
+    expect(revenue).toBeCloseTo(0.001 + 0.004 + 0.005 + 0.012, 10);
+  });
+
+  it('an override of zero is honoured, not treated as unset', () => {
+    const { revenue } = computeBilling({
+      ...base,
+      price_per_10k_class_a: 0,
+      price_per_10k_class_b: 0,
+      price_per_10k_class_c: 0,
+      price_per_10k_class_d: 0,
+    }, plans);
+    expect(revenue).toBe(0);
   });
 });

@@ -63,8 +63,32 @@ router.put('/:accountId', requirePermission(CUSTOMERS_WRITE), (req, res) => {
     plan,
     price_per_gb_storage,
     price_per_gb_download,
+    price_per_10k_class_a,
+    price_per_10k_class_b,
+    price_per_10k_class_c,
+    price_per_10k_class_d,
     notes,
   } = req.body ?? {};
+
+  // Rates must be finite and non-negative; anything else is a client bug and
+  // a silently-stored NaN would poison every billing figure downstream.
+  const rates = {
+    price_per_gb_storage,
+    price_per_gb_download,
+    price_per_10k_class_a,
+    price_per_10k_class_b,
+    price_per_10k_class_c,
+    price_per_10k_class_d,
+  };
+  const rate = {};
+  for (const [k, v] of Object.entries(rates)) {
+    if (v === undefined || v === null || v === '') { rate[k] = null; continue; }
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: `${k} must be a non-negative number` });
+    }
+    rate[k] = n;
+  }
 
   const now = new Date().toISOString();
   const existing = db.prepare('SELECT id FROM customer_metadata WHERE account_id = ?').get(accountId);
@@ -73,14 +97,19 @@ router.put('/:accountId', requirePermission(CUSTOMERS_WRITE), (req, res) => {
     db.prepare(`
       UPDATE customer_metadata
       SET display_name=?, industry=?, plan=?, price_per_gb_storage=?,
-          price_per_gb_download=?, notes=?, updated_at=?
+          price_per_gb_download=?, price_per_10k_class_a=?, price_per_10k_class_b=?,
+          price_per_10k_class_c=?, price_per_10k_class_d=?, notes=?, updated_at=?
       WHERE account_id=?
     `).run(
       display_name ?? null,
       industry ?? null,
       plan ?? null,
-      price_per_gb_storage ?? null,
-      price_per_gb_download ?? null,
+      rate.price_per_gb_storage,
+      rate.price_per_gb_download,
+      rate.price_per_10k_class_a,
+      rate.price_per_10k_class_b,
+      rate.price_per_10k_class_c,
+      rate.price_per_10k_class_d,
       notes ?? null,
       now,
       accountId,
@@ -88,15 +117,21 @@ router.put('/:accountId', requirePermission(CUSTOMERS_WRITE), (req, res) => {
   } else {
     db.prepare(`
       INSERT INTO customer_metadata
-        (account_id, display_name, industry, plan, price_per_gb_storage, price_per_gb_download, notes, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
+        (account_id, display_name, industry, plan, price_per_gb_storage, price_per_gb_download,
+         price_per_10k_class_a, price_per_10k_class_b, price_per_10k_class_c, price_per_10k_class_d,
+         notes, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       accountId,
       display_name ?? null,
       industry ?? null,
       plan ?? null,
-      price_per_gb_storage ?? null,
-      price_per_gb_download ?? null,
+      rate.price_per_gb_storage,
+      rate.price_per_gb_download,
+      rate.price_per_10k_class_a,
+      rate.price_per_10k_class_b,
+      rate.price_per_10k_class_c,
+      rate.price_per_10k_class_d,
       notes ?? null,
       now,
       now,
@@ -106,7 +141,7 @@ router.put('/:accountId', requirePermission(CUSTOMERS_WRITE), (req, res) => {
   audit({
     actorId: req.session.user.id,
     action: 'metadata.upserted',
-    details: { accountId, plan, price_per_gb_storage, price_per_gb_download },
+    details: { accountId, plan, ...rate },
     ip: req.ip,
   });
 

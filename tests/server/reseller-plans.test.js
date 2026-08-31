@@ -135,3 +135,58 @@ describe('PUT /:id update plan', () => {
     expect(t1After.egressPerGb).toBe(originalEgress);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pinning a plan to a B2 partner group. Partners who price per group (Hot /
+// Cool) need group membership to decide the rate, not per-account editing.
+// ---------------------------------------------------------------------------
+describe('PUT /:id group pinning', () => {
+  it('pins a plan to a group and returns it as groupId', async () => {
+    const r = await ap('/api/admin/reseller-plans/tier-1', { groupId: '166701' });
+    expect(r.status).toBe(200);
+
+    const list = await ag('/api/admin/reseller-plans');
+    const t1 = list.body.plans.find((p) => p.id === 'tier-1');
+    expect(t1.groupId).toBe('166701');
+  });
+
+  it('leaves the pin alone when groupId is not in the body', async () => {
+    await ap('/api/admin/reseller-plans/tier-1', { groupId: '166701' });
+    await ap('/api/admin/reseller-plans/tier-1', { storagePerTb: 3.42 });
+
+    const list = await ag('/api/admin/reseller-plans');
+    const t1 = list.body.plans.find((p) => p.id === 'tier-1');
+    expect(t1.groupId).toBe('166701');
+    expect(t1.storagePerTb).toBe(3.42);
+  });
+
+  it('refuses to pin one group to two plans', async () => {
+    await ap('/api/admin/reseller-plans/tier-1', { groupId: '166701' });
+    const r = await ap('/api/admin/reseller-plans/tier-2', { groupId: '166701' });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/166701/);
+
+    const list = await ag('/api/admin/reseller-plans');
+    expect(list.body.plans.find((p) => p.id === 'tier-2').groupId).toBeNull();
+  });
+
+  it('unpins on empty string and on null', async () => {
+    await ap('/api/admin/reseller-plans/tier-3', { groupId: '166702' });
+    let r = await ap('/api/admin/reseller-plans/tier-3', { groupId: '' });
+    expect(r.status).toBe(200);
+    let list = await ag('/api/admin/reseller-plans');
+    expect(list.body.plans.find((p) => p.id === 'tier-3').groupId).toBeNull();
+
+    await ap('/api/admin/reseller-plans/tier-3', { groupId: '166702' });
+    r = await ap('/api/admin/reseller-plans/tier-3', { groupId: null });
+    expect(r.status).toBe(200);
+    list = await ag('/api/admin/reseller-plans');
+    expect(list.body.plans.find((p) => p.id === 'tier-3').groupId).toBeNull();
+  });
+
+  it('lets a plan keep its own pin on re-save', async () => {
+    await ap('/api/admin/reseller-plans/tier-1', { groupId: '166701' });
+    const r = await ap('/api/admin/reseller-plans/tier-1', { groupId: '166701' });
+    expect(r.status).toBe(200);
+  });
+});
