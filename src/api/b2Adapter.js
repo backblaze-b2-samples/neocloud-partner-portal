@@ -1372,10 +1372,11 @@ export async function getObjectCounts() {
     // Map<bucketId, { accountId, count, totalBytes, countedAt }>
     const map = new Map(
       (counts || []).map((c) => [c.bucketId, {
-        accountId:  c.accountId,
-        count:      c.objectCount,
-        totalBytes: c.totalBytes || 0,
-        countedAt:  c.countedAt,
+        accountId:   c.accountId,
+        count:       c.objectCount,
+        totalBytes:  c.totalBytes || 0,
+        indexStatus: c.indexStatus || 'indexed',
+        countedAt:   c.countedAt,
       }])
     );
     _objectCountsCache    = map;

@@ -338,6 +338,17 @@ addColumnIfMissing('customer_metadata', 'price_per_10k_class_b', 'REAL');
 addColumnIfMissing('customer_metadata', 'price_per_10k_class_c', 'REAL');
 addColumnIfMissing('customer_metadata', 'price_per_10k_class_d', 'REAL');
 
+// Migration: record whether a bucket's files were actually indexed.
+// walkBucket paginates b2_list_file_names 1000 at a time and writes a file_index
+// row per file, which is fine for millions of objects and hopeless for billions
+// (one real partner account holds 2.46e9 files across 36 buckets — ~2.46M
+// sequential API calls against a job that reruns every 24h). Buckets over the
+// ceiling are recorded as skipped so later runs cost nothing and the read path
+// knows the totals are not usable.
+//   'indexed'           — walked fully; object_count/total_bytes are authoritative
+//   'skipped_too_large' — over the ceiling; counts are 0 and must not be trusted
+addColumnIfMissing('object_counts', 'index_status', "TEXT NOT NULL DEFAULT 'indexed'");
+
 // Migration: support read-only impersonation. When non-null, the session is
 // acting *as* the impersonating_user_id (effective identity); the original
 // sessions.user_id remains the staff actor for audit purposes.

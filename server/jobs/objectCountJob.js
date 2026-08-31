@@ -33,26 +33,56 @@ const LIST_MAX_PER_PAGE = 1000;                 // b2_list_file_names maxFileCou
 // When true the job also writes per-file metadata to the file_index table.
 const INDEX_FILES       = true;
 
+// Ceiling on files walked per bucket. b2_list_file_names has no count endpoint,
+// so size is only discoverable by walking — the ceiling bounds the discovery.
+// A bucket that crosses it is recorded as skipped_too_large and is not walked
+// again on scheduled runs, so the cost is paid once, not daily. Storage and
+// object totals for such accounts come from the Usage CSV / Partner API
+// instead, both of which are authoritative and free.
+//
+// Default 1,000,000 = 1,000 pages ≈ a couple of minutes per oversized bucket,
+// once. Override with OBJECT_INDEX_MAX_FILES (0 disables the ceiling).
+const MAX_FILES_PER_BUCKET = (() => {
+  const raw = Number(process.env.OBJECT_INDEX_MAX_FILES);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  return 1_000_000;
+})();
+
+export const INDEX_STATUS_OK       = 'indexed';
+export const INDEX_STATUS_TOO_BIG  = 'skipped_too_large';
+
 // ---------------------------------------------------------------------------
 // DB helpers (better-sqlite3 is synchronous — no await needed)
 // ---------------------------------------------------------------------------
 
 const stmtUpsertCount = db.prepare(`
-  INSERT INTO object_counts (bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO object_counts (bucket_id, account_id, bucket_name, object_count, total_bytes, index_status, counted_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(bucket_id) DO UPDATE SET
     account_id   = excluded.account_id,
     bucket_name  = excluded.bucket_name,
     object_count = excluded.object_count,
     total_bytes  = excluded.total_bytes,
+    index_status = excluded.index_status,
     counted_at   = excluded.counted_at,
     updated_at   = excluded.updated_at
 `);
 
-function upsertCount(bucketId, accountId, bucketName, objectCount, totalBytes) {
+function upsertCount(bucketId, accountId, bucketName, objectCount, totalBytes, indexStatus = INDEX_STATUS_OK) {
   const now = new Date().toISOString();
-  stmtUpsertCount.run(bucketId, accountId, bucketName || bucketId, objectCount, totalBytes || 0, now, now);
+  stmtUpsertCount.run(bucketId, accountId, bucketName || bucketId, objectCount, totalBytes || 0, indexStatus, now, now);
 }
+
+// Which buckets were skipped last run, so a scheduled run can avoid re-walking
+// them. Keyed by bucket_id.
+const stmtIndexStatus = db.prepare('SELECT index_status FROM object_counts WHERE bucket_id = ?');
+function wasSkipped(bucketId) {
+  return stmtIndexStatus.get(bucketId)?.index_status === INDEX_STATUS_TOO_BIG;
+}
+
+// A partial index is worse than none: the file browser would silently show a
+// fraction of the bucket with no indication it was truncated.
+const stmtDropIndex = db.prepare('DELETE FROM file_index WHERE bucket_id = ?');
 
 // file_index upsert — called inside a transaction per page to keep writes fast.
 const stmtUpsertFile = db.prepare(`
@@ -169,6 +199,15 @@ async function walkBucket(auth, bucketId) {
     if (INDEX_FILES && files.length > 0) {
       upsertFilePage(bucketId, files, indexedAt);
     }
+
+    // Over the ceiling: abandon the walk. Drop whatever was indexed so far —
+    // a truncated file_index reads as a complete one — and report zero totals
+    // so the read path falls through to the Usage CSV / Partner API rather
+    // than billing against an undercount.
+    if (MAX_FILES_PER_BUCKET > 0 && count > MAX_FILES_PER_BUCKET) {
+      if (INDEX_FILES) stmtDropIndex.run(bucketId);
+      return { count: 0, totalBytes: 0, indexStatus: INDEX_STATUS_TOO_BIG, observed: count };
+    }
   } while (nextFileName);
 
   // Remove any rows from a previous run that no longer exist in the bucket.
@@ -176,14 +215,17 @@ async function walkBucket(auth, bucketId) {
     stmtPruneStale.run(bucketId, indexedAt);
   }
 
-  return { count, totalBytes };
+  return { count, totalBytes, indexStatus: INDEX_STATUS_OK, observed: count };
 }
 
 // ---------------------------------------------------------------------------
 // Per-account counting
 // ---------------------------------------------------------------------------
 
-async function processAccount(storedCred) {
+// `force` re-walks buckets previously marked too large. Scheduled runs pass
+// false so an oversized bucket costs nothing after the first encounter; the
+// on-demand "Refresh counts" button passes true, since that is a human asking.
+async function processAccount(storedCred, { force = false } = {}) {
   const { account_id: accountId } = storedCred;
   let auth;
   try {
@@ -197,10 +239,28 @@ async function processAccount(storedCred) {
   buckets = buckets || [];
 
   let bucketsProcessed = 0;
+  let bucketsSkipped   = 0;
   for (const bucket of buckets) {
+    if (!force && wasSkipped(bucket.bucketId)) {
+      bucketsSkipped++;
+      console.log(
+        `[objectCountJob] ${accountId}/${bucket.bucketName}: skipped — over ` +
+        `${MAX_FILES_PER_BUCKET.toLocaleString()} files on a previous run`
+      );
+      continue;
+    }
     try {
-      const { count, totalBytes } = await walkBucket(auth, bucket.bucketId);
-      upsertCount(bucket.bucketId, accountId, bucket.bucketName, count, totalBytes);
+      const { count, totalBytes, indexStatus, observed } = await walkBucket(auth, bucket.bucketId);
+      upsertCount(bucket.bucketId, accountId, bucket.bucketName, count, totalBytes, indexStatus);
+      if (indexStatus === INDEX_STATUS_TOO_BIG) {
+        bucketsSkipped++;
+        console.warn(
+          `[objectCountJob] ${accountId}/${bucket.bucketName}: over ` +
+          `${MAX_FILES_PER_BUCKET.toLocaleString()} files (saw ${observed.toLocaleString()}) — ` +
+          `index abandoned; storage will come from the Usage CSV / Partner API`
+        );
+        continue;
+      }
       bucketsProcessed++;
       console.log(
         `[objectCountJob] ${accountId}/${bucket.bucketName}: ${count.toLocaleString()} objects, ` +
@@ -212,7 +272,7 @@ async function processAccount(storedCred) {
     }
   }
 
-  return { accountId, bucketsProcessed };
+  return { accountId, bucketsProcessed, bucketsSkipped };
 }
 
 // ---------------------------------------------------------------------------
@@ -232,22 +292,27 @@ export async function runObjectCountJob() {
   console.log(`[objectCountJob] processing ${credentials.length} sub-account(s) in batches of ${CONCURRENCY}`);
 
   let totalBuckets = 0;
+  let totalSkipped = 0;
   let totalErrors  = 0;
 
   // Process in batches to limit concurrent B2 connections.
   for (let i = 0; i < credentials.length; i += CONCURRENCY) {
     const batch   = credentials.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(batch.map(processAccount));
+    const results = await Promise.all(batch.map((c) => processAccount(c)));
     for (const r of results) {
       if (r.error) totalErrors++;
-      else totalBuckets += r.bucketsProcessed;
+      else {
+        totalBuckets += r.bucketsProcessed;
+        totalSkipped += r.bucketsSkipped || 0;
+      }
     }
   }
 
   const elapsedSec = ((Date.now() - jobStart) / 1000).toFixed(1);
   console.log(
     `[objectCountJob] done — ${totalBuckets} bucket(s) counted across ` +
-    `${credentials.length} account(s) (${totalErrors} error(s)) in ${elapsedSec}s`
+    `${credentials.length} account(s) (${totalErrors} error(s), ` +
+    `${totalSkipped} skipped as too large) in ${elapsedSec}s`
   );
 }
 
@@ -262,7 +327,7 @@ export async function runForAccount(accountId) {
   if (!cred) throw new Error(`No stored credentials for accountId ${accountId}`);
   console.log(`[objectCountJob] on-demand refresh requested for ${accountId} (${cred.email})`);
   const start = Date.now();
-  const result = await processAccount(cred);
+  const result = await processAccount(cred, { force: true });
   const ms = Date.now() - start;
   console.log(
     `[objectCountJob] on-demand for ${accountId} done — ` +

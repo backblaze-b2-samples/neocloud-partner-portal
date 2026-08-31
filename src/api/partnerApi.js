@@ -197,6 +197,41 @@ export async function getResellerPlans() {
   }
 }
 
+/**
+ * Roll per-bucket object_counts rows up to per-account totals.
+ *
+ * Buckets the index job gave up on (index_status 'skipped_too_large') carry
+ * zeroed counts, and an account may hold a mix of walked and skipped buckets.
+ * Summing that mix would present a partial figure as a total, understating
+ * storage and therefore revenue, so any account with a skipped bucket is
+ * omitted entirely — callers then fall through to the Usage CSV / Partner API
+ * figure, both of which are authoritative.
+ *
+ * @param objectCounts Map<bucketId, { accountId, count, totalBytes, indexStatus }>
+ */
+export function aggregateObjectCounts(objectCounts) {
+  const bytesByAccount   = new Map();
+  const objectsByAccount = new Map();
+  const partialAccounts  = new Set();
+
+  for (const [, oc] of objectCounts) {
+    if (!oc?.accountId) continue; // map values include accountId via the GET response shape
+    if (oc.indexStatus && oc.indexStatus !== 'indexed') {
+      partialAccounts.add(oc.accountId);
+      continue;
+    }
+    bytesByAccount.set(oc.accountId, (bytesByAccount.get(oc.accountId) || 0) + (oc.totalBytes || 0));
+    objectsByAccount.set(oc.accountId, (objectsByAccount.get(oc.accountId) || 0) + (oc.count || 0));
+  }
+
+  for (const accountId of partialAccounts) {
+    bytesByAccount.delete(accountId);
+    objectsByAccount.delete(accountId);
+  }
+
+  return { bytesByAccount, objectsByAccount };
+}
+
 // All customers across all groups (used by views that want a flat list).
 export async function getCustomers({ groupId } = {}) {
   if (useMocks()) {
@@ -350,13 +385,7 @@ export async function getCustomers({ groupId } = {}) {
 
   // Sum object_counts per accountId so we can use it as a per-customer storage
   // source, and roll the file counts up the same way for the Objects column.
-  const bytesByAccount   = new Map();
-  const objectsByAccount = new Map();
-  for (const [, oc] of objectCounts) {
-    if (!oc?.accountId) continue; // map values now include accountId via the GET response shape
-    bytesByAccount.set(oc.accountId, (bytesByAccount.get(oc.accountId) || 0) + (oc.totalBytes || 0));
-    objectsByAccount.set(oc.accountId, (objectsByAccount.get(oc.accountId) || 0) + (oc.count || 0));
-  }
+  const { bytesByAccount, objectsByAccount } = aggregateObjectCounts(objectCounts);
 
   const enriched = customers.map((c) => {
     // Ejected sub-accounts are no longer the partner's billing responsibility,
