@@ -10,7 +10,7 @@ import {
   PageHeader, MetricCard, Card, CardHeader, Tabs, HealthPill,
   Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart, DonutChart, CHART_COLORS } from '../components/charts.jsx';
+import { TrendAreaChart, DonutChart, CHART_COLORS, useChartColors } from '../components/charts.jsx';
 import { currency, percent, deltaSign, compactNumber } from '../lib/format.js';
 import { useNav } from '../lib/nav.js';
 import * as partner from '../api/partnerApi.js';
@@ -43,6 +43,7 @@ function periodDelta(series, key) {
 }
 
 export default function CockpitView() {
+  const chartColors = useChartColors();
   const { navigate } = useNav();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -131,8 +132,8 @@ export default function CockpitView() {
             height={240}
             yFormatter={(n) => currency(n, { compact: true })}
             series={[
-              { key: 'revenue', name: 'Revenue', color: '#2BD68A', format: (n) => currency(n) },
-              { key: 'cost', name: 'Backblaze cost', color: '#E61F18', format: (n) => currency(n) },
+              { key: 'revenue', name: 'Revenue', color: chartColors.green, format: (n) => currency(n) },
+              { key: 'cost', name: 'Backblaze cost', color: chartColors.red, format: (n) => currency(n) },
             ]}
           />
         </Card>

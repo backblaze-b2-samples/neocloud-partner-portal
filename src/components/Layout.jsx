@@ -4,6 +4,7 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
+  Sun, Moon, Monitor,
   Lock, Shield, Menu, X, Code2, Plug, KeySquare,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
@@ -91,7 +92,7 @@ function Logo() {
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-bb-red shadow-glow">
           <span className="font-semibold text-white">B2</span>
         </div>
-        <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-accent-green ring-2 ring-ink-900 live-dot" />
+        <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-accent-green ring-2 ring-ink-900" />
       </div>
       <div>
         <div className="text-sm font-semibold leading-tight text-ink-100">
@@ -281,6 +282,37 @@ function ModePill({ isLive }) {
   );
 }
 
+// Cycles light -> dark -> system. A three-state control rather than a binary
+// switch because 'system' is the default: without it, a user who follows their
+// OS theme has no way back to that once they touch the toggle.
+const THEME_STEPS = [
+  { pref: 'light',  icon: Sun,     label: 'Light theme'  },
+  { pref: 'dark',   icon: Moon,    label: 'Dark theme'   },
+  { pref: 'system', icon: Monitor, label: 'Match system' },
+];
+
+export function ThemeToggle({ className = '' }) {
+  const { themePref, theme, setTheme } = useApp();
+  const i = Math.max(0, THEME_STEPS.findIndex((s) => s.pref === themePref));
+  const step = THEME_STEPS[i];
+  const next = THEME_STEPS[(i + 1) % THEME_STEPS.length];
+  const Icon = step.icon;
+
+  return (
+    <button
+      onClick={() => setTheme(next.pref)}
+      title={`${step.label}${themePref === 'system' ? ` (currently ${theme})` : ''} — click for ${next.label.toLowerCase()}`}
+      aria-label={`${step.label}. Switch to ${next.label.toLowerCase()}`}
+      className={cx(
+        'grid h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:h-8 sm:w-8',
+        className,
+      )}
+    >
+      <Icon size={14} />
+    </button>
+  );
+}
+
 export function TopBar({ active, onOpenSettings, onMenu }) {
   const { isLive, hasCreds, setMode, canGoLive } = useApp();
   const current = NAV.find((n) => n.id === active);
@@ -334,6 +366,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
         </div>
 
         <ApiActivityButton />
+        <ThemeToggle />
         {/* Gear is redundant with the nav on mobile; show only on desktop. */}
         <button
           onClick={onOpenSettings}
@@ -346,7 +379,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
           <Bell size={14} />
         </button>
         <div className="hidden h-8 items-center gap-2 rounded-md border border-ink-700 bg-ink-850 px-2 text-[11px] text-ink-300 md:inline-flex">
-          <span className={cx('h-1.5 w-1.5 rounded-full live-dot', isLive ? 'bg-accent-green' : 'bg-accent-violet')} />
+          <span className={cx('h-1.5 w-1.5 rounded-full', isLive ? 'bg-accent-green' : 'bg-accent-violet')} />
           <span>{isLive ? (hasCreds ? 'Live · 4 regions' : 'Live · no creds') : 'Demo · 4 regions'}</span>
         </div>
       </div>
@@ -599,6 +632,7 @@ export function CustomerTopBar({ active, onMenu }) {
       </div>
       <div className="flex items-center gap-2">
         <ApiActivityButton />
+        <ThemeToggle />
         <button className="hidden h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:grid sm:h-8 sm:w-8">
           <Bell size={14} />
         </button>

@@ -4,16 +4,18 @@ import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag,
   LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart, StackedBarChart, DonutChart } from '../components/charts.jsx';
+import { TrendAreaChart, StackedBarChart, DonutChart, useChartColors } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import * as partner from '../api/partnerApi.js';
 import { REGIONS } from '../data/regions.js';
 import { bytes, percent } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
 
-const COLORS = ['#3DD9D6', '#9B7CFF', '#F5B73E', '#2BD68A'];
+const colorsFor = (c) => [c.teal, c.violet, c.amber, c.green];
 
 export default function RegionView() {
+  const chartColors = useChartColors();
+  const COLORS = colorsFor(chartColors);
   const { isLive } = useApp();
   const [loading, setLoading] = useState(true);
   const [regionUsage, setRegionUsage] = useState([]);
@@ -356,8 +358,8 @@ export default function RegionView() {
           <StackedBarChart
             data={barData}
             series={[
-              { key: 'storage', name: 'Storage', color: '#E61F18', format: bytes },
-              { key: 'egress', name: 'Egress (30d)', color: '#3DD9D6', format: bytes },
+              { key: 'storage', name: 'Storage', color: chartColors.red, format: bytes },
+              { key: 'egress', name: 'Egress (30d)', color: chartColors.teal, format: bytes },
             ]}
             yFormatter={bytes}
           />

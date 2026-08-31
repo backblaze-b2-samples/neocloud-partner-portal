@@ -8,7 +8,7 @@ import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart, StackedBarChart } from '../components/charts.jsx';
+import { TrendAreaChart, StackedBarChart, useChartColors } from '../components/charts.jsx';
 import { BUCKETS } from '../data/buckets.js';
 import * as b2 from '../api/b2Adapter.js';
 import { deriveKeyCoverage, coverageToAvailability, coverageStatusTitle, getKeyActivityLabel } from '../api/accessLogCoverage.js';
@@ -30,6 +30,7 @@ const POSTURE = {
 };
 
 export default function KeyDetailView({ keyId, customerId, accountId }) {
+  const chartColors = useChartColors();
   const { navigate } = useNav();
   const { isLive, isCustomer, isCustomerAdmin } = useApp();
   const { customers } = useCustomers();
@@ -239,10 +240,10 @@ export default function KeyDetailView({ keyId, customerId, accountId }) {
               <TrendAreaChart
                 data={usage}
                 series={[
-                  { key: 'classA', name: 'Class A (uploads, free)',        color: '#3DD9D6', format: compactNumber },
-                  { key: 'classB', name: 'Class B (downloads)',            color: '#9B7CFF', format: compactNumber },
-                  { key: 'classC', name: 'Class C (metadata)',             color: '#F5B73E', format: compactNumber },
-                  { key: 'classD', name: 'Class D (event notifications)',  color: '#F47171', format: compactNumber },
+                  { key: 'classA', name: 'Class A (uploads, free)',        color: chartColors.teal, format: compactNumber },
+                  { key: 'classB', name: 'Class B (downloads)',            color: chartColors.violet, format: compactNumber },
+                  { key: 'classC', name: 'Class C (metadata)',             color: chartColors.amber, format: compactNumber },
+                  { key: 'classD', name: 'Class D (event notifications)',  color: chartColors.red, format: compactNumber },
                 ]}
                 yFormatter={compactNumber}
                 height={240}

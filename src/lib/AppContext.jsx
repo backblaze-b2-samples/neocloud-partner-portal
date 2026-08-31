@@ -9,6 +9,7 @@
 // =============================================================================
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { storedTheme, resolveTheme, applyTheme, persistTheme } from './theme.js';
 import { api, ApiError } from './apiClient.js';
 import { isDemoEmail } from './format.js';
 import { setTrainingEnabled } from './apiTrace.js';
@@ -52,6 +53,28 @@ export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
   const [impersonator, setImpersonator] = useState(null);
   const [authReady, setAuthReady] = useState(false);
+
+  // Theme preference: 'light' | 'dark' | 'system'. index.html already applied
+  // the right one before paint; this keeps React in step and handles changes.
+  const [themePref, setThemePrefState] = useState(storedTheme);
+
+  useEffect(() => { applyTheme(resolveTheme(themePref)); }, [themePref]);
+
+  // Follow the OS while the preference is 'system' — someone on macOS auto
+  // light/dark should see the portal turn over with everything else.
+  useEffect(() => {
+    if (themePref !== 'system') return;
+    let mq;
+    try { mq = window.matchMedia('(prefers-color-scheme: light)'); } catch { return; }
+    const onChange = () => applyTheme(resolveTheme('system'));
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [themePref]);
+
+  const setTheme = useCallback((pref) => {
+    setThemePrefState(pref);
+    persistTheme(pref);
+  }, []);
 
   useEffect(() => {
     persist(config);
@@ -188,6 +211,9 @@ export function AppProvider({ children }) {
     isAuthenticated: !!user,
     permissions,
     can,
+    themePref,
+    theme: resolveTheme(themePref),
+    setTheme,
     isAdmin: user?.role === 'admin',
     isManagerOrAdmin: user?.role === 'admin' || user?.role === 'manager',
     isSupport,

@@ -1,0 +1,88 @@
+/* =============================================================================
+   Theme palette.
+
+   Every colour the app uses is a CSS variable holding space-separated RGB
+   channels, so Tailwind can compose them with opacity modifiers
+   (`bg-ink-900/60` → `rgb(var(--ink-900) / 0.6)`). That is what lets ~1,700
+   existing `ink-*` classes work in both themes without a single `dark:` prefix.
+
+   The `ink` scale is named by ROLE, not by lightness: 950 is always the page
+   background and 100 is always the primary text colour. Light mode therefore
+   reverses the ramp rather than renaming anything.
+
+   Dark is the default and lives on :root, so a document with no data-theme
+   still renders exactly as it did before this file existed.
+   ============================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  --ink-950:  7 9 15;
+  --ink-900: 11 14 22;
+  --ink-850: 16 20 31;
+  --ink-800: 22 27 40;
+  --ink-700: 31 38 56;
+  --ink-600: 42 51 75;
+  --ink-500: 58 69 95;
+  --ink-400: 92 103 134;
+  --ink-300: 138 149 178;
+  --ink-200: 184 192 214;
+  --ink-100: 229 233 242;
+
+  --bb-red:     230 31 24;
+  --bb-red-dim: 184 24 20;
+
+  --accent-teal:   61 217 214;
+  --accent-violet: 155 124 255;
+  --accent-amber:  245 183 62;
+  --accent-green:  43 214 138;
+
+  /* Page wash. Two brand glows over the darkest surface. */
+  --page-glow-a: rgba(230, 31, 24, 0.08);
+  --page-glow-b: rgba(155, 124, 255, 0.06);
+
+  /* Shadows differ in kind, not just value: dark mode lifts a surface with a
+     white inset hairline, light mode with a real drop shadow. */
+  --shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 0 1px rgba(230, 31, 24, 0.45), 0 8px 32px -8px rgba(230, 31, 24, 0.5);
+  --card-inset:  rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Same roles, reversed ramp. Not a naive inversion: the light surfaces are
+     kept close together so borders still read, and the text end is pushed
+     darker than a straight flip would give, for contrast on white. */
+  --ink-950: 246 247 250;
+  --ink-900: 255 255 255;
+  --ink-850: 241 243 247;
+  --ink-800: 232 235 241;
+  --ink-700: 216 222 232;
+  --ink-600: 191 199 214;
+  --ink-500: 154 165 184;
+  --ink-400: 102 113 138;
+  --ink-300:  74  85 112;
+  --ink-200:  44  52  72;
+  --ink-100:  15  20  32;
+
+  /* Brand red darkened just enough to clear 4.5:1 as text on white. Buttons
+     still read as Backblaze red. */
+  --bb-red:     200 24 18;
+  --bb-red-dim: 164 18 14;
+
+  /* The dark-mode accents are tuned for a near-black background and fail
+     contrast on white, so light mode gets its own darker set rather than
+     reusing them. */
+  --accent-teal:   14 143 140;
+  --accent-violet: 107  69 214;
+  --accent-amber:  168 110   0;
+  --accent-green:   14 138  82;
+
+  --page-glow-a: rgba(230, 31, 24, 0.05);
+  --page-glow-b: rgba(155, 124, 255, 0.05);
+
+  --shadow-card: 0 1px 2px 0 rgba(15, 20, 32, 0.06), 0 8px 24px -16px rgba(15, 20, 32, 0.18);
+  --shadow-glow: 0 0 0 1px rgba(200, 24, 18, 0.35), 0 8px 32px -8px rgba(200, 24, 18, 0.28);
+  --card-inset:  rgba(15, 20, 32, 0.06);
+}

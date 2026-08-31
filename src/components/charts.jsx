@@ -1,6 +1,6 @@
 // Chart wrappers — line, area, stacked bar, donut, sparkline, heatmap.
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ResponsiveContainer, AreaChart, Area, LineChart, Line,
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -8,22 +8,100 @@ import {
 } from 'recharts';
 import { bytes, compactNumber, shortDate } from '../lib/format.js';
 
-const RED = '#E61F18';
-const TEAL = '#3DD9D6';
-const VIOLET = '#9B7CFF';
-const AMBER = '#F5B73E';
-const GREEN = '#2BD68A';
-export const CHART_COLORS = [RED, TEAL, VIOLET, AMBER, GREEN];
+// Recharts writes most colours as SVG presentation ATTRIBUTES (stroke="...",
+// fill="..."), and those do not resolve var(). So rather than hand charts a
+// CSS variable, resolve the variables to concrete rgb() strings once per theme
+// and hand over the values.
+const VARS = {
+  red:     '--bb-red',
+  teal:    '--accent-teal',
+  violet:  '--accent-violet',
+  amber:   '--accent-amber',
+  green:   '--accent-green',
+  grid:    '--ink-700',
+  border:  '--ink-600',
+  surface: '--ink-850',
+  page:    '--ink-900',
+  muted:   '--ink-400',
+  text:    '--ink-100',
+};
+
+// Values that stand in before the DOM can be read (SSR-less, but tests render
+// without a live stylesheet). These are the dark-theme originals.
+const FALLBACK = {
+  red: '#E61F18', teal: '#3DD9D6', violet: '#9B7CFF', amber: '#F5B73E', green: '#2BD68A',
+  grid: '#1F2638', border: '#2A334B', surface: '#10141F', page: '#0B0E16',
+  muted: '#5C6786', text: '#E5E9F2',
+};
+
+function readChartColors() {
+  if (typeof window === 'undefined' || !document?.documentElement) return FALLBACK;
+  const cs = getComputedStyle(document.documentElement);
+  const out = {};
+  for (const [key, varName] of Object.entries(VARS)) {
+    const channels = cs.getPropertyValue(varName).trim();
+    out[key] = channels ? `rgb(${channels})` : FALLBACK[key];
+  }
+  return out;
+}
+
+/**
+ * Chart colours for the current theme. Re-reads when the data-theme attribute
+ * changes, which is the single signal for a theme switch.
+ */
+export function useChartColors() {
+  const [colors, setColors] = useState(readChartColors);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const obs = new MutationObserver(() => setColors(readChartColors()));
+    obs.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    // 'system' preference: the attribute never changes, the OS does.
+    let mq;
+    const onMq = () => setColors(readChartColors());
+    try {
+      mq = window.matchMedia('(prefers-color-scheme: light)');
+      mq.addEventListener('change', onMq);
+    } catch { /* no matchMedia — attribute observer still covers explicit switches */ }
+    return () => {
+      obs.disconnect();
+      if (mq) mq.removeEventListener('change', onMq);
+    };
+  }, []);
+
+  return colors;
+}
+
+/** Series palette in a stable order, for charts that colour by index. */
+export function useChartPalette() {
+  const c = useChartColors();
+  return [c.red, c.teal, c.violet, c.amber, c.green];
+}
+
+// Kept for callers that need a colour outside a component. Dark-theme values.
+export const CHART_COLORS = [FALLBACK.red, FALLBACK.teal, FALLBACK.violet, FALLBACK.amber, FALLBACK.green];
+
+const RED = FALLBACK.red;
 
 // =============================================================================
 // Sparkline — small inline trend
 // =============================================================================
-export function Sparkline({ data = [], dataKey = 'value', color = RED, height = 44 }) {
+// Gradient ids end up inside url(#...), so they must survive as CSS
+// identifiers. Colours are now rgb() strings — parentheses, commas and spaces —
+// which silently broke the reference and left the fill rendering as flat grey.
+function idSafe(v) {
+  return String(v).replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+export function Sparkline({ data = [], dataKey = 'value', color, height = 44 }) {
+  const c = useChartColors();
+  color = color || c.red;
+  const gradId = `spark-${idSafe(dataKey)}-${idSafe(color)}`;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
         <defs>
-          <linearGradient id={`spark-${dataKey}-${color}`} x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={color} stopOpacity={0.4} />
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
@@ -33,7 +111,7 @@ export function Sparkline({ data = [], dataKey = 'value', color = RED, height = 
           dataKey={dataKey}
           stroke={color}
           strokeWidth={1.6}
-          fill={`url(#spark-${dataKey}-${color})`}
+          fill={`url(#${gradId})`}
           isAnimationActive={false}
         />
       </AreaChart>
@@ -51,6 +129,7 @@ export function TrendAreaChart({
   yFormatter = compactNumber,
   xKey = 'date',
 }) {
+  const c = useChartColors();
   return (
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -62,11 +141,11 @@ export function TrendAreaChart({
             </linearGradient>
           ))}
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1F2638" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke={c.grid} vertical={false} />
         <XAxis dataKey={xKey} tickFormatter={(v) => (typeof v === 'string' && v.length === 10 ? shortDate(v) : v)} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={yFormatter} tickLine={false} axisLine={false} width={56} />
         <Tooltip
-          contentStyle={{ background: '#10141F', border: '1px solid #2A334B', borderRadius: 8 }}
+          contentStyle={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: 8 }}
           formatter={(v, n, p) => {
             const s = series.find((x) => x.key === p.dataKey);
             return [s?.format ? s.format(v) : yFormatter(v), s?.name || n];
@@ -97,14 +176,15 @@ export function TrendAreaChart({
 // Stacked bar chart
 // =============================================================================
 export function StackedBarChart({ data, series, height = 240, xKey = 'name', yFormatter = compactNumber }) {
+  const c = useChartColors();
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1F2638" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke={c.grid} vertical={false} />
         <XAxis dataKey={xKey} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={yFormatter} tickLine={false} axisLine={false} width={56} />
         <Tooltip
-          contentStyle={{ background: '#10141F', border: '1px solid #2A334B', borderRadius: 8 }}
+          contentStyle={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: 8 }}
           formatter={(v, n, p) => {
             const s = series.find((x) => x.key === p.dataKey);
             return [s?.format ? s.format(v) : yFormatter(v), s?.name || n];
@@ -131,6 +211,7 @@ export function StackedBarChart({ data, series, height = 240, xKey = 'name', yFo
 // Donut chart — region/customer share
 // =============================================================================
 export function DonutChart({ data, dataKey = 'value', nameKey = 'name', height = 220, formatter = bytes }) {
+  const c = useChartColors();
   return (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
@@ -142,7 +223,7 @@ export function DonutChart({ data, dataKey = 'value', nameKey = 'name', height =
           outerRadius={86}
           paddingAngle={2}
           isAnimationActive={false}
-          stroke="#0B0E16"
+          stroke={c.page}
           strokeWidth={2}
         >
           {data.map((d, i) => (
@@ -150,7 +231,7 @@ export function DonutChart({ data, dataKey = 'value', nameKey = 'name', height =
           ))}
         </Pie>
         <Tooltip
-          contentStyle={{ background: '#10141F', border: '1px solid #2A334B', borderRadius: 8 }}
+          contentStyle={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: 8 }}
           formatter={(v) => formatter(v)}
         />
         <Legend
@@ -213,9 +294,10 @@ export function Heatmap({ cells, days = 14, hours = 24 }) {
     </div>
   );
 }
+// Backblaze red ramp over the raised surface. Both ends are CSS values so the
+// empty cell follows the theme; the red itself is brand and stays put.
 function heatColor(v) {
-  // Backblaze red ramp
-  if (v < 0.05) return '#10141F';
+  if (v < 0.05) return 'rgb(var(--ink-850))';
   const a = Math.min(1, 0.10 + v * 0.85);
-  return `rgba(230, 31, 24, ${a})`;
+  return `rgb(var(--bb-red) / ${a})`;
 }
