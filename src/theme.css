@@ -61,7 +61,7 @@
   --ink-700: 216 222 232;
   --ink-600: 191 199 214;
   --ink-500: 154 165 184;
-  --ink-400: 102 113 138;
+  --ink-400:  84  93 113;
   --ink-300:  74  85 112;
   --ink-200:  44  52  72;
   --ink-100:  15  20  32;
@@ -72,12 +72,16 @@
   --bb-red-dim: 164 18 14;
 
   /* The dark-mode accents are tuned for a near-black background and fail
-     contrast on white, so light mode gets its own darker set rather than
-     reusing them. */
-  --accent-teal:   14 143 140;
-  --accent-violet: 107  69 214;
-  --accent-amber:  168 110   0;
-  --accent-green:   14 138  82;
+     contrast on white, so light mode gets its own darker set.
+     Each is the LIGHTEST shade of its hue that still clears WCAG AA (4.5:1) in
+     the worst place it actually appears: a 9px method badge on a 15% tint of
+     its own colour, itself sitting on a selected row's 10% red tint. Measured
+     against the real composited stack in the API console, not eyeballed — the
+     first two passes looked fine and came out at 2.6 and 3.5:1. */
+  --accent-teal:    10 103 101;
+  --accent-violet: 101  65 201;
+  --accent-amber:  127  84   0;
+  --accent-green:   11 106  63;
 
   --page-glow-a: rgba(230, 31, 24, 0.05);
   --page-glow-b: rgba(155, 124, 255, 0.05);

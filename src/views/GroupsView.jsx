@@ -91,7 +91,11 @@ function GroupsList() {
               key={g.groupId}
               onClick={() => navigate('groups', { groupId: g.groupId })}
               className="group rounded-xl border border-ink-700 bg-ink-850/80 p-5 text-left shadow-card transition hover:border-ink-600 hover:bg-ink-850"
-              style={{ boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.04), 0 8px 24px -12px rgba(0,0,0,0.6), inset 4px 0 0 ${g.accent}55` }}
+              // Themed card shadow plus the group's identity stripe. The
+              // shadow used to be a hardcoded white inset over a heavy black
+              // drop, which is a dark-mode recipe: on a light surface the inset
+              // vanishes and the drop reads as a smudge.
+              style={{ boxShadow: `var(--shadow-card), inset 4px 0 0 ${g.accent}55` }}
             >
               <div className="flex items-start justify-between">
                 <div>

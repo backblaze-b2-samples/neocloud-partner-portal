@@ -330,7 +330,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
           <span>Partner Portal</span>
           <ChevronDown size={12} />
         </div>
-        <span className="hidden text-ink-600 sm:inline">/</span>
+        <span className="hidden text-ink-400 sm:inline">/</span>
         <span className="truncate font-medium text-ink-100">{current?.label || 'Dashboard'}</span>
       </div>
       <div className="flex items-center gap-1.5 sm:gap-2">
@@ -627,7 +627,7 @@ export function CustomerTopBar({ active, onMenu }) {
           <span>My Portal</span>
           <ChevronDown size={12} />
         </div>
-        <span className="hidden text-ink-600 sm:inline">/</span>
+        <span className="hidden text-ink-400 sm:inline">/</span>
         <span className="truncate font-medium text-ink-100">{label}</span>
       </div>
       <div className="flex items-center gap-2">
