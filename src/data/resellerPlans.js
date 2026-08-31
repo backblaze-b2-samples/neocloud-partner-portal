@@ -91,12 +91,18 @@ export function planByName(name, plans = RESELLER_PLANS) {
  * Compute revenue and COGS for a customer from their usage. Returns
  * { revenue, cogs, margin } in dollars (number, not currency-formatted).
  *
- * Pricing precedence:
+ * Pricing precedence (what the partner CHARGES):
  *   1. Per-customer override (customer.price_per_gb_storage / price_per_gb_download
  *      / price_per_10k_class_a..d) — if set, wins
  *   2. Plan default from RESELLER_PLANS — if customer.plan matches a tier
  *      (the plan itself may have been resolved from the account's group pin)
  *   3. B2 list price — if neither is set, customer is at-cost (no margin)
+ *
+ * Cost (what the partner PAYS Backblaze) is a separate axis: storage is
+ * negotiated per B2 partner group, so it arrives on the customer as
+ * costPerTbStorage, resolved from the group's row in group_costs. Absent that,
+ * B2 list applies. Egress and Class D COGS stay at B2 list — they are not
+ * negotiated per group today.
  *
  * Usage:
  *   storageBytes        — current snapshot bytes (or 30-day average)
@@ -136,15 +142,20 @@ export function computeBilling(customer, plans = RESELLER_PLANS) {
                 + (classCCount / 10_000) * classCPer10k
                 + (classDCount / 10_000) * classDPer10k;
 
-  // COGS — what the partner pays Backblaze. Mirrors B2's published pricing:
-  // A/B/C are always free, D has a daily free tier then a per-10k rate.
+  // COGS — what the partner pays Backblaze. Egress and Class D mirror B2's
+  // published pricing (A/B/C are always free, D has a daily free tier then a
+  // per-10k rate). Storage uses the group's negotiated rate where one is set:
+  // a partner at 30 PB does not pay list, and costing them at list makes every
+  // margin figure wrong.
+  const costPerTb = customer.costPerTbStorage ?? B2_LIST_PRICE.storagePerTb;
+
   const storageGb        = (customer.storageBytes || 0) / 1e9;
   const freeEgressGb     = storageGb * B2_LIST_PRICE.egressFreeMultiplier;
   const billableEgressGb = Math.max(0, egressGb - freeEgressGb);
   const freeClassD       = B2_LIST_PRICE.classDFreePerDay * 30;
   const billableClassD   = Math.max(0, classDCount - freeClassD);
 
-  const cogs = storageTb * B2_LIST_PRICE.storagePerTb
+  const cogs = storageTb * costPerTb
              + billableEgressGb * B2_LIST_PRICE.egressPerGb
              + (billableClassD / 10_000) * B2_LIST_PRICE.classDPer10k;
 

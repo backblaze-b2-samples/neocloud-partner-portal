@@ -106,7 +106,7 @@ export default function ResellerPlansView() {
               <TH className="text-right">Class C / 10k</TH>
               <TH className="text-right">Class D / 10k</TH>
               <TH className="text-right">Accounts</TH>
-              <TH className="text-right">Storage margin</TH>
+              <TH className="text-right">Margin vs list</TH>
               <TH className="text-right">{isAdmin && 'Actions'}</TH>
             </TR>
           </THead>
@@ -151,6 +151,9 @@ export default function ResellerPlansView() {
       />
 
       <div className="rounded-md border border-ink-700 bg-ink-900/40 p-4 text-[11px] text-ink-400">
+        Plans set what you <span className="text-ink-200">charge</span>. What you <span className="text-ink-200">pay</span> Backblaze
+        is negotiated per partner group — set it under <span className="text-ink-200">Groups → your cost for this group</span> — so
+        the margin column here is measured against B2 list price, not against your actual cost.
         Per-customer pricing overrides (under <span className="text-ink-200">Edit customer → pricing</span>) take precedence
         over plan defaults. Class A/B/C/D values stored in the database; editing is admin-only.
       </div>
@@ -167,8 +170,11 @@ function PlanRow({ plan, isAdmin, isNew = false, onSaved, onCancel, onDelete, on
   // Sync form when underlying plan changes (e.g. reload after save).
   useEffect(() => { setForm(initForm(plan)); }, [plan]);
 
-  // Margin against B2 list. A brand-new tier starts at 0/TB, which would divide
-  // by zero, so hold it at 0 until a rate is entered.
+  // Margin against B2 LIST, not against actual cost — a plan can apply across
+  // groups, and each group has its own negotiated rate (see Groups → your cost
+  // for this group). Real per-account margin lives in Billing. A brand-new tier
+  // starts at 0/TB, which would divide by zero, so hold it at 0 until a rate is
+  // entered.
   const storageMargin = plan.storagePerTb > 0
     ? (plan.storagePerTb - B2_LIST_PRICE.storagePerTb) / plan.storagePerTb
     : 0;

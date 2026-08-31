@@ -367,6 +367,23 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_reseller_plans_name ON reseller_plans(name);
 `);
 
+// What the partner PAYS Backblaze to store, per TB per month, for one B2
+// partner group. Groups are negotiated separately, so COGS is a property of the
+// group — not a constant. Reseller plans hold the other side: what the partner
+// CHARGES. Margin is the difference.
+//
+// Groups themselves live in the B2 Partner API; this is only the local cost
+// overlay, keyed on the API's group id. No row means "not negotiated", and
+// billing falls back to B2 list price.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS group_costs (
+    group_id    TEXT PRIMARY KEY,
+    cost_per_tb REAL NOT NULL,
+    notes       TEXT,
+    updated_at  TEXT NOT NULL
+  );
+`);
+
 // Migration: support read-only impersonation. When non-null, the session is
 // acting *as* the impersonating_user_id (effective identity); the original
 // sessions.user_id remains the staff actor for audit purposes.

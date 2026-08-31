@@ -303,3 +303,57 @@ describe('getResellerPlans empty vs failed', () => {
     expect(await getResellerPlans()).toEqual(RESELLER_PLANS);
   });
 });
+
+// ---------------------------------------------------------------------------
+// COGS is a separate axis from price. Storage cost is negotiated per B2 partner
+// group and arrives as costPerTbStorage; a partner at petabyte scale does not
+// pay list, and costing them at list makes every margin figure wrong.
+// ---------------------------------------------------------------------------
+describe('group-negotiated storage cost', () => {
+  const oneTb = { storageBytes: 1e12, plan: 'Reseller — Tier 1' }; // $25/TB revenue
+
+  it('falls back to B2 list when the group has no negotiated rate', () => {
+    const { cogs } = computeBilling(oneTb);
+    expect(cogs).toBeCloseTo(B2_LIST_PRICE.storagePerTb, 10);
+  });
+
+  it('uses the group rate when one is set', () => {
+    const { cogs } = computeBilling({ ...oneTb, costPerTbStorage: 3.42 });
+    expect(cogs).toBeCloseTo(3.42, 10);
+  });
+
+  it('honours a zero cost rather than treating it as unset', () => {
+    const { cogs } = computeBilling({ ...oneTb, costPerTbStorage: 0 });
+    expect(cogs).toBe(0);
+  });
+
+  it('widens margin relative to costing at list', () => {
+    const atList = computeBilling(oneTb);
+    const atCost = computeBilling({ ...oneTb, costPerTbStorage: 3.42 });
+    expect(atCost.revenue).toBe(atList.revenue);       // price is unchanged
+    expect(atCost.margin).toBeGreaterThan(atList.margin);
+  });
+
+  it('reproduces the Aylo shape: below-list cost turns a loss into a margin', () => {
+    // Cool: 2.10/TB cost. If the same 2.10 were read as the sell price while
+    // cost stayed at list, margin would be deeply negative — the misreading
+    // this separation exists to prevent.
+    const asPrice = computeBilling({ storageBytes: 1e15, price_per_gb_storage: 2.10 / 1000 });
+    expect(asPrice.margin).toBeLessThan(0);
+
+    const asCost = computeBilling({
+      storageBytes: 1e15,
+      price_per_gb_storage: 6 / 1000,   // what they charge
+      costPerTbStorage: 2.10,           // what they pay
+    });
+    expect(asCost.margin).toBeGreaterThan(0);
+  });
+
+  it('leaves egress and Class D COGS at B2 list', () => {
+    // 1 TB stored gives 3 TB free egress; 4 TB egress leaves 1 TB billable.
+    const { cogs } = computeBilling({
+      storageBytes: 1e12, egressBytes30d: 4e12, costPerTbStorage: 0,
+    });
+    expect(cogs).toBeCloseTo(1000 * B2_LIST_PRICE.egressPerGb, 6);
+  });
+});

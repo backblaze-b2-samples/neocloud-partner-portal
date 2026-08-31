@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { FolderTree, Users, ChevronRight, Plus, ArrowLeft } from 'lucide-react';
+import { FolderTree, Users, ChevronRight, Plus, ArrowLeft, Save, Loader2, X } from 'lucide-react';
 import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, HealthPill,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
 import { CreateCustomerDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
+import { B2_LIST_PRICE } from '../data/resellerPlans.js';
+import { api } from '../lib/apiClient.js';
+import { useApp } from '../lib/AppContext.jsx';
 import * as partner from '../api/partnerApi.js';
 import { bytes, currency, percent, shortDate } from '../lib/format.js';
 import { useNav } from '../lib/nav.js';
@@ -20,16 +23,18 @@ function GroupsList() {
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState([]);
   const [allCustomers, setAllCustomers] = useState([]);
+  const [groupCosts, setGroupCosts] = useState(new Map());
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState(null);
 
   const load = () => {
     setError(null);
     setLoading(true);
-    Promise.all([partner.listGroups(), partner.getCustomers()])
-      .then(([{ groups }, { customers }]) => {
+    Promise.all([partner.listGroups(), partner.getCustomers(), partner.getGroupCosts()])
+      .then(([{ groups }, { customers }, costs]) => {
         setGroups(groups);
         setAllCustomers(customers);
+        setGroupCosts(costs);
       })
       .catch((err) => setError(err?.message || String(err)))
       .finally(() => setLoading(false));
@@ -98,7 +103,14 @@ function GroupsList() {
               <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
                 <Stat label="Members" value={r.members} mono />
                 <Stat label="Storage" value={bytes(r.storage)} mono />
-                <Stat label="Egress (30d)" value={bytes(r.egress)} mono />
+                <Stat
+                  label="Cost / TB"
+                  value={groupCosts.has(g.groupId)
+                    ? currency(groupCosts.get(g.groupId))
+                    : `${currency(B2_LIST_PRICE.storagePerTb)} list`}
+                  mono
+                  accent={groupCosts.has(g.groupId) ? 'text-ink-100' : 'text-ink-500'}
+                />
                 <Stat label="Revenue (30d)" value={currency(r.revenue, { compact: true })} mono accent="text-accent-green" />
               </div>
               <div className="mt-3 flex items-center justify-between text-[11px] text-ink-400">
@@ -133,16 +145,18 @@ function GroupDetail({ groupId }) {
   const [loading, setLoading] = useState(true);
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
+  const [costPerTb, setCostPerTb] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState(null);
 
   const load = () => {
     setError(null);
     setLoading(true);
-    Promise.all([partner.getGroup(groupId), partner.getCustomers({ groupId })])
-      .then(([g, { customers }]) => {
+    Promise.all([partner.getGroup(groupId), partner.getCustomers({ groupId }), partner.getGroupCosts()])
+      .then(([g, { customers }, costs]) => {
         setGroup(g);
         setMembers(customers);
+        setCostPerTb(costs.has(String(groupId)) ? costs.get(String(groupId)) : null);
       })
       .catch((err) => setError(err?.message || String(err)))
       .finally(() => setLoading(false));
@@ -197,11 +211,18 @@ function GroupDetail({ groupId }) {
         <MetricCard label="Egress (30d)" value={bytes(totals.egress)} source="csv" accent="teal" />
         <MetricCard
           label="Margin (30d)"
-          value={percent((totals.revenue - totals.cogs) / totals.revenue, 1)}
+          value={totals.revenue > 0 ? percent((totals.revenue - totals.cogs) / totals.revenue, 1) : '—'}
           source="derived"
           accent="green"
         />
       </div>
+
+      <GroupCostCard
+        groupId={group.groupId}
+        costPerTb={costPerTb}
+        storageBytes={totals.storage}
+        onSaved={load}
+      />
 
       <Card padding="p-0">
         <div className="flex items-center justify-between border-b border-ink-700 px-5 py-4">
@@ -258,6 +279,134 @@ function GroupDetail({ groupId }) {
         }}
       />
     </div>
+  );
+}
+
+// The partner's own purchase rate for this group — the COGS half of margin.
+// The reseller plan holds the other half, what they charge. A group with no
+// negotiated rate falls back to B2 list, which for a partner storing petabytes
+// overstates cost and understates margin, so say so plainly rather than showing
+// a number that looks settled.
+function GroupCostCard({ groupId, costPerTb, storageBytes, onSaved }) {
+  const { isAdmin } = useApp();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue]     = useState(costPerTb != null ? String(costPerTb) : '');
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState('');
+
+  useEffect(() => {
+    setValue(costPerTb != null ? String(costPerTb) : '');
+    setEditing(false);
+  }, [costPerTb, groupId]);
+
+  const effective = costPerTb ?? B2_LIST_PRICE.storagePerTb;
+  const monthly   = (storageBytes / 1e12) * effective;
+
+  const save = async () => {
+    const n = parseFloat(value);
+    if (!Number.isFinite(n) || n < 0) { setError('Enter a non-negative number.'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.put(`/api/admin/group-costs/${encodeURIComponent(groupId)}`, { costPerTb: n });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(e?.body?.error || 'Could not save cost.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clear = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.delete(`/api/admin/group-costs/${encodeURIComponent(groupId)}`);
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(e?.body?.error || 'Could not clear cost.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card padding="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink-100">Your cost for this group</h3>
+          <p className="mt-0.5 text-[11.5px] text-ink-400">
+            What you pay Backblaze to store, per TB per month. Reseller plans set what you
+            charge; the gap is your margin.
+          </p>
+        </div>
+
+        {!editing ? (
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <div className="font-mono text-lg text-ink-100">{currency(effective)}<span className="text-xs text-ink-400">/TB</span></div>
+              <div className="text-[10.5px] text-ink-400">
+                {costPerTb != null
+                  ? `≈ ${currency(monthly, { compact: true })}/mo at current storage`
+                  : 'B2 list price — no negotiated rate set'}
+              </div>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => setEditing(true)}
+                className="rounded border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-[11px] text-ink-200 hover:bg-ink-800"
+              >
+                {costPerTb != null ? 'Edit' : 'Set cost'}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-ink-400">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                autoFocus
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                aria-label="Cost per TB"
+                className="h-8 w-28 rounded border border-ink-700 bg-ink-900 px-2 text-right font-mono text-xs text-ink-100"
+              />
+              <span className="text-xs text-ink-400">/TB</span>
+            </div>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="inline-flex items-center gap-1 rounded border border-bb-red/30 bg-bb-red px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-bb-redDim"
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} Save
+            </button>
+            {costPerTb != null && (
+              <button
+                onClick={clear}
+                disabled={saving}
+                title="Revert this group to B2 list price"
+                className="rounded border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-[11px] text-ink-300 hover:text-ink-100"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => { setEditing(false); setError(''); setValue(costPerTb != null ? String(costPerTb) : ''); }}
+              disabled={saving}
+              className="rounded border border-ink-700 bg-ink-850 px-2 py-1.5 text-[11px] text-ink-300 hover:text-ink-100"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        )}
+      </div>
+      {error && <p className="mt-2 text-[11px] text-bb-red">{error}</p>}
+    </Card>
   );
 }
 

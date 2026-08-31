@@ -236,6 +236,23 @@ export function aggregateObjectCounts(objectCounts) {
   return { bytesByAccount, objectsByAccount };
 }
 
+/**
+ * Negotiated storage cost per B2 partner group — what the partner PAYS
+ * Backblaze, as opposed to the reseller plans, which say what they charge.
+ *
+ * Returns Map<groupId, costPerTb>. An empty map means nothing is negotiated and
+ * every group falls back to B2 list price; a failed request is treated the same
+ * way, since guessing a cost would silently misstate margin.
+ */
+export async function getGroupCosts() {
+  try {
+    const d = await api.get('/api/admin/group-costs');
+    return new Map((d?.costs || []).map((c) => [String(c.groupId), c.costPerTb]));
+  } catch {
+    return new Map();
+  }
+}
+
 // All customers across all groups (used by views that want a flat list).
 export async function getCustomers({ groupId } = {}) {
   if (useMocks()) {
@@ -378,6 +395,8 @@ export async function getCustomers({ groupId } = {}) {
     getResellerPlans(),
   ]);
 
+  const groupCosts = await getGroupCosts();
+
   // groupId -> plan name, for accounts with no explicit plan of their own.
   // Pricing is a property of the B2 group for partners who price per group
   // (the common reseller shape), so this is the assignment that scales: add an
@@ -422,10 +441,16 @@ export async function getCustomers({ groupId } = {}) {
     // margin, which is visibly wrong and gets noticed.
     const plan = c.plan || planByGroup.get(String(c.groupId)) || null;
     const planSource = c.plan ? 'account' : (plan ? 'group' : null);
+    // What this account's group costs the partner. Undefined (not 0) when the
+    // group has no negotiated rate, so computeBilling falls back to B2 list
+    // rather than treating storage as free.
+    const costPerTbStorage = groupCosts.get(String(c.groupId));
+
     const billingInput = {
       ...c,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       plan,
+      costPerTbStorage,
     };
     const { revenue, cogs } = computeBilling(billingInput, plans);
 
@@ -438,6 +463,7 @@ export async function getCustomers({ groupId } = {}) {
       ...c,
       plan,
       planSource,
+      costPerTbStorage: costPerTbStorage ?? null,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       objectCount,
       revenue30d: revenue,
