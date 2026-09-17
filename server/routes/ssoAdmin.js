@@ -16,7 +16,7 @@ import {
   updateMapping, deleteMapping, reorderMappings, findMapping,
 } from '../ssoStore.js';
 import { findRole } from '../roles.js';
-import { validateIssuerUrl, getDiscovery, clearDiscoveryCache } from '../sso/oidcClient.js';
+import { validateIssuerUrl, getDiscovery, clearDiscoveryCache, stripTrailingSlashes } from '../sso/oidcClient.js';
 import { audit } from '../audit.js';
 
 const router = express.Router();
@@ -25,7 +25,7 @@ router.use(requireAuth, requirePartnerScope, requireNotDemo, requireCsrf);
 // Strip a full discovery URL down to the issuer, since that is what operators
 // most often have in front of them when copying from their IdP console.
 function normalizeIssuer(raw) {
-  let v = String(raw || '').trim().replace(/\/+$/, '');
+  let v = stripTrailingSlashes(String(raw || '').trim());
   const suffix = '/.well-known/openid-configuration';
   if (v.endsWith(suffix)) v = v.slice(0, -suffix.length);
   return v;

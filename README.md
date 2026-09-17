@@ -180,6 +180,7 @@ Copy `.env.example` to `.env`. The variables that matter:
 | `ANTHROPIC_API_KEY` | Enables the MCP console's chat mode. Without it, the console falls back to the manual tool picker. |
 | `DB_PATH` | SQLite location. Defaults to `server/data/app.db`. |
 | `PORT`, `TRUST_PROXY`, `NODE_ENV` | Standard server runtime settings. |
+| `API_RATE_LIMIT` | Per-IP requests per 15 minutes on `/api` before a 429 (default 600). Login, SSO and credential-reveal have their own tighter limits. |
 
 `B2_MASTER_KEY_ID` and `B2_MASTER_APP_KEY` in `.env.example` are read **only** by the one-off `server/seed-master-buckets.mjs` utility. The running server does not use them — the master key comes from Settings, and per-customer operations use the encrypted sub-account keys in the database.
 

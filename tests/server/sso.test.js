@@ -13,7 +13,7 @@ import { attachSession } from '../../server/middleware/requireAuth.js';
 import ssoRouter from '../../server/routes/sso.js';
 import authRouter from '../../server/routes/auth.js';
 import adminRouter from '../../server/routes/admin.js';
-import { validateIssuerUrl, extractEmail, extractGroups } from '../../server/sso/oidcClient.js';
+import { validateIssuerUrl, extractEmail, extractGroups, stripTrailingSlashes } from '../../server/sso/oidcClient.js';
 import { resolveRole } from '../../server/sso/roleResolver.js';
 import { setConfig, getConfigPublic, isSsoUsable, createMapping, listMappings, reorderMappings } from '../../server/ssoStore.js';
 import { createRole } from '../../server/roles.js';
@@ -52,6 +52,24 @@ beforeEach(() => {
 // Issuer validation (SSRF hardening)
 // ---------------------------------------------------------------------------
 
+describe('stripTrailingSlashes', () => {
+  it('drops any number of trailing slashes and nothing else', () => {
+    expect(stripTrailingSlashes('https://idp.example.com/')).toBe('https://idp.example.com');
+    expect(stripTrailingSlashes('https://idp.example.com///')).toBe('https://idp.example.com');
+    expect(stripTrailingSlashes('https://idp.example.com/a/b')).toBe('https://idp.example.com/a/b');
+    expect(stripTrailingSlashes('')).toBe('');
+    expect(stripTrailingSlashes(null)).toBe('');
+    expect(stripTrailingSlashes('////')).toBe('');
+  });
+
+  it('is linear on a long run of slashes (the regex it replaced was quadratic)', () => {
+    const input = 'x' + '/'.repeat(200_000) + 'y' + '/'.repeat(200_000);
+    const t0 = performance.now();
+    expect(stripTrailingSlashes(input)).toBe('x' + '/'.repeat(200_000) + 'y');
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+});
+
 describe('validateIssuerUrl', () => {
   it('accepts a normal HTTPS issuer', () => {
     expect(() => validateIssuerUrl('https://login.microsoftonline.com/tid/v2.0')).not.toThrow();
@@ -73,7 +91,7 @@ describe('validateIssuerUrl', () => {
   });
 
   it('rejects private, loopback, and link-local addresses', () => {
-    for (const h of ['127.0.0.1', '10.1.2.3', '192.168.1.1', '172.16.0.1', '169.254.169.254']) {
+    for (const h of ['127.0.0.1', '10.1.2.3', '192.168.1.1', '172.16.0.1', '169.254.169.254', '100.64.0.1', '100.127.255.254']) {
       expect(() => validateIssuerUrl(`https://${h}/x`)).toThrow(/private or loopback/);
     }
   });

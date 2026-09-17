@@ -233,6 +233,19 @@ describe('discovery same-origin guard', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('callback rate limit', () => {
+  it('shares the per-IP SSO ceiling with /login and /exchange', async () => {
+    // ssoLimiter allows 30 hits per IP per window; burn them on /callback
+    // alone and the 31st must be refused before any state lookup happens.
+    let last;
+    for (let i = 0; i < 31; i++) {
+      last = await request(app).get('/api/auth/sso/callback?code=c&state=nope');
+    }
+    expect(last.status).toBe(302);
+    expect(last.headers.location).toMatch(/rate_limited/);
+  });
+});
+
 describe('account rules at the callback', () => {
   it('refuses to take over an existing password account', async () => {
     createUser({ email: 'dave@corp.example', passwordHash: 'h', role: 'user' });
