@@ -190,7 +190,7 @@ export default function CustomerDetailView({ customerId }) {
         title={customer.name}
         subtitle={isEjected
           ? `Account ${customer.accountId} · ejected ${customer.ejectedAt ? shortDate(customer.ejectedAt) : ''}${region?.code ? ` · last region ${region.flag} ${region.code}` : ''}`
-          : `Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region?.flag} ${region?.code}`}
+          : `Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region ? `${region.flag} ${region.code}` : '—'}`}
         actions={
           <div className="flex items-center gap-2">
             {isEjected
@@ -348,7 +348,7 @@ function OverviewTab({ customer, buckets, keys }) {
           <dl className="space-y-1.5 text-xs">
             <KV icon={<Mail size={12} />} label="Contact" value={customer.contactEmail} />
             <KV icon={<Hash size={12} />} label="Account ID" value={customer.accountId} mono />
-            <KV icon={<Globe size={12} />} label="Region" value={`${customer.region}`} mono />
+            <KV icon={<Globe size={12} />} label="Region" value={customer.region || '—'} mono />
             <KV label="Plan" value={customer.plan || <span className="text-ink-500 italic">not set</span>} />
             {customer.price_per_gb_storage != null && (
               <KV label="Billed storage" value={`$${customer.price_per_gb_storage}/GB/mo`} mono accent="text-accent-teal" />
@@ -441,7 +441,7 @@ function BucketDetailCard({ bucket, accountId, customerName, customerRegion }) {
         <Pill icon={<Lock size={11} />} label="Encryption" value={bucket.encryption} />
         <Pill icon={<ShieldCheck size={11} />} label="Object Lock" value={bucket.fileLock === 'none' ? 'disabled' : `${bucket.fileLock}`} />
         <Pill label="Versioning" value={bucket.versioning} />
-        <Pill icon={<Globe size={11} />} label="Region" value={`${region?.flag} ${region?.code}`} />
+        <Pill icon={<Globe size={11} />} label="Region" value={region ? `${region.flag} ${region.code}` : '—'} />
       </div>
 
       {bucket.lifecycleRules.length > 0 && (

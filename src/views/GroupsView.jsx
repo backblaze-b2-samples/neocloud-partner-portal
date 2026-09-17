@@ -257,7 +257,7 @@ function GroupDetail({ groupId }) {
                     <div className="font-medium text-ink-100">{c.name}</div>
                     {c.industry && <div className="text-[11px] text-ink-400">{c.industry}</div>}
                   </TD>
-                  <TD className="text-ink-200">{region?.flag} {region?.code}</TD>
+                  <TD className="text-ink-200">{region ? `${region.flag} ${region.code}` : '—'}</TD>
                   <TD className="text-ink-300">{c.plan}</TD>
                   <TD className="text-right font-mono">{bytes(c.storageBytes)}</TD>
                   <TD className="text-right font-mono">{currency(c.revenue30d, { compact: true })}</TD>

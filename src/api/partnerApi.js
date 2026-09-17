@@ -139,20 +139,21 @@ function memberToCustomer(member, groupId) {
       .replace(/\b\w/g, (l) => l.toUpperCase());
   }
 
-  // Infer region from the NeoCloud email naming convention:
+  // Infer region from the NeoCloud demo email naming convention:
   //   *-eu@*   → eu-central-003
   //   *-west@* → us-west-002
   //   *-east@* → us-east-005
-  // Falls back to us-west-002 for internal accounts without a suffix.
+  // Anything else is null — getCustomers fills it from the daily usage CSV
+  // (reporting_location) or stored credentials. It used to default to
+  // us-west-002, which showed a confident wrong region for every real
+  // customer account whose email doesn't follow the demo convention.
   function inferRegion(email = '') {
     const local = email.split('@')[0].toLowerCase();
     if (local.endsWith('-eu'))   return 'eu-central-003';
     if (local.endsWith('-ca'))   return 'ca-east-006';
     if (local.endsWith('-east')) return 'us-east-005';
     if (local.endsWith('-west')) return 'us-west-002';
-    // Internal accounts: james.rivera → east, everyone else → west
-    if (local.includes('rivera')) return 'us-east-005';
-    return 'us-west-002';
+    return null;
   }
 
   return {
@@ -344,7 +345,8 @@ export async function getCustomers({ groupId } = {}) {
   };
   const normalizeRegion = (r) => regionMap[r] ?? r;
 
-  // Merge stored region into each customer (overrides the email-inferred fallback).
+  // Merge stored region into each customer (overrides the email-inferred
+  // fallback). The CSV's reporting_location overrides both, below.
   const liveAccountIds = new Set();
   const customers = perGroup.flat().map((c) => {
     liveAccountIds.add(c.accountId);
@@ -428,6 +430,10 @@ export async function getCustomers({ groupId } = {}) {
       return { ...c, storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, txnD30d: 0, revenue30d: 0, cogs30d: 0, objectCount: null };
     }
     const csv  = csvUsage.get(c.accountId);
+    // Region: B2's own daily report is the source of truth. Stored credentials
+    // and the email convention are only fallbacks for accounts with no usage
+    // rows yet; null (rather than a guess) when none of them know.
+    const region = csv?.region || c.region || null;
     const objBytes = bytesByAccount.get(c.accountId) || 0;
     // null when the object-count job has never walked this sub-account (no
     // stored credentials, or not yet synced) so the UI shows '—', not '0'.
@@ -476,6 +482,7 @@ export async function getCustomers({ groupId } = {}) {
 
     return {
       ...c,
+      region,
       plan,
       planSource,
       costPerTbStorage: cost.costPerTbStorage ?? null,
