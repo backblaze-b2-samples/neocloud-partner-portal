@@ -1177,12 +1177,16 @@ export async function getCustomerUsageFromCsv() {
         txnB30d: 0,
         txnC30d: 0,
         txnD30d: 0,
+        // reporting_location from B2's own report — the authoritative region
+        // for this sub-account (already normalised to a REGIONS id above).
+        region: null,
       };
       // Each row is one bucket — sum across all buckets for the same account
       // to get the account total (there is no pre-aggregated row in the CSV).
       if (r._date === latestDate) {
         cur.storageBytes += r.storageBytes || 0;
       }
+      if (!cur.region && r.region) cur.region = r.region;
       cur.egressBytes30d += r.egressBytes || 0;
       cur.txnA30d += r.classATxn || 0;
       cur.txnB30d += r.classBTxn || 0;
