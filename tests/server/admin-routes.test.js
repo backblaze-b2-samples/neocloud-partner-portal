@@ -232,16 +232,11 @@ describe('POST /api/admin/users/:id/reset-password', () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/admin/roles and /api/admin/admin-count
+// GET /api/admin/admin-count
 // ---------------------------------------------------------------------------
 
 describe('utility endpoints', () => {
-  it('GET /api/admin/roles returns role list', async () => {
-    const res = await adminGet('/api/admin/roles').expect(200);
-    expect(res.body.roles).toBeInstanceOf(Array);
-    expect(res.body.roles).toContain('admin');
-    expect(res.body.roles).toContain('customer_admin');
-  });
+  // Roles now live in their own router — see tests/server/rbac.test.js.
 
   it('GET /api/admin/admin-count returns a number', async () => {
     const res = await adminGet('/api/admin/admin-count').expect(200);

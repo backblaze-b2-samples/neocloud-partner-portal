@@ -15,7 +15,8 @@
 // =============================================================================
 
 import express from 'express';
-import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
+import { requireAuth, requirePermission, requirePartnerScope, requireCsrf } from '../middleware/requireAuth.js';
+import { CUSTOMERS_READ, CUSTOMERS_WRITE, MEMBERS_EJECT } from '../rbac.js';
 import { db } from '../db.js';
 import { audit } from '../audit.js';
 import { findUsersByAccountId, setActive, CUSTOMER_ROLES } from '../users.js';
@@ -23,7 +24,7 @@ import { destroyAllSessionsFor } from '../auth.js';
 
 const router = express.Router();
 
-router.use(requireAuth, requireRole('admin'), requireCsrf);
+router.use(requireAuth, requirePartnerScope, requireCsrf);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,7 +37,7 @@ function getRow(accountId) {
 // ---------------------------------------------------------------------------
 // GET / — list all records
 // ---------------------------------------------------------------------------
-router.get('/', (_req, res) => {
+router.get('/', requirePermission(CUSTOMERS_READ), (_req, res) => {
   const rows = db.prepare('SELECT * FROM customer_metadata ORDER BY account_id').all();
   res.json({ metadata: rows });
 });
@@ -44,7 +45,7 @@ router.get('/', (_req, res) => {
 // ---------------------------------------------------------------------------
 // GET /:accountId
 // ---------------------------------------------------------------------------
-router.get('/:accountId', (req, res) => {
+router.get('/:accountId', requirePermission(CUSTOMERS_READ), (req, res) => {
   // Return 200 with metadata: null when no row exists. This avoids 404 spam
   // in browser Network tabs for the common case of customers without overrides.
   const row = getRow(req.params.accountId);
@@ -54,7 +55,7 @@ router.get('/:accountId', (req, res) => {
 // ---------------------------------------------------------------------------
 // PUT /:accountId — create or update
 // ---------------------------------------------------------------------------
-router.put('/:accountId', (req, res) => {
+router.put('/:accountId', requirePermission(CUSTOMERS_WRITE), (req, res) => {
   const { accountId } = req.params;
   const {
     display_name,
@@ -62,8 +63,32 @@ router.put('/:accountId', (req, res) => {
     plan,
     price_per_gb_storage,
     price_per_gb_download,
+    price_per_10k_class_a,
+    price_per_10k_class_b,
+    price_per_10k_class_c,
+    price_per_10k_class_d,
     notes,
   } = req.body ?? {};
+
+  // Rates must be finite and non-negative; anything else is a client bug and
+  // a silently-stored NaN would poison every billing figure downstream.
+  const rates = {
+    price_per_gb_storage,
+    price_per_gb_download,
+    price_per_10k_class_a,
+    price_per_10k_class_b,
+    price_per_10k_class_c,
+    price_per_10k_class_d,
+  };
+  const rate = {};
+  for (const [k, v] of Object.entries(rates)) {
+    if (v === undefined || v === null || v === '') { rate[k] = null; continue; }
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: `${k} must be a non-negative number` });
+    }
+    rate[k] = n;
+  }
 
   const now = new Date().toISOString();
   const existing = db.prepare('SELECT id FROM customer_metadata WHERE account_id = ?').get(accountId);
@@ -72,14 +97,19 @@ router.put('/:accountId', (req, res) => {
     db.prepare(`
       UPDATE customer_metadata
       SET display_name=?, industry=?, plan=?, price_per_gb_storage=?,
-          price_per_gb_download=?, notes=?, updated_at=?
+          price_per_gb_download=?, price_per_10k_class_a=?, price_per_10k_class_b=?,
+          price_per_10k_class_c=?, price_per_10k_class_d=?, notes=?, updated_at=?
       WHERE account_id=?
     `).run(
       display_name ?? null,
       industry ?? null,
       plan ?? null,
-      price_per_gb_storage ?? null,
-      price_per_gb_download ?? null,
+      rate.price_per_gb_storage,
+      rate.price_per_gb_download,
+      rate.price_per_10k_class_a,
+      rate.price_per_10k_class_b,
+      rate.price_per_10k_class_c,
+      rate.price_per_10k_class_d,
       notes ?? null,
       now,
       accountId,
@@ -87,15 +117,21 @@ router.put('/:accountId', (req, res) => {
   } else {
     db.prepare(`
       INSERT INTO customer_metadata
-        (account_id, display_name, industry, plan, price_per_gb_storage, price_per_gb_download, notes, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
+        (account_id, display_name, industry, plan, price_per_gb_storage, price_per_gb_download,
+         price_per_10k_class_a, price_per_10k_class_b, price_per_10k_class_c, price_per_10k_class_d,
+         notes, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       accountId,
       display_name ?? null,
       industry ?? null,
       plan ?? null,
-      price_per_gb_storage ?? null,
-      price_per_gb_download ?? null,
+      rate.price_per_gb_storage,
+      rate.price_per_gb_download,
+      rate.price_per_10k_class_a,
+      rate.price_per_10k_class_b,
+      rate.price_per_10k_class_c,
+      rate.price_per_10k_class_d,
       notes ?? null,
       now,
       now,
@@ -105,7 +141,7 @@ router.put('/:accountId', (req, res) => {
   audit({
     actorId: req.session.user.id,
     action: 'metadata.upserted',
-    details: { accountId, plan, price_per_gb_storage, price_per_gb_download },
+    details: { accountId, plan, ...rate },
     ip: req.ip,
   });
 
@@ -117,7 +153,7 @@ router.put('/:accountId', (req, res) => {
 // Snapshots email/group/region so the row can still render after the Partner
 // API stops returning it. Upserts metadata if no row exists yet.
 // ---------------------------------------------------------------------------
-router.post('/:accountId/eject', (req, res) => {
+router.post('/:accountId/eject', requirePermission(MEMBERS_EJECT), (req, res) => {
   const { accountId } = req.params;
   const { email, groupId, region, ejectedAt } = req.body ?? {};
   const at  = ejectedAt || new Date().toISOString().slice(0, 10);
@@ -176,7 +212,7 @@ function cascadeEjectionToUsers(accountId, actorId, ip) {
 // ---------------------------------------------------------------------------
 // POST /:accountId/restore — clear the ejected flag (re-mark account active).
 // ---------------------------------------------------------------------------
-router.post('/:accountId/restore', (req, res) => {
+router.post('/:accountId/restore', requirePermission(MEMBERS_EJECT), (req, res) => {
   const { accountId } = req.params;
   const now = new Date().toISOString();
   const changes = db.prepare(`
@@ -220,7 +256,7 @@ function cascadeRestoreToUsers(accountId, actorId, ip) {
 // ---------------------------------------------------------------------------
 // DELETE /:accountId
 // ---------------------------------------------------------------------------
-router.delete('/:accountId', (req, res) => {
+router.delete('/:accountId', requirePermission(CUSTOMERS_WRITE), (req, res) => {
   const changes = db.prepare('DELETE FROM customer_metadata WHERE account_id = ?').run(req.params.accountId).changes;
   if (!changes) return res.status(404).json({ error: 'No metadata for this account' });
 

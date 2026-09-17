@@ -162,7 +162,7 @@ export default function PartnerView() {
                   <TD className="text-[11px] font-mono text-ink-300">{c.groupId}</TD>
                   <TD>
                     <span className="inline-flex items-center gap-1 text-ink-200">
-                      <span>{region?.flag}</span> {region?.code}
+                      {region ? <><span>{region.flag}</span> {region.code}</> : '—'}
                     </span>
                   </TD>
                   <TD className="text-ink-300">{c.plan}</TD>

@@ -4,7 +4,7 @@ import {
   PageHeader, Card, CardHeader, SourceBadge, Tag, MetricCard,
   Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
-import { DonutChart } from '../components/charts.jsx';
+import { DonutChart, useChartColors } from '../components/charts.jsx';
 import { CreateBucketDialog } from '../components/dialogs.jsx';
 import { EditBucketDialog, DeleteBucketDialog } from '../components/bucketDialogs.jsx';
 import * as b2 from '../api/b2Adapter.js';
@@ -18,6 +18,7 @@ import { useApp } from '../lib/AppContext.jsx';
 const PAGE_SIZES = [10, 25, 50, 100];
 
 export default function StorageView({ lockedAccountId } = {}) {
+  const chartColors = useChartColors();
   const { navigate } = useNav();
   const { isLive, isCustomer, isCustomerAdmin } = useApp();
   const [loading, setLoading] = useState(true);
@@ -137,9 +138,9 @@ export default function StorageView({ lockedAccountId } = {}) {
     return acc;
   }, {});
   const lockData = [
-    { name: 'Compliance', value: lockTotals.compliance || 0, color: '#9B7CFF' },
-    { name: 'Governance', value: lockTotals.governance || 0, color: '#3DD9D6' },
-    { name: 'No lock',    value: lockTotals.none       || 0, color: '#5C6786' },
+    { name: 'Compliance', value: lockTotals.compliance || 0, color: chartColors.violet },
+    { name: 'Governance', value: lockTotals.governance || 0, color: chartColors.teal },
+    { name: 'No lock',    value: lockTotals.none       || 0, color: chartColors.muted },
   ].filter((d) => d.value > 0);
 
   const selectedCustomer = customers.find((c) => c.accountId === selectedAccountId);

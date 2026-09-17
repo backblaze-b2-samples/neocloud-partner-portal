@@ -9,7 +9,7 @@ import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart } from '../components/charts.jsx';
+import { TrendAreaChart, useChartColors } from '../components/charts.jsx';
 import { FileUploadDialog, DeleteFileDialog, FileProtectionDialog, BucketNotificationsDialog } from '../components/bucketDialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import { CUSTOMERS } from '../data/customers.js';
@@ -168,6 +168,7 @@ export default function BucketDetailView({ bucketId, fromCustomer, accountId, cu
 
 // ============================================================================
 function OverviewTab({ bucket, customer, region }) {
+  const chartColors = useChartColors();
   const days = 30;
   const data = Array.from({ length: days }, (_, i) => {
     const d = new Date('2026-04-25T00:00:00Z');
@@ -187,8 +188,8 @@ function OverviewTab({ bucket, customer, region }) {
         <TrendAreaChart
           data={data}
           series={[
-            { key: 'storageBytes', name: 'Storage', color: '#E61F18', format: bytes },
-            { key: 'egressBytes', name: 'Egress', color: '#3DD9D6', format: bytes },
+            { key: 'storageBytes', name: 'Storage', color: chartColors.red, format: bytes },
+            { key: 'egressBytes', name: 'Egress', color: chartColors.teal, format: bytes },
           ]}
           yFormatter={bytes}
           height={240}

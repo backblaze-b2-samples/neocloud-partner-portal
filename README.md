@@ -271,6 +271,121 @@ neocloud-partner-portal/
 
 ---
 
+## Roles and permissions
+
+Access is granted by **permissions**, not by role name. A role is a named set of
+permissions that an administrator can edit, and you can define your own under
+**Administration → Roles & permissions**.
+
+Six roles ship built in — `admin`, `manager`, `user`, `support`, `customer_admin`,
+`customer_readonly` — seeded with the access they had before permissions existed,
+so upgrading changes nothing until you choose to change it. Built-in roles can be
+edited but not deleted.
+
+Permissions and tenancy are separate axes, and it matters:
+
+- **Permissions** answer *what may you do* — `users:write`, `audit:read`, `credentials:read`, and so on.
+- **Tenancy** answers *whose data is it* — a role has a `scope` of `partner` or `customer`, and customer users are confined to their own `accountId` by `canAccessAccount`.
+
+A `customer_admin` holds `users:write` so they can manage their own team, but
+that permission cannot reach the portal-wide `/api/admin/users`: partner-wide
+routes additionally require partner scope. Widening a permission can never widen
+tenancy.
+
+## Single sign-on (OIDC)
+
+Optional. The portal supports SSO through any standards-compliant OIDC provider —
+Microsoft Entra ID, Okta, Google Workspace, Keycloak, AWS Cognito, Auth0.
+Password sign-in always remains available alongside it.
+
+**Setting it up**
+
+1. Register an application in your identity provider.
+2. Set its redirect URI to `https://your-portal.example.com/api/auth/sso/callback`.
+3. In the portal, go to **Settings → Single sign-on** and fill in:
+   - **Issuer URL** — the base URL of your provider's discovery document
+   - **Client ID** and **Client secret** (the secret is encrypted before storage and never shown again)
+   - **Groups claim** — usually `groups`
+   - **Button label** — what appears on the sign-in page
+4. Add **group → role mappings**. They are checked in order and the first match wins.
+5. Tick *Show the SSO button on the sign-in page* and save.
+
+| Provider | Issuer URL |
+|---|---|
+| Microsoft Entra ID | `https://login.microsoftonline.com/{tenant-id}/v2.0` |
+| Google Workspace | `https://accounts.google.com` |
+| Okta | `https://{org}.okta.com` |
+| Keycloak | `https://{host}/realms/{realm}` |
+
+**Things worth knowing**
+
+- **Partner staff only.** SSO grants partner roles. Customer-portal users stay on passwords — nothing in an OIDC token says which tenant a user belongs to.
+- **Roles are re-evaluated on every sign-in**, so removing someone from a group in your IdP takes effect the next time they sign in. A user's role therefore cannot be edited in the portal while they are SSO-managed.
+- **Group identifiers differ by provider.** Entra sends group object IDs (GUIDs); Okta and Keycloak usually send names. Use whatever your provider puts in the claim.
+- **Granting `admin` from SSO is off by default.** A group mapped to Administrator is refused until an operator explicitly enables it, because that role can read stored credentials and impersonate customers.
+- **Unmapped users are refused** unless you set a default role.
+- **Email verification** — ID tokens with `email_verified` explicitly `false` are rejected. Providers that omit the claim (Entra, Google) are accepted; they verify at the directory level.
+- **SSO cannot take over an existing password account.** If a password account already exists for that address, sign-in is refused with `account_conflict`. Convert the account deliberately instead: **User management → Convert to SSO**, which keeps the user, their id, and their audit history.
+- **Break-glass.** The portal refuses to convert the last administrator who can sign in without SSO, so an identity-provider outage cannot lock you out of administration.
+- **Demo accounts are password-only** and can never be provisioned or claimed through SSO.
+- **Entra group overage.** Entra ID stops embedding group memberships in the token past roughly 150 groups and substitutes a Graph pointer. The portal detects this and reports it explicitly rather than appearing to have no mapping — but the affected user cannot sign in until they are in fewer groups, or you use a claim that is not subject to the limit (for example an app role).
+- `SSO_ALLOWED_ISSUER_HOSTS` restricts which issuer hosts may be configured at all — recommended in production, since the issuer URL is fetched by the server.
+
+---
+
+## Importing from the older b2-partner-portal
+
+`import-legacy-portal.mjs` moves portal users, roles, permissions, the audit
+trail, and OIDC group mappings across from
+[b2-partner-portal](https://github.com/backblaze-b2-samples/b2-partner-portal).
+
+```bash
+# dry run first — prints the plan, writes nothing
+node import-legacy-portal.mjs --from /path/to/old-portal.db
+
+# then apply
+node import-legacy-portal.mjs --from /path/to/old-portal.db --execute
+```
+
+Back up first, and include the WAL file — copying `app.db` on its own loses
+anything still in `app.db-wal`:
+
+```bash
+sqlite3 server/data/app.db ".backup backup.db"
+```
+
+**What it does**
+
+- Roles become operator-defined roles here, keeping their **exact** permission
+  set. Their ids are UUIDs and ours are slugs, so `Administrator` becomes
+  `administrator` and the original id is kept in `roles.legacy_id`.
+- A role whose name matches a built-in is **not** merged into it by default.
+  Our built-ins are broader than theirs, so merging would quietly widen access;
+  pass `--merge-builtins` if that is what you want.
+- Users import as partner staff (`account_id` is NULL — that portal has no
+  tenant concept), keeping their original `created_at`, active flag, and last
+  login. An account that already exists here is reported and left untouched.
+- Group mappings carry over, so SSO works against the same groups.
+- Audit entries keep their original actor where the user came across; targets
+  that are not portal users are preserved inside the details.
+
+**Passwords are not migrated.** That portal uses bcrypt and this one uses
+argon2id; a hash cannot be converted. Users import as SSO accounts by default
+(`--auth-source sso`) and sign in through your identity provider. With
+`--auth-source local` they are flagged for a password reset instead.
+
+**Not imported:** the credential vault (Fernet-encrypted with that portal's own
+key — re-provision through the Partner API, or decrypt and re-encrypt
+separately), the OIDC client secret, per-group pricing (that portal prices per
+partner group in $/TB; this one uses plan tiers with per-account overrides), and
+anything ephemeral such as sessions and cached reports.
+
+The script refuses to run if it would leave no active admin able to sign in
+without the identity provider. It is safe to re-run: already-imported rows are
+matched on `legacy_id` and skipped.
+
+---
+
 ## Security notes
 
 Worth understanding before you deploy this anywhere real:
@@ -280,6 +395,9 @@ Worth understanding before you deploy this anywhere real:
 - **Account scoping** — customer-role users are confined to their own `accountId` by `canAccessAccount`. Routes that read tenant data scope their queries by it.
 - **`deploy.sh` defaults to the sample deployment's own host.** Override `DEPLOY_HOST`, `DEPLOY_KEY`, and `DEPLOY_REMOTE_DIR` — via `.deploy.env` or the environment — before running it, or point it somewhere of your own.
 - Demo accounts (`@demo.com`, `demo@backblaze.com`) are blocked from live mode by design, and `STRIP-DEMO.md` covers removing them entirely.
+- **SSO is optional and fails closed.** An unmapped user, a mapping pointing at a deleted role, a customer-scope role, or the admin role while `allow_admin_role` is off all refuse the sign-in rather than falling back to something arbitrary.
+- **A sign-in can only be completed in the browser that started it.** `/api/auth/sso/login` issues a random nonce in a short-lived httpOnly cookie (`SameSite=Lax`, scoped to `/api/auth/sso`) and records it with the OAuth `state`; both the callback and the code exchange require it to match. Without this, the one-time code in the callback URL would be a bearer token — an attacker could start a flow and send a victim a link that silently signed them into the *attacker's* account. The session cookie itself remains `SameSite=Strict`.
+- **The OIDC issuer URL is a server-side fetch**, so it is validated before use: HTTPS only, no credentials or query string, no localhost or private/loopback addresses, and every endpoint discovered from it must share the issuer's host. Set `SSO_ALLOWED_ISSUER_HOSTS` to pin it further.
 
 ---
 

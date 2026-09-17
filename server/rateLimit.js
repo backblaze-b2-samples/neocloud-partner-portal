@@ -13,6 +13,15 @@ function prune(now) {
   }
 }
 
+/**
+ * Drop all recorded hits. Intended for tests, which drive many requests from a
+ * single loopback address and would otherwise trip the limiter partway through
+ * a file and get confusing failures unrelated to what is being tested.
+ */
+export function resetRateLimits() {
+  buckets.clear();
+}
+
 export function rateLimit({ key, limit, windowMs }) {
   const now = Date.now();
   const arr = buckets.get(key) || [];
@@ -45,4 +54,11 @@ export function loginLimiter(req) {
   if (!a.ok) return a;
   const b = rateLimit({ key: `login:user:${ip}:${emailBucket}`, limit: 8,  windowMs: 15 * 60 * 1000 });
   return b;
+}
+
+// SSO redirect + code exchange. Both are unauthenticated and both touch the
+// network or the DB, so they get the same per-IP ceiling as password login.
+export function ssoLimiter(req) {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  return rateLimit({ key: `sso:ip:${ip}`, limit: 30, windowMs: 15 * 60 * 1000 });
 }

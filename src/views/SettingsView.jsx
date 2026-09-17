@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, KeyRound, ShieldAlert, FlaskConical, Zap, Eye, EyeOff, Trash2, CheckCircle2, XCircle, Info, Code2 } from 'lucide-react';
+import { Settings as SettingsIcon, KeyRound, ShieldAlert, FlaskConical, Zap, Eye, EyeOff, Trash2, CheckCircle2, XCircle, Info, Code2, Users as UsersIcon, Plus, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { PageHeader, Card, CardHeader, Tag, SourceBadge } from '../components/ui.jsx';
 import { useApp } from '../lib/AppContext.jsx';
 import { testConnection } from '../api/b2Adapter.js';
@@ -7,7 +7,7 @@ import { isDemoEmail } from '../lib/format.js';
 import { api, ApiError } from '../lib/apiClient.js';
 
 export default function SettingsView() {
-  const { config, isLive, hasCreds, setMode, setCredentials, reset, user, trainingMode, setTrainingMode, isAdmin } = useApp();
+  const { config, isLive, hasCreds, setMode, setCredentials, reset, user, trainingMode, setTrainingMode, isAdmin, can } = useApp();
   const isDemo = isDemoEmail(user?.email);
   const [draft, setDraft] = useState({
     masterKeyId: config.masterKeyId,
@@ -193,6 +193,7 @@ export default function SettingsView() {
 
       {/* Advanced — MCP server (admin only) */}
       {isAdmin && <McpServerCard />}
+      {can('settings:read') && <SsoCard canWrite={can('settings:write')} />}
 
       {/* Safety disclosure */}
       <Card className="border-bb-red/30 bg-bb-red/5">
@@ -557,4 +558,295 @@ function McpServerCard() {
       </div>
     </Card>
   );
+}
+
+// =============================================================================
+// Single sign-on (OIDC)
+// =============================================================================
+// Optional: password login always remains available, so the portal is never
+// dependent on the identity provider being reachable. The client secret is
+// write-only — the server reports presence as hasClientSecret and never returns
+// the value, so the field stays blank on load and an empty submit means
+// "leave it alone".
+export function SsoCard({ canWrite }) {
+  const [cfg, setCfg] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [mappings, setMappings] = useState([]);
+  const [form, setForm] = useState({
+    enabled: false, issuerUrl: '', clientId: '', clientSecret: '', redirectUri: '',
+    groupsClaim: 'groups', buttonLabel: 'Sign in with SSO', defaultRole: '', allowAdminRole: false,
+  });
+  const [showSecret, setShowSecret] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState('');
+  const [err, setErr] = useState('');
+  const [test, setTest] = useState(null);
+  const [newMap, setNewMap] = useState({ groupValue: '', roleId: '', label: '' });
+
+  const load = async () => {
+    setErr('');
+    try {
+      const [c, m, r] = await Promise.all([
+        api.get('/api/admin/sso/config'),
+        api.get('/api/admin/sso/mappings'),
+        api.get('/api/admin/roles').catch(() => ({ roles: [] })),
+      ]);
+      setCfg(c.config);
+      setForm({
+        enabled: c.config.enabled,
+        issuerUrl: c.config.issuerUrl,
+        clientId: c.config.clientId,
+        clientSecret: '',
+        redirectUri: c.config.redirectUri,
+        groupsClaim: c.config.groupsClaim,
+        buttonLabel: c.config.buttonLabel,
+        defaultRole: c.config.defaultRole || '',
+        allowAdminRole: c.config.allowAdminRole,
+      });
+      setMappings(m.mappings);
+      setRoles((r.roles || []).filter((x) => x.scope === 'partner'));
+    } catch (e) {
+      setErr(mcpErr(e));
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setBusy(true); setErr(''); setFlash('');
+    try {
+      const res = await api.put('/api/admin/sso/config', { ...form, defaultRole: form.defaultRole || null });
+      setCfg(res.config);
+      setForm((f) => ({ ...f, clientSecret: '' }));
+      setFlash('Saved.');
+    } catch (e) { setErr(mcpErr(e)); } finally { setBusy(false); }
+  };
+
+  const runTest = async () => {
+    setBusy(true); setErr(''); setTest(null);
+    try {
+      setTest(await api.post('/api/admin/sso/test', { issuerUrl: form.issuerUrl }));
+    } catch (e) { setTest({ ok: false, error: mcpErr(e) }); } finally { setBusy(false); }
+  };
+
+  const addMapping = async () => {
+    if (!newMap.groupValue.trim() || !newMap.roleId) return;
+    setBusy(true); setErr('');
+    try {
+      await api.post('/api/admin/sso/mappings', newMap);
+      setNewMap({ groupValue: '', roleId: '', label: '' });
+      await load();
+    } catch (e) { setErr(mcpErr(e)); } finally { setBusy(false); }
+  };
+
+  const removeMapping = async (id) => {
+    setBusy(true); setErr('');
+    try { await api.delete(`/api/admin/sso/mappings/${id}`); await load(); }
+    catch (e) { setErr(mcpErr(e)); } finally { setBusy(false); }
+  };
+
+  // Order is priority: the first mapping whose group the user belongs to wins.
+  const move = async (index, delta) => {
+    const next = [...mappings];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    setMappings(next);
+    setBusy(true);
+    try { await api.post('/api/admin/sso/mappings/reorder', { orderedIds: next.map((m) => m.id) }); await load(); }
+    catch (e) { setErr(mcpErr(e)); } finally { setBusy(false); }
+  };
+
+  if (!cfg) return null;
+
+  const defaultRedirect = `${window.location.origin}/api/auth/sso/callback`;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Single sign-on (OIDC)"
+        subtitle="Optional. Works with Microsoft Entra ID, Okta, Google Workspace, Keycloak, and other standards-compliant providers."
+        icon={<KeyRound size={16} />}
+        action={<Tag variant={cfg.enabled ? 'success' : 'default'}>{cfg.enabled ? 'Enabled' : 'Disabled'}</Tag>}
+      />
+
+      <div className="mt-4 flex items-start gap-2 rounded-md border border-ink-700 bg-ink-900/60 px-3 py-2 text-[11px] text-ink-300">
+        <Info size={13} className="mt-0.5 shrink-0 text-ink-400" />
+        <span>
+          Password sign-in always stays available, even with SSO enabled. Keep at least one
+          administrator on a password account so an identity-provider outage cannot lock you out.
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Field label="Issuer URL" placeholder="https://login.microsoftonline.com/{tenant-id}/v2.0"
+          value={form.issuerUrl} onChange={(v) => setForm({ ...form, issuerUrl: v })} mono
+          help="The base URL of your provider's discovery document." />
+        <Field label="Client ID" placeholder="application (client) id"
+          value={form.clientId} onChange={(v) => setForm({ ...form, clientId: v })} mono />
+        <Field label="Client secret" placeholder={cfg.hasClientSecret ? '•••••••• (stored)' : 'client secret'}
+          value={form.clientSecret} onChange={(v) => setForm({ ...form, clientSecret: v })}
+          secret showSecret={showSecret} onToggleSecret={() => setShowSecret((x) => !x)}
+          help={cfg.hasClientSecret ? 'Stored and encrypted. Leave blank to keep it.' : 'Encrypted before it is stored.'} />
+        <Field label="Groups claim" placeholder="groups"
+          value={form.groupsClaim} onChange={(v) => setForm({ ...form, groupsClaim: v })} mono
+          help="Entra sends group object IDs; Okta and Keycloak usually send names." />
+        <Field label="Redirect URI" placeholder={defaultRedirect}
+          value={form.redirectUri} onChange={(v) => setForm({ ...form, redirectUri: v })} mono
+          help={`Paste this into your provider. Default: ${defaultRedirect}`} />
+        <Field label="Button label" placeholder="Sign in with SSO"
+          value={form.buttonLabel} onChange={(v) => setForm({ ...form, buttonLabel: v })}
+          help="Shown on the sign-in page." />
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-ink-400">Default role</span>
+          <select
+            value={form.defaultRole}
+            onChange={(e) => setForm({ ...form, defaultRole: e.target.value })}
+            disabled={!canWrite}
+            className="mt-1 h-9 w-full rounded-md border border-ink-700 bg-ink-900 px-2 text-sm text-ink-100 disabled:opacity-60"
+          >
+            <option value="">No default — refuse unmapped users</option>
+            {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <span className="mt-1 block text-[10px] text-ink-500">
+            Used when none of the group mappings below match.
+          </span>
+        </label>
+
+        <label className="mt-1 flex cursor-pointer items-start gap-2 rounded-md border border-ink-700 bg-ink-900/50 px-3 py-2">
+          <input
+            type="checkbox"
+            checked={form.allowAdminRole}
+            onChange={(e) => setForm({ ...form, allowAdminRole: e.target.checked })}
+            disabled={!canWrite}
+            className="mt-0.5 h-3.5 w-3.5 accent-bb-red"
+          />
+          <span>
+            <span className="flex items-center gap-1 text-xs font-medium text-ink-100">
+              <AlertTriangle size={12} className="text-bb-red" />
+              Allow SSO to grant the administrator role
+            </span>
+            <span className="mt-0.5 block text-[11px] text-ink-400">
+              Off by default. While off, a group mapped to Administrator is refused. Turning it on
+              means anyone who can edit that group in your identity provider can grant full portal
+              administration, including access to stored credentials.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <label className="mt-4 flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          checked={form.enabled}
+          onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+          disabled={!canWrite}
+          className="h-3.5 w-3.5 accent-bb-red"
+        />
+        <span className="text-xs text-ink-200">Show the SSO button on the sign-in page</span>
+      </label>
+
+      {test && (
+        <div className={cxSso(
+          'mt-4 rounded-md border px-3 py-2 text-[11px]',
+          test.ok ? 'border-accent-green/30 bg-accent-green/10 text-accent-green' : 'border-bb-red/30 bg-bb-red/10 text-bb-red'
+        )}>
+          {test.ok
+            ? <>Discovery succeeded. Issuer <span className="font-mono">{test.issuer}</span>.</>
+            : <>Discovery failed: {test.error}</>}
+        </div>
+      )}
+      {flash && <div className="mt-3 text-[11px] text-accent-green">{flash}</div>}
+      {err && <div className="mt-3 text-[11px] text-bb-red">{err}</div>}
+
+      {canWrite && (
+        <div className="mt-4 flex items-center gap-2">
+          <button onClick={save} disabled={busy}
+            className="inline-flex h-9 items-center rounded-md bg-bb-red px-3 text-sm font-medium text-white hover:bg-bb-red/90 disabled:opacity-60">
+            Save SSO settings
+          </button>
+          <button onClick={runTest} disabled={busy || !form.issuerUrl}
+            className="inline-flex h-9 items-center rounded-md border border-ink-700 px-3 text-sm text-ink-200 hover:border-ink-500 disabled:opacity-40">
+            Test discovery
+          </button>
+        </div>
+      )}
+
+      {/* --- group -> role mappings --- */}
+      <div className="mt-6 border-t border-ink-700 pt-4">
+        <div className="flex items-center gap-2">
+          <UsersIcon size={14} className="text-ink-400" />
+          <span className="text-xs font-medium text-ink-100">Group → role mappings</span>
+        </div>
+        <p className="mt-1 text-[11px] text-ink-400">
+          Checked in order; the first group the user belongs to decides their role. Roles are
+          re-evaluated on every sign-in, so changes in your identity provider take effect immediately.
+        </p>
+
+        {mappings.length === 0 ? (
+          <p className="mt-3 text-[11px] text-ink-500">No mappings yet — every user falls back to the default role above.</p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {mappings.map((m, i) => (
+              <li key={m.id} className="flex items-center gap-2 rounded-md border border-ink-700 bg-ink-900/50 px-3 py-2">
+                <span className="w-6 shrink-0 text-center text-[11px] text-ink-500">{i + 1}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-[11px] text-ink-200">{m.groupValue}</span>
+                  {m.label && <span className="block truncate text-[11px] text-ink-400">{m.label}</span>}
+                </span>
+                <Tag variant="default">{roles.find((r) => r.id === m.roleId)?.name || m.roleId}</Tag>
+                {canWrite && (
+                  <span className="flex shrink-0 items-center gap-1">
+                    <button onClick={() => move(i, -1)} disabled={busy || i === 0}
+                      className="rounded p-1 text-ink-400 hover:text-ink-100 disabled:opacity-30" aria-label="Move up">
+                      <ArrowUp size={13} />
+                    </button>
+                    <button onClick={() => move(i, 1)} disabled={busy || i === mappings.length - 1}
+                      className="rounded p-1 text-ink-400 hover:text-ink-100 disabled:opacity-30" aria-label="Move down">
+                      <ArrowDown size={13} />
+                    </button>
+                    <button onClick={() => removeMapping(m.id)} disabled={busy}
+                      className="rounded p-1 text-ink-400 hover:text-bb-red disabled:opacity-30" aria-label="Remove mapping">
+                      <Trash2 size={13} />
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {canWrite && (
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <input
+              value={newMap.groupValue}
+              onChange={(e) => setNewMap({ ...newMap, groupValue: e.target.value })}
+              placeholder="Group ID or name from your IdP"
+              className="h-9 rounded-md border border-ink-700 bg-ink-900 px-3 font-mono text-xs text-ink-100 placeholder:text-ink-500"
+            />
+            <select
+              value={newMap.roleId}
+              onChange={(e) => setNewMap({ ...newMap, roleId: e.target.value })}
+              className="h-9 rounded-md border border-ink-700 bg-ink-900 px-2 text-sm text-ink-100"
+            >
+              <option value="">Select a role…</option>
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <button onClick={addMapping} disabled={busy || !newMap.groupValue.trim() || !newMap.roleId}
+              className="inline-flex h-9 items-center gap-1 rounded-md border border-ink-700 px-3 text-sm text-ink-200 hover:border-ink-500 disabled:opacity-40">
+              <Plus size={14} /> Add
+            </button>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// Local class-name joiner — SettingsView does not otherwise import cx.
+function cxSso(...parts) {
+  return parts.filter(Boolean).join(' ');
 }

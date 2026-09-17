@@ -5,13 +5,16 @@
 // while impersonation is active (see middleware/requireAuth.js).
 
 import express from 'express';
-import { requireAuth, requireRole, requireCsrf } from '../middleware/requireAuth.js';
+import { requireAuth, requirePermission, requirePartnerScope, requireCsrf } from '../middleware/requireAuth.js';
+import { IMPERSONATE_START } from '../rbac.js';
+import { permissionsFor } from '../roles.js';
 import { setImpersonation, clearImpersonation } from '../auth.js';
 import { findById, listUsers } from '../users.js';
 import { audit } from '../audit.js';
 import { db } from '../db.js';
 
-const STAFF_ROLES_THAT_MAY_IMPERSONATE = new Set(['admin', 'support']);
+// Whether the *real* staff identity may impersonate. Resolved from the role's
+// permissions rather than a role-name list so a custom role can be granted it.
 // Return the *real* staff role for the session — i.e. the impersonator's role
 // when impersonating, otherwise the session user's role.
 function staffRole(req) {
@@ -29,7 +32,7 @@ const CUSTOMER_ROLES = new Set(['customer_admin', 'customer_readonly']);
 // shows users with hasCredentials=true and ejected=false by default, since
 // impersonating a phantom account (no stored B2 keys) or an ejected one
 // produces nothing useful.
-router.get('/targets', requireAuth, requireRole('admin', 'support'), (_req, res) => {
+router.get('/targets', requireAuth, requirePartnerScope, requirePermission(IMPERSONATE_START), (_req, res) => {
   const credAccountIds = new Set(
     db.prepare('SELECT account_id FROM account_credentials').all().map((r) => r.account_id)
   );
@@ -55,7 +58,7 @@ router.post('/start', requireAuth, requireCsrf, (req, res) => {
   }
   // Gate on the real staff role (not the effective one, which is impossible
   // here since impersonator is null, but kept symmetric with /stop).
-  if (!STAFF_ROLES_THAT_MAY_IMPERSONATE.has(staffRole(req))) {
+  if (!permissionsFor(staffRole(req)).has(IMPERSONATE_START)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   const targetUserId = Number(req.body?.targetUserId);

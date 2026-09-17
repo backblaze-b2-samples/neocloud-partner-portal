@@ -19,6 +19,10 @@ export const B2_LIST_PRICE = {
   classDFreePerDay: 2500,
 };
 
+// A plan may also carry `groupId`, pinning it to a B2 partner group so every
+// member of that group bills at this tier without per-account assignment. The
+// static defaults below are unpinned; pinning is done through the API.
+//
 // Defaults are seeded into the `reseller_plans` DB table on first boot.
 // Admins can edit them via Reseller plans in the System sidebar; the API is
 // the runtime source of truth. This array is only used to seed and as a
@@ -61,8 +65,22 @@ export const RESELLER_PLANS = [
 
 export const PLAN_NAMES = RESELLER_PLANS.map((p) => p.name);
 
-/** Default plan name assigned to customers that have no explicit plan. */
+/**
+ * Fallback tier for demo data and for seeding only.
+ *
+ * NOT a default for live customers: Partner-API group members arrive with no
+ * plan, so defaulting them here billed every unassigned account at the most
+ * expensive tier. Live plan resolution is explicit account plan -> the plan
+ * pinned to the account's group (plan.groupId) -> unassigned (B2 list, zero
+ * margin). See getCustomers in src/api/partnerApi.js.
+ */
 export const DEFAULT_PLAN_NAME = 'Reseller — Tier 1';
+
+/** The plan pinned to a B2 partner group, if any. */
+export function planForGroup(groupId, plans = RESELLER_PLANS) {
+  if (groupId == null || groupId === '') return null;
+  return plans.find((p) => p.groupId != null && String(p.groupId) === String(groupId)) || null;
+}
 
 /** Look up a plan by its display name (matches the value stored on customers). */
 export function planByName(name, plans = RESELLER_PLANS) {
@@ -73,10 +91,21 @@ export function planByName(name, plans = RESELLER_PLANS) {
  * Compute revenue and COGS for a customer from their usage. Returns
  * { revenue, cogs, margin } in dollars (number, not currency-formatted).
  *
- * Pricing precedence:
- *   1. Per-customer override (customer.price_per_tb_storage, etc.) — if set, win
+ * Pricing precedence (what the partner CHARGES):
+ *   1. Per-customer override (customer.price_per_gb_storage / price_per_gb_download
+ *      / price_per_10k_class_a..d) — if set, wins
  *   2. Plan default from RESELLER_PLANS — if customer.plan matches a tier
+ *      (the plan itself may have been resolved from the account's group pin)
  *   3. B2 list price — if neither is set, customer is at-cost (no margin)
+ *
+ * Cost (what the partner PAYS Backblaze) is a separate axis, negotiated per B2
+ * partner group and resolved from that group's row in group_costs onto the
+ * customer as costPerTbStorage, costPerGbEgress and costPer10kClassA/B/C. Each
+ * is independent: null on any one means "B2 list for that component", not free.
+ *
+ * A negotiated egress rate reprices the billable GB; B2's free allowance of 3x
+ * stored bytes per month still applies on top. Class D COGS stays at B2 list —
+ * not negotiated per group today.
  *
  * Usage:
  *   storageBytes        — current snapshot bytes (or 30-day average)
@@ -86,7 +115,14 @@ export function planByName(name, plans = RESELLER_PLANS) {
 export function computeBilling(customer, plans = RESELLER_PLANS) {
   const plan = planByName(customer.plan, plans);
 
-  const storagePerTb = customer.price_per_tb_storage  ?? plan?.storagePerTb ?? B2_LIST_PRICE.storagePerTb;
+  // The stored storage override is $/GB — customer_metadata.price_per_gb_storage
+  // is what the Edit Customer dialog collects — while plans quote $/TB. Accept
+  // either form and convert, so a saved override actually reaches the math
+  // instead of silently falling through to the plan rate.
+  const storageOverridePerTb = customer.price_per_tb_storage
+    ?? (customer.price_per_gb_storage != null ? customer.price_per_gb_storage * 1000 : null);
+
+  const storagePerTb = storageOverridePerTb ?? plan?.storagePerTb ?? B2_LIST_PRICE.storagePerTb;
   const egressPerGb  = customer.price_per_gb_download ?? plan?.egressPerGb  ?? B2_LIST_PRICE.egressPerGb;
   const classAPer10k = customer.price_per_10k_class_a ?? plan?.classAPer10k ?? B2_LIST_PRICE.classAPer10k;
   const classBPer10k = customer.price_per_10k_class_b ?? plan?.classBPer10k ?? B2_LIST_PRICE.classBPer10k;
@@ -109,16 +145,27 @@ export function computeBilling(customer, plans = RESELLER_PLANS) {
                 + (classCCount / 10_000) * classCPer10k
                 + (classDCount / 10_000) * classDPer10k;
 
-  // COGS — what the partner pays Backblaze. Mirrors B2's published pricing:
-  // A/B/C are always free, D has a daily free tier then a per-10k rate.
+  // COGS — what the partner pays Backblaze. Storage, egress and Class A/B/C use
+  // the group's negotiated rates where set: a partner at 30 PB does not pay
+  // list, and costing them at list makes every margin figure wrong. The free
+  // egress allowance (3x stored) and Class D still follow B2's published terms.
+  const costPerTb    = customer.costPerTbStorage    ?? B2_LIST_PRICE.storagePerTb;
+  const costEgressGb = customer.costPerGbEgress     ?? B2_LIST_PRICE.egressPerGb;
+  const costClassA   = customer.costPer10kClassA    ?? B2_LIST_PRICE.classAPer10k;
+  const costClassB   = customer.costPer10kClassB    ?? B2_LIST_PRICE.classBPer10k;
+  const costClassC   = customer.costPer10kClassC    ?? B2_LIST_PRICE.classCPer10k;
+
   const storageGb        = (customer.storageBytes || 0) / 1e9;
   const freeEgressGb     = storageGb * B2_LIST_PRICE.egressFreeMultiplier;
   const billableEgressGb = Math.max(0, egressGb - freeEgressGb);
   const freeClassD       = B2_LIST_PRICE.classDFreePerDay * 30;
   const billableClassD   = Math.max(0, classDCount - freeClassD);
 
-  const cogs = storageTb * B2_LIST_PRICE.storagePerTb
-             + billableEgressGb * B2_LIST_PRICE.egressPerGb
+  const cogs = storageTb * costPerTb
+             + billableEgressGb * costEgressGb
+             + (classACount / 10_000) * costClassA
+             + (classBCount / 10_000) * costClassB
+             + (classCCount / 10_000) * costClassC
              + (billableClassD / 10_000) * B2_LIST_PRICE.classDPer10k;
 
   const margin = revenue > 0 ? (revenue - cogs) / revenue : 0;

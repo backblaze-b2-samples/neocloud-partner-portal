@@ -282,9 +282,9 @@ router.post('/reports-csv', async (req, res) => {
 // Response: { counts: [{ bucketId, accountId, bucketName, objectCount, countedAt }], jobRanAt: ISO|null }
 // ---------------------------------------------------------------------------
 
-const stmtAllCounts  = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at FROM object_counts`);
+const stmtAllCounts  = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, index_status, counted_at FROM object_counts`);
 const stmtLatestRun  = db.prepare(`SELECT MAX(counted_at) AS latest FROM object_counts`);
-const stmtCountsForAccount = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, counted_at FROM object_counts WHERE account_id = ?`);
+const stmtCountsForAccount = db.prepare(`SELECT bucket_id, account_id, bucket_name, object_count, total_bytes, index_status, counted_at FROM object_counts WHERE account_id = ?`);
 const stmtLatestRunForAccount = db.prepare(`SELECT MAX(counted_at) AS latest FROM object_counts WHERE account_id = ?`);
 
 router.get('/object-counts', requireAuth, (req, res) => {
@@ -298,6 +298,9 @@ router.get('/object-counts', requireAuth, (req, res) => {
     bucketName:  r.bucket_name,
     objectCount: r.object_count,
     totalBytes:  r.total_bytes || 0,
+    // 'skipped_too_large' => this bucket was never fully walked; objectCount
+    // and totalBytes are 0 and must not be read as real figures.
+    indexStatus: r.index_status || 'indexed',
     countedAt:   r.counted_at,
   }));
   res.json({ counts, jobRanAt: latest || null });

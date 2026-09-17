@@ -5,16 +5,21 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { BUILT_IN_ROLES } from './rbac.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.DB_PATH
-  ? path.resolve(process.env.DB_PATH)
-  : path.join(__dirname, 'data', 'app.db');
+// ':memory:' is SQLite's reserved name for a transient in-memory database, not
+// a filename — resolving it would create a literal ':memory:' file on disk and
+// silently persist state between test runs. Pass it through untouched.
+const IN_MEMORY = process.env.DB_PATH === ':memory:';
+const DB_PATH = IN_MEMORY
+  ? ':memory:'
+  : (process.env.DB_PATH ? path.resolve(process.env.DB_PATH) : path.join(__dirname, 'data', 'app.db'));
 
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+if (!IN_MEMORY) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 export const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
+if (!IN_MEMORY) db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
@@ -178,6 +183,100 @@ db.exec(`
   }
 }
 
+// =============================================================================
+// Roles + permissions.
+// =============================================================================
+// Roles are rows, not a hardcoded list, so an operator can define their own and
+// so an SSO group mapping has something meaningful to point at. `scope` keeps
+// the partner/customer split that account_id enforces elsewhere: a customer
+// role must never carry partner permissions.
+//
+// Built-ins are inserted only when missing — re-seeding on every boot would
+// clobber an operator's deliberate edits to a built-in role's permission set.
+// =============================================================================
+db.exec(`
+  CREATE TABLE IF NOT EXISTS roles (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    scope       TEXT NOT NULL CHECK(scope IN ('partner','customer')),
+    built_in    INTEGER NOT NULL DEFAULT 0,
+    legacy_id   TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS role_permissions (
+    role_id    TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL,
+    PRIMARY KEY (role_id, permission)
+  );
+  CREATE INDEX IF NOT EXISTS idx_role_perms_role ON role_permissions(role_id);
+`);
+
+{
+  const now = new Date().toISOString();
+  const roleExists  = db.prepare('SELECT 1 FROM roles WHERE id = ?');
+  const insertRole  = db.prepare(
+    'INSERT INTO roles (id, name, description, scope, built_in, created_at, updated_at) VALUES (?,?,?,?,1,?,?)'
+  );
+  const insertPerm  = db.prepare('INSERT INTO role_permissions (role_id, permission) VALUES (?,?)');
+  const seedBuiltIns = db.transaction(() => {
+    for (const r of BUILT_IN_ROLES) {
+      if (roleExists.get(r.id)) continue;
+      insertRole.run(r.id, r.name, r.description, r.scope, now, now);
+      for (const p of r.permissions) insertPerm.run(r.id, p);
+      console.log(`[db] seeded built-in role: ${r.id} (${r.permissions.length} permissions)`);
+    }
+  });
+  seedBuiltIns();
+}
+
+// Migration: users_v3 — drop the six-value CHECK on users.role so operator-defined
+// roles are possible, point role at roles(id), and add auth_source + legacy_id.
+//
+// Runs AFTER the roles seed above: the new table has a real foreign key, so the
+// INSERT..SELECT would fail if the referenced role rows did not exist yet. Any
+// row whose role somehow has no matching roles entry is parked on 'user' rather
+// than failing the boot.
+//
+// Same recreate-and-rename shape as the users_v2 migration above (SQLite cannot
+// drop a CHECK constraint in place). Keyed on auth_source so it runs once.
+{
+  const cols = db.pragma('table_info(users)');
+  const hasAuthSource = cols.some((c) => c.name === 'auth_source');
+  if (!hasAuthSource) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE users_v3 (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        email                TEXT NOT NULL UNIQUE,
+        password_hash        TEXT NOT NULL,
+        role                 TEXT NOT NULL REFERENCES roles(id),
+        account_id           TEXT,
+        active               INTEGER NOT NULL DEFAULT 1,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
+        auth_source          TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local','sso')),
+        legacy_id            TEXT,
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL,
+        last_login_at        TEXT
+      );
+      INSERT INTO users_v3 (id, email, password_hash, role, account_id, active, must_change_password, auth_source, created_at, updated_at, last_login_at)
+        SELECT u.id, u.email, u.password_hash,
+               CASE WHEN r.id IS NULL THEN 'user' ELSE u.role END,
+               u.account_id, u.active, u.must_change_password, 'local',
+               u.created_at, u.updated_at, u.last_login_at
+        FROM users u LEFT JOIN roles r ON r.id = u.role;
+      DROP TABLE users;
+      ALTER TABLE users_v3 RENAME TO users;
+      CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    `);
+    db.pragma('foreign_keys = ON');
+    console.log('[db] migration: users_v3 (role FK + auth_source + legacy_id)');
+  }
+}
+
 // Reseller plan tiers — editable from the Reseller Plans page.
 // Seeded on first boot from the defaults in src/data/resellerPlans.js.
 db.exec(`
@@ -217,6 +316,87 @@ addColumnIfMissing('customer_metadata', 'ejected_email',    'TEXT');
 addColumnIfMissing('customer_metadata', 'ejected_group_id', 'TEXT');
 addColumnIfMissing('customer_metadata', 'ejected_region',   'TEXT');
 
+// Migration: pin a reseller plan to a B2 partner group. When set, every member
+// of that group bills at this plan unless the account carries its own explicit
+// plan. Partner-API group members arrive with no plan at all, so without this
+// a newly added account silently inherited DEFAULT_PLAN_NAME — the most
+// expensive tier — which is a misbilling, not a sane default.
+addColumnIfMissing('reseller_plans', 'group_id', 'TEXT');
+
+// One plan per group, or "which plan applies to this group" has no answer.
+// Partial index: unpinned plans (group_id IS NULL) are unconstrained.
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reseller_plans_group
+    ON reseller_plans(group_id) WHERE group_id IS NOT NULL;
+`);
+
+// Migration: per-customer transaction-rate overrides. computeBilling has always
+// read these four fields, but nothing stored them, so a negotiated Class A/B/C/D
+// rate had nowhere to live and silently fell back to the plan rate.
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_a', 'REAL');
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_b', 'REAL');
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_c', 'REAL');
+addColumnIfMissing('customer_metadata', 'price_per_10k_class_d', 'REAL');
+
+// Migration: record whether a bucket's files were actually indexed.
+// walkBucket paginates b2_list_file_names 1000 at a time and writes a file_index
+// row per file, which is fine for millions of objects and hopeless for billions
+// (one real partner account holds 2.46e9 files across 36 buckets — ~2.46M
+// sequential API calls against a job that reruns every 24h). Buckets over the
+// ceiling are recorded as skipped so later runs cost nothing and the read path
+// knows the totals are not usable.
+//   'indexed'           — walked fully; object_count/total_bytes are authoritative
+//   'skipped_too_large' — over the ceiling; counts are 0 and must not be trusted
+addColumnIfMissing('object_counts', 'index_status', "TEXT NOT NULL DEFAULT 'indexed'");
+
+// Small key/value table for one-off control-plane state that doesn't warrant a
+// table of its own. First use: remembering that the reseller_plans defaults have
+// been seeded, so an operator who deletes them is not handed them back on the
+// next server start.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  );
+`);
+
+// Plan names are the join key — customer_metadata.plan stores the name, not the
+// id — so two plans sharing one would make planByName pick between them at
+// random. Enforced here rather than trusted to the callers.
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reseller_plans_name ON reseller_plans(name);
+`);
+
+// What the partner PAYS Backblaze to store, per TB per month, for one B2
+// partner group. Groups are negotiated separately, so COGS is a property of the
+// group — not a constant. Reseller plans hold the other side: what the partner
+// CHARGES. Margin is the difference.
+//
+// Groups themselves live in the B2 Partner API; this is only the local cost
+// overlay, keyed on the API's group id. No row means "not negotiated", and
+// billing falls back to B2 list price.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS group_costs (
+    group_id    TEXT PRIMARY KEY,
+    cost_per_tb REAL NOT NULL,
+    notes       TEXT,
+    updated_at  TEXT NOT NULL
+  );
+`);
+
+// Migration: negotiated egress and transaction costs per group. Null on any of
+// these means "use B2 list for that component", not "free" — for Class A/B/C
+// the two happen to coincide at list today, and would stop coinciding if list
+// pricing changed.
+//
+// The negotiated egress rate replaces the per-GB price only. B2's free
+// allowance of 3x stored bytes per month still applies on top; a contract that
+// removes the free tier instead of repricing it is not expressible here.
+addColumnIfMissing('group_costs', 'cost_per_gb_egress',  'REAL');
+addColumnIfMissing('group_costs', 'cost_per_10k_class_a', 'REAL');
+addColumnIfMissing('group_costs', 'cost_per_10k_class_b', 'REAL');
+addColumnIfMissing('group_costs', 'cost_per_10k_class_c', 'REAL');
+
 // Migration: support read-only impersonation. When non-null, the session is
 // acting *as* the impersonating_user_id (effective identity); the original
 // sessions.user_id remains the staff actor for audit purposes.
@@ -231,6 +411,66 @@ addColumnIfMissing('mcp_config', 'transport',   "TEXT NOT NULL DEFAULT 'http'");
 addColumnIfMissing('mcp_config', 'auth_mode',   "TEXT NOT NULL DEFAULT 'bearer'");
 addColumnIfMissing('mcp_config', 'header_names', 'TEXT');
 addColumnIfMissing('mcp_account_tokens', 'header_names', 'TEXT');
+
+// =============================================================================
+// SSO (OIDC) — optional. Nothing here is required for the portal to run; the
+// login page only offers SSO once an admin enables a connection.
+// =============================================================================
+// sso_config mirrors mcp_config: single row, secret encrypted at rest via
+// server/secretbox.js. Group mappings point at roles(id) so an IdP group can
+// grant an operator-defined role, not just a built-in one.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sso_config (
+    id                      INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled                 INTEGER NOT NULL DEFAULT 0,
+    issuer_url              TEXT NOT NULL DEFAULT '',
+    client_id               TEXT NOT NULL DEFAULT '',
+    encrypted_client_secret TEXT,
+    secret_iv               TEXT,
+    secret_tag              TEXT,
+    redirect_uri            TEXT NOT NULL DEFAULT '',
+    groups_claim            TEXT NOT NULL DEFAULT 'groups',
+    button_label            TEXT NOT NULL DEFAULT 'Sign in with SSO',
+    default_role            TEXT REFERENCES roles(id),
+    allow_admin_role        INTEGER NOT NULL DEFAULT 0,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sso_group_mappings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_value TEXT NOT NULL,
+    role_id     TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    label       TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_sso_map_order ON sso_group_mappings(sort_order);
+
+  -- Short-lived CSRF state for the redirect to the IdP (10 minute TTL).
+  -- The nonce is echoed in an httpOnly cookie set when the flow starts, so a
+  -- sign-in can only be completed in the same browser that began it.
+  CREATE TABLE IF NOT EXISTS sso_states (
+    state      TEXT PRIMARY KEY,
+    nonce      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+
+  -- One-time handoff codes (60 second TTL, deleted on first use). The callback
+  -- mints one and the SPA swaps it for a session, so no credential ever travels
+  -- in a URL and the session cookie can stay SameSite=Strict.
+  CREATE TABLE IF NOT EXISTS sso_exchange_codes (
+    code       TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    nonce      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+`);
+
+addColumnIfMissing('sso_states', 'nonce', "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing('sso_exchange_codes', 'nonce', "TEXT NOT NULL DEFAULT ''");
+
+// Clear out any stale SSO handoff state on boot — both tables are ephemeral.
+db.exec('DELETE FROM sso_states; DELETE FROM sso_exchange_codes;');
 
 // Best-effort sweep of expired sessions on every boot.
 db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(new Date().toISOString());

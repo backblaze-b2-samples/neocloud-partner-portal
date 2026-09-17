@@ -1,10 +1,8 @@
+@import './theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-:root {
-  color-scheme: dark;
-}
 
 html, body, #root {
   height: 100%;
@@ -26,9 +24,10 @@ html, body, #root {
 body {
   font-feature-settings: 'cv11', 'ss01', 'ss03';
   background:
-    radial-gradient(ellipse 1200px 600px at 0% 0%, rgba(230, 31, 24, 0.08), transparent 60%),
-    radial-gradient(ellipse 800px 500px at 100% 0%, rgba(155, 124, 255, 0.06), transparent 60%),
-    #07090F;
+    radial-gradient(ellipse 1200px 600px at 0% 0%, var(--page-glow-a), transparent 60%),
+    radial-gradient(ellipse 800px 500px at 100% 0%, var(--page-glow-b), transparent 60%),
+    rgb(var(--ink-950));
+  color: rgb(var(--ink-100));
 }
 
 /* Custom scrollbar */
@@ -40,43 +39,44 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: #1F2638;
+  background: rgb(var(--ink-700));
   border-radius: 6px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #2A334B;
+  background: rgb(var(--ink-600));
 }
 
-/* Recharts dark mode tweaks */
+/* Recharts theming. Driven by the same variables as everything else, so charts
+   follow the theme without the chart components knowing one exists. */
 .recharts-cartesian-axis-tick-value {
-  fill: #8A95B2 !important;
+  fill: rgb(var(--ink-300)) !important;
   font-size: 11px !important;
 }
 .recharts-cartesian-grid line {
-  stroke: #1F2638 !important;
+  stroke: rgb(var(--ink-700)) !important;
 }
 .recharts-tooltip-wrapper {
   outline: none !important;
 }
 .recharts-default-tooltip {
-  background: #10141F !important;
-  border: 1px solid #2A334B !important;
+  background: rgb(var(--ink-850)) !important;
+  border: 1px solid rgb(var(--ink-600)) !important;
   border-radius: 8px !important;
   padding: 10px 12px !important;
 }
 .recharts-tooltip-label {
-  color: #E5E9F2 !important;
+  color: rgb(var(--ink-100)) !important;
   font-weight: 600 !important;
 }
 .recharts-tooltip-item-list {
   margin: 4px 0 0 !important;
 }
 .recharts-tooltip-item {
-  color: #B8C0D6 !important;
+  color: rgb(var(--ink-200)) !important;
   padding: 2px 0 !important;
 }
 .recharts-legend-item-text {
-  color: #B8C0D6 !important;
+  color: rgb(var(--ink-200)) !important;
   font-size: 12px !important;
 }
 
@@ -87,11 +87,23 @@ code, pre {
   line-height: 1.55;
 }
 
-/* Pulse animation for live indicators */
+/* Pulse for live indicators. Reserved for things that are genuinely transient —
+   an in-flight API call, a region reporting live traffic. The persistent chrome
+   (the logo badge, the Demo/Live pill) uses a static dot: colour already carries
+   the state, and a permanent pulse just pulls the eye. */
 @keyframes liveDot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
 .live-dot {
   animation: liveDot 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .animate-pulse,
+  .animate-pulse-slow,
+  .animate-spin {
+    animation: none;
+  }
 }

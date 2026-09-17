@@ -4,7 +4,8 @@ import {
   KeyRound, Terminal, Search, Bell, ChevronDown,
   Settings as SettingsIcon, FolderTree, Zap, FlaskConical,
   LogOut, ShieldCheck, UserCog, BadgeDollarSign, ScrollText, Eye, Wallet,
-  Lock, Shield, Menu, X, Code2, Plug,
+  Sun, Moon, Monitor,
+  Lock, Shield, Menu, X, Code2, Plug, KeySquare,
 } from 'lucide-react';
 import { cx } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
@@ -53,9 +54,10 @@ const ALL_NAV = [
   { id: 'keys',      label: 'Application keys & security', icon: KeyRound,  group: 'Security' },
   { id: 'immutability', label: 'Ransomware protection', icon: Lock,         group: 'Security' },
   { id: 'trust',     label: 'Trust Center',         icon: Shield,           group: 'Security' },
-  { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requireRole: 'admin' },
-  { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requireRole: 'admin' },
-  { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requireAnyRole: ['admin', 'support'] },
+  { id: 'users',     label: 'User management',      icon: ShieldCheck,      group: 'Administration', requirePermission: 'users:read' },
+  { id: 'roles',     label: 'Roles & permissions',  icon: KeySquare,        group: 'Administration', requirePermission: 'roles:read' },
+  { id: 'audit',     label: 'Audit log',            icon: ScrollText,       group: 'Administration', requirePermission: 'audit:read' },
+  { id: 'support',   label: 'View as customer',     icon: Eye,              group: 'Administration', requirePermission: 'impersonate:start' },
   { id: 'console',   label: 'API console',          icon: Terminal,         group: 'Developer' },
   { id: 'mcp',       label: 'MCP console',          icon: Plug,             group: 'Developer' },
   { id: 'plans',     label: 'Reseller plans',        icon: BadgeDollarSign,  group: 'System' },
@@ -63,17 +65,20 @@ const ALL_NAV = [
   { id: 'settings',  label: 'Settings & credentials', icon: SettingsIcon,  group: 'System' },
 ];
 
-// Filter NAV per the user's role. Admin-only entries are *omitted* (not just
-// disabled) so they don't appear in the rendered HTML for non-admins.
-function navFor(user) {
+// Filter NAV by the user's permissions. Gated entries are *omitted* (not just
+// disabled) so they don't appear in the rendered HTML for those without them.
+// This is presentation only — every one of these views is independently gated
+// server-side.
+export function navFor(user) {
   if (!user) return [];
-  let items = ALL_NAV.filter((n) => {
-    if (n.requireRole)    return n.requireRole === user.role;
-    if (n.requireAnyRole) return n.requireAnyRole.includes(user.role);
-    return true;
-  });
+  const held = user.permissions || [];
+  let items = ALL_NAV.filter((n) => (n.requirePermission ? held.includes(n.requirePermission) : true));
+  // Settings is not permission-gated as a whole: partner staff use it to switch
+  // demo/live mode and hold their own B2 key, which is client-side config. The
+  // sensitive cards inside it (MCP connection, SSO) carry their own gates.
+  // Support keeps the same carve-out it had before the permission layer.
   if (user.role === 'support') {
-    items = items.filter((n) => n.id !== 'users' && n.id !== 'settings');
+    items = items.filter((n) => n.id !== 'settings');
   }
   return items;
 }
@@ -87,7 +92,7 @@ function Logo() {
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-bb-red shadow-glow">
           <span className="font-semibold text-white">B2</span>
         </div>
-        <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-accent-green ring-2 ring-ink-900 live-dot" />
+        <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-accent-green ring-2 ring-ink-900" />
       </div>
       <div>
         <div className="text-sm font-semibold leading-tight text-ink-100">
@@ -277,6 +282,37 @@ function ModePill({ isLive }) {
   );
 }
 
+// Cycles light -> dark -> system. A three-state control rather than a binary
+// switch because 'system' is the default: without it, a user who follows their
+// OS theme has no way back to that once they touch the toggle.
+const THEME_STEPS = [
+  { pref: 'light',  icon: Sun,     label: 'Light theme'  },
+  { pref: 'dark',   icon: Moon,    label: 'Dark theme'   },
+  { pref: 'system', icon: Monitor, label: 'Match system' },
+];
+
+export function ThemeToggle({ className = '' }) {
+  const { themePref, theme, setTheme } = useApp();
+  const i = Math.max(0, THEME_STEPS.findIndex((s) => s.pref === themePref));
+  const step = THEME_STEPS[i];
+  const next = THEME_STEPS[(i + 1) % THEME_STEPS.length];
+  const Icon = step.icon;
+
+  return (
+    <button
+      onClick={() => setTheme(next.pref)}
+      title={`${step.label}${themePref === 'system' ? ` (currently ${theme})` : ''} — click for ${next.label.toLowerCase()}`}
+      aria-label={`${step.label}. Switch to ${next.label.toLowerCase()}`}
+      className={cx(
+        'grid h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:h-8 sm:w-8',
+        className,
+      )}
+    >
+      <Icon size={14} />
+    </button>
+  );
+}
+
 export function TopBar({ active, onOpenSettings, onMenu }) {
   const { isLive, hasCreds, setMode, canGoLive } = useApp();
   const current = NAV.find((n) => n.id === active);
@@ -294,7 +330,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
           <span>Partner Portal</span>
           <ChevronDown size={12} />
         </div>
-        <span className="hidden text-ink-600 sm:inline">/</span>
+        <span className="hidden text-ink-400 sm:inline">/</span>
         <span className="truncate font-medium text-ink-100">{current?.label || 'Dashboard'}</span>
       </div>
       <div className="flex items-center gap-1.5 sm:gap-2">
@@ -330,6 +366,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
         </div>
 
         <ApiActivityButton />
+        <ThemeToggle />
         {/* Gear is redundant with the nav on mobile; show only on desktop. */}
         <button
           onClick={onOpenSettings}
@@ -342,7 +379,7 @@ export function TopBar({ active, onOpenSettings, onMenu }) {
           <Bell size={14} />
         </button>
         <div className="hidden h-8 items-center gap-2 rounded-md border border-ink-700 bg-ink-850 px-2 text-[11px] text-ink-300 md:inline-flex">
-          <span className={cx('h-1.5 w-1.5 rounded-full live-dot', isLive ? 'bg-accent-green' : 'bg-accent-violet')} />
+          <span className={cx('h-1.5 w-1.5 rounded-full', isLive ? 'bg-accent-green' : 'bg-accent-violet')} />
           <span>{isLive ? (hasCreds ? 'Live · 4 regions' : 'Live · no creds') : 'Demo · 4 regions'}</span>
         </div>
       </div>
@@ -590,11 +627,12 @@ export function CustomerTopBar({ active, onMenu }) {
           <span>My Portal</span>
           <ChevronDown size={12} />
         </div>
-        <span className="hidden text-ink-600 sm:inline">/</span>
+        <span className="hidden text-ink-400 sm:inline">/</span>
         <span className="truncate font-medium text-ink-100">{label}</span>
       </div>
       <div className="flex items-center gap-2">
         <ApiActivityButton />
+        <ThemeToggle />
         <button className="hidden h-10 w-10 place-items-center rounded-md border border-ink-700 bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-100 sm:grid sm:h-8 sm:w-8">
           <Bell size={14} />
         </button>

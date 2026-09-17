@@ -4,7 +4,7 @@ import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tabs, Tag,
   Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart, StackedBarChart, Heatmap } from '../components/charts.jsx';
+import { TrendAreaChart, StackedBarChart, Heatmap, useChartColors } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import { parseDailyUsageCsv, rollupBy, estimateCost, PRICING, loadSampleCsv } from '../api/csvParser.js';
 import { bytes, compactNumber, currency, percent } from '../lib/format.js';
@@ -18,6 +18,7 @@ const RANGES = [
 ];
 
 export default function UsageBillingView() {
+  const chartColors = useChartColors();
   const { isLive, canSeeRevenue } = useApp();
   const { customers } = useCustomers();
   const [loading, setLoading] = useState(true);
@@ -181,9 +182,9 @@ export default function UsageBillingView() {
         <TrendAreaChart
           data={windowed}
           series={[
-            { key: 'storageBytes', name: 'Storage', color: '#E61F18', format: bytes },
-            { key: 'egressBytes', name: 'Egress', color: '#3DD9D6', format: bytes },
-            { key: 'uploadBytes', name: 'Uploads', color: '#9B7CFF', format: bytes },
+            { key: 'storageBytes', name: 'Storage', color: chartColors.red, format: bytes },
+            { key: 'egressBytes', name: 'Egress', color: chartColors.teal, format: bytes },
+            { key: 'uploadBytes', name: 'Uploads', color: chartColors.violet, format: bytes },
           ]}
           yFormatter={bytes}
           height={280}

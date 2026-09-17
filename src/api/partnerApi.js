@@ -16,7 +16,7 @@ import { CUSTOMERS, aggregate } from '../data/customers.js';
 import { GROUPS } from '../data/groups.js';
 import { authorizeAccount, getCustomerUsageFromCsv, readCsrfCookie } from './b2Adapter.js';
 import { api } from '../lib/apiClient.js';
-import { computeBilling, DEFAULT_PLAN_NAME, RESELLER_PLANS } from '../data/resellerPlans.js';
+import { computeBilling, RESELLER_PLANS } from '../data/resellerPlans.js';
 
 const wait = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
@@ -139,20 +139,21 @@ function memberToCustomer(member, groupId) {
       .replace(/\b\w/g, (l) => l.toUpperCase());
   }
 
-  // Infer region from the NeoCloud email naming convention:
+  // Infer region from the NeoCloud demo email naming convention:
   //   *-eu@*   → eu-central-003
   //   *-west@* → us-west-002
   //   *-east@* → us-east-005
-  // Falls back to us-west-002 for internal accounts without a suffix.
+  // Anything else is null — getCustomers fills it from the daily usage CSV
+  // (reporting_location) or stored credentials. It used to default to
+  // us-west-002, which showed a confident wrong region for every real
+  // customer account whose email doesn't follow the demo convention.
   function inferRegion(email = '') {
     const local = email.split('@')[0].toLowerCase();
     if (local.endsWith('-eu'))   return 'eu-central-003';
     if (local.endsWith('-ca'))   return 'ca-east-006';
     if (local.endsWith('-east')) return 'us-east-005';
     if (local.endsWith('-west')) return 'us-west-002';
-    // Internal accounts: james.rivera → east, everyone else → west
-    if (local.includes('rivera')) return 'us-east-005';
-    return 'us-west-002';
+    return null;
   }
 
   return {
@@ -180,6 +181,85 @@ function memberToCustomer(member, groupId) {
       ? new Date(member.addedTimestamp).toISOString().slice(0, 10)
       : null,
   };
+}
+
+/**
+ * Reseller plan tiers from the control plane (the runtime source of truth).
+ *
+ * Falls back to the static defaults only when the request FAILS. A successful
+ * empty response is taken at face value and returned as []: now that operators
+ * manage their own catalog, an empty one means "no tiers defined yet", and
+ * answering that with the sample tiers would invent prices nobody set. Every
+ * customer then bills at B2 list, which computeBilling already handles and the
+ * Reseller plans screen calls out.
+ */
+export async function getResellerPlans() {
+  try {
+    const d = await api.get('/api/admin/reseller-plans');
+    return d?.plans ?? RESELLER_PLANS;
+  } catch {
+    return RESELLER_PLANS;
+  }
+}
+
+/**
+ * Roll per-bucket object_counts rows up to per-account totals.
+ *
+ * Buckets the index job gave up on (index_status 'skipped_too_large') carry
+ * zeroed counts, and an account may hold a mix of walked and skipped buckets.
+ * Summing that mix would present a partial figure as a total, understating
+ * storage and therefore revenue, so any account with a skipped bucket is
+ * omitted entirely — callers then fall through to the Usage CSV / Partner API
+ * figure, both of which are authoritative.
+ *
+ * @param objectCounts Map<bucketId, { accountId, count, totalBytes, indexStatus }>
+ */
+export function aggregateObjectCounts(objectCounts) {
+  const bytesByAccount   = new Map();
+  const objectsByAccount = new Map();
+  const partialAccounts  = new Set();
+
+  for (const [, oc] of objectCounts) {
+    if (!oc?.accountId) continue; // map values include accountId via the GET response shape
+    if (oc.indexStatus && oc.indexStatus !== 'indexed') {
+      partialAccounts.add(oc.accountId);
+      continue;
+    }
+    bytesByAccount.set(oc.accountId, (bytesByAccount.get(oc.accountId) || 0) + (oc.totalBytes || 0));
+    objectsByAccount.set(oc.accountId, (objectsByAccount.get(oc.accountId) || 0) + (oc.count || 0));
+  }
+
+  for (const accountId of partialAccounts) {
+    bytesByAccount.delete(accountId);
+    objectsByAccount.delete(accountId);
+  }
+
+  return { bytesByAccount, objectsByAccount };
+}
+
+/**
+ * Negotiated costs per B2 partner group — what the partner PAYS Backblaze, as
+ * opposed to the reseller plans, which say what they charge. Covers storage per
+ * TB, egress per GB, and Class A/B/C per 10k transactions.
+ *
+ * Returns Map<groupId, { costPerTb, costPerGbEgress, costPer10kClassA/B/C }>.
+ * An empty map means
+ * nothing is negotiated and every group falls back to B2 list; a failed request
+ * is treated the same way, since guessing a cost would silently misstate margin.
+ */
+export async function getGroupCosts() {
+  try {
+    const d = await api.get('/api/admin/group-costs');
+    return new Map((d?.costs || []).map((c) => [String(c.groupId), {
+      costPerTb:        c.costPerTb,
+      costPerGbEgress:  c.costPerGbEgress ?? null,
+      costPer10kClassA: c.costPer10kClassA ?? null,
+      costPer10kClassB: c.costPer10kClassB ?? null,
+      costPer10kClassC: c.costPer10kClassC ?? null,
+    }]));
+  } catch {
+    return new Map();
+  }
 }
 
 // All customers across all groups (used by views that want a flat list).
@@ -265,15 +345,20 @@ export async function getCustomers({ groupId } = {}) {
   };
   const normalizeRegion = (r) => regionMap[r] ?? r;
 
-  // Merge stored region into each customer (overrides the email-inferred fallback).
+  // Merge stored region into each customer (overrides the email-inferred
+  // fallback). The CSV's reporting_location overrides both, below.
   const liveAccountIds = new Set();
   const customers = perGroup.flat().map((c) => {
     liveAccountIds.add(c.accountId);
     const stored = storedCreds.get(c.accountId);
-    if (stored?.region) {
-      return { ...c, region: normalizeRegion(stored.region) };
-    }
-    return c;
+    const withRegion = stored?.region ? { ...c, region: normalizeRegion(stored.region) } : c;
+    // Apply saved local metadata — plan, pricing overrides, display name,
+    // industry. Without this an active customer reaches computeBilling with
+    // plan === null no matter what an admin assigned: the detail view
+    // (getCustomer) merged metadata, the list that feeds Cockpit and Billing
+    // did not.
+    const meta = metadata.get(c.accountId);
+    return meta ? mergeMetadata(withRegion, meta) : withRegion;
   });
 
   // Append stub rows for ejected sub-accounts (active=false). These are no
@@ -317,18 +402,23 @@ export async function getCustomers({ groupId } = {}) {
   const [csvUsage, objectCounts, plans] = await Promise.all([
     getCustomerUsageFromCsv(),
     (await import('./b2Adapter.js')).getObjectCounts().catch(() => new Map()),
-    api.get('/api/admin/reseller-plans').then((d) => d.plans).catch(() => RESELLER_PLANS),
+    getResellerPlans(),
   ]);
+
+  const groupCosts = await getGroupCosts();
+
+  // groupId -> plan name, for accounts with no explicit plan of their own.
+  // Pricing is a property of the B2 group for partners who price per group
+  // (the common reseller shape), so this is the assignment that scales: add an
+  // account to a group in B2 and it bills correctly without anyone editing it.
+  const planByGroup = new Map();
+  for (const p of plans) {
+    if (p.groupId != null && String(p.groupId) !== '') planByGroup.set(String(p.groupId), p.name);
+  }
 
   // Sum object_counts per accountId so we can use it as a per-customer storage
   // source, and roll the file counts up the same way for the Objects column.
-  const bytesByAccount   = new Map();
-  const objectsByAccount = new Map();
-  for (const [, oc] of objectCounts) {
-    if (!oc?.accountId) continue; // map values now include accountId via the GET response shape
-    bytesByAccount.set(oc.accountId, (bytesByAccount.get(oc.accountId) || 0) + (oc.totalBytes || 0));
-    objectsByAccount.set(oc.accountId, (objectsByAccount.get(oc.accountId) || 0) + (oc.count || 0));
-  }
+  const { bytesByAccount, objectsByAccount } = aggregateObjectCounts(objectCounts);
 
   const enriched = customers.map((c) => {
     // Ejected sub-accounts are no longer the partner's billing responsibility,
@@ -340,6 +430,10 @@ export async function getCustomers({ groupId } = {}) {
       return { ...c, storageBytes: 0, egressBytes30d: 0, txnA30d: 0, txnB30d: 0, txnC30d: 0, txnD30d: 0, revenue30d: 0, cogs30d: 0, objectCount: null };
     }
     const csv  = csvUsage.get(c.accountId);
+    // Region: B2's own daily report is the source of truth. Stored credentials
+    // and the email convention are only fallbacks for accounts with no usage
+    // rows yet; null (rather than a guess) when none of them know.
+    const region = csv?.region || c.region || null;
     const objBytes = bytesByAccount.get(c.accountId) || 0;
     // null when the object-count job has never walked this sub-account (no
     // stored credentials, or not yet synced) so the UI shows '—', not '0'.
@@ -353,12 +447,31 @@ export async function getCustomers({ groupId } = {}) {
     const txnC30d        = csv?.txnC30d        > 0 ? csv.txnC30d        : (c.txnC30d        ?? 0);
     const txnD30d        = csv?.txnD30d        > 0 ? csv.txnD30d        : (c.txnD30d        ?? 0);
 
-    // Default-assign a plan to every active customer that doesn't already have one.
-    const plan = c.plan || DEFAULT_PLAN_NAME;
+    // Resolve the plan: an explicit per-account assignment wins, otherwise the
+    // plan pinned to the account's B2 group. Deliberately no default tier — the
+    // Partner API returns no plan, so defaulting meant an unassigned account
+    // billed at DEFAULT_PLAN_NAME (the most expensive tier) and looked
+    // plausible while being wrong. Unassigned now bills at B2 list, i.e. zero
+    // margin, which is visibly wrong and gets noticed.
+    const plan = c.plan || planByGroup.get(String(c.groupId)) || null;
+    const planSource = c.plan ? 'account' : (plan ? 'group' : null);
+    // What this account's group costs the partner. Null/undefined rather than 0
+    // for anything unnegotiated, so computeBilling falls back to B2 list per
+    // component rather than treating it as free.
+    const gc = groupCosts.get(String(c.groupId));
+    const cost = {
+      costPerTbStorage: gc?.costPerTb,
+      costPerGbEgress:  gc?.costPerGbEgress ?? undefined,
+      costPer10kClassA: gc?.costPer10kClassA ?? undefined,
+      costPer10kClassB: gc?.costPer10kClassB ?? undefined,
+      costPer10kClassC: gc?.costPer10kClassC ?? undefined,
+    };
+
     const billingInput = {
       ...c,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       plan,
+      ...cost,
     };
     const { revenue, cogs } = computeBilling(billingInput, plans);
 
@@ -369,7 +482,10 @@ export async function getCustomers({ groupId } = {}) {
 
     return {
       ...c,
+      region,
       plan,
+      planSource,
+      costPerTbStorage: cost.costPerTbStorage ?? null,
       storageBytes, egressBytes30d, txnA30d, txnB30d, txnC30d, txnD30d,
       objectCount,
       revenue30d: revenue,
@@ -413,6 +529,12 @@ function mergeMetadata(customer, meta) {
     plan:     meta.plan          || customer.plan,
     price_per_gb_storage:  meta.price_per_gb_storage  ?? null,
     price_per_gb_download: meta.price_per_gb_download ?? null,
+    // computeBilling reads these four; before they were carried here they were
+    // dead reads and a saved transaction override never reached billing.
+    price_per_10k_class_a: meta.price_per_10k_class_a ?? null,
+    price_per_10k_class_b: meta.price_per_10k_class_b ?? null,
+    price_per_10k_class_c: meta.price_per_10k_class_c ?? null,
+    price_per_10k_class_d: meta.price_per_10k_class_d ?? null,
     _notes:   meta.notes         || null,
   };
 }

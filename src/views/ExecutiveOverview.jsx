@@ -6,20 +6,23 @@ import {
   PageHeader, MetricCard, Card, CardHeader, SourceBadge, HealthPill,
   Tag, Table, THead, TBody, TR, TH, TD, LoadingState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart, DonutChart, Sparkline, CHART_COLORS } from '../components/charts.jsx';
+import { TrendAreaChart, DonutChart, Sparkline, CHART_COLORS, useChartColors } from '../components/charts.jsx';
 import * as b2 from '../api/b2Adapter.js';
 import * as partner from '../api/partnerApi.js';
 import { useNav } from '../lib/nav.js';
 import { bytes, compactNumber, currency, percent, relativeTime } from '../lib/format.js';
 import { useApp } from '../lib/AppContext.jsx';
 
-const SERIES_STORAGE = [{ key: 'storageBytes', name: 'Storage under management', color: '#E61F18', format: bytes }];
-const SERIES_EGRESS = [
-  { key: 'egressBytes', name: 'Egress', color: '#3DD9D6', format: bytes },
-  { key: 'uploadBytes', name: 'Uploads', color: '#9B7CFF', format: bytes },
+// Built from the live palette rather than frozen at module load, so the series
+// colours follow the theme.
+const seriesStorage = (c) => [{ key: 'storageBytes', name: 'Storage under management', color: c.red, format: bytes }];
+const seriesEgress = (c) => [
+  { key: 'egressBytes', name: 'Egress', color: c.teal, format: bytes },
+  { key: 'uploadBytes', name: 'Uploads', color: c.violet, format: bytes },
 ];
 
 export default function ExecutiveOverview() {
+  const chartColors = useChartColors();
   const { navigate } = useNav();
   const { canSeeRevenue } = useApp();
   const [loading, setLoading] = useState(true);
@@ -135,7 +138,7 @@ export default function ExecutiveOverview() {
   customerShare.forEach((c, i) => (c.color = CHART_COLORS[i % CHART_COLORS.length]));
 
   const regionShare = regions.map((r, i) => ({
-    name: r.code, value: r.storageBytes, color: ['#3DD9D6', '#9B7CFF', '#F5B73E', '#2BD68A'][i],
+    name: r.code, value: r.storageBytes, color: [chartColors.teal, chartColors.violet, chartColors.amber, chartColors.green][i],
   }));
 
   const topCustomers = [...customers].sort((a, b) => b.revenue30d - a.revenue30d).slice(0, 5);
@@ -207,7 +210,7 @@ export default function ExecutiveOverview() {
           icon={<Database size={14} />}
           accent="red"
         >
-          <Sparkline data={sparkStorage} color="#E61F18" />
+          <Sparkline data={sparkStorage} color={chartColors.red} />
         </MetricCard>
         <MetricCard
           label="30-day egress"
@@ -217,7 +220,7 @@ export default function ExecutiveOverview() {
           icon={<Download size={14} />}
           accent="teal"
         >
-          <Sparkline data={sparkEgress} color="#3DD9D6" />
+          <Sparkline data={sparkEgress} color={chartColors.teal} />
         </MetricCard>
         <MetricCard
           label="API transactions (30d)"
@@ -228,7 +231,7 @@ export default function ExecutiveOverview() {
           icon={<Activity size={14} />}
           accent="violet"
         >
-          <Sparkline data={sparkTxn} color="#A78BFA" />
+          <Sparkline data={sparkTxn} color={chartColors.violet} />
         </MetricCard>
         {canSeeRevenue && (
           <MetricCard
@@ -240,7 +243,7 @@ export default function ExecutiveOverview() {
             icon={<DollarSign size={14} />}
             accent="green"
           >
-            <Sparkline data={sparkRevenue} color="#2BD68A" />
+            <Sparkline data={sparkRevenue} color={chartColors.green} />
           </MetricCard>
         )}
       </div>
@@ -312,7 +315,7 @@ export default function ExecutiveOverview() {
             icon={<Database size={16} />}
             action={<SourceBadge source="csv" />}
           />
-          <TrendAreaChart data={usage} series={SERIES_STORAGE} yFormatter={bytes} />
+          <TrendAreaChart data={usage} series={seriesStorage(chartColors)} yFormatter={bytes} />
         </Card>
         <Card>
           <CardHeader
@@ -332,7 +335,7 @@ export default function ExecutiveOverview() {
             icon={<Download size={16} />}
             action={<SourceBadge source="csv" />}
           />
-          <TrendAreaChart data={usage} series={SERIES_EGRESS} yFormatter={bytes} />
+          <TrendAreaChart data={usage} series={seriesEgress(chartColors)} yFormatter={bytes} />
         </Card>
         <Card>
           <CardHeader

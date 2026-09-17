@@ -227,3 +227,55 @@ describe('eject cascade deactivates customer logins', () => {
     expect(db.prepare('SELECT active FROM users WHERE id = ?').get(cr.id).active).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-customer transaction-rate overrides. computeBilling has always read these
+// four fields; until they were stored and returned they were dead reads.
+// ---------------------------------------------------------------------------
+describe('PUT /:accountId transaction-rate overrides', () => {
+  it('persists and returns all four class rates', async () => {
+    const r = await ap('put', '/api/admin/metadata/txn-1', {
+      plan: 'Reseller — Tier 1',
+      price_per_10k_class_a: 0.004,
+      price_per_10k_class_b: 0.0035,
+      price_per_10k_class_c: 0.002,
+      price_per_10k_class_d: 0.012,
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.metadata.price_per_10k_class_a).toBe(0.004);
+    expect(r.body.metadata.price_per_10k_class_b).toBe(0.0035);
+    expect(r.body.metadata.price_per_10k_class_c).toBe(0.002);
+    expect(r.body.metadata.price_per_10k_class_d).toBe(0.012);
+
+    const back = await ag('/api/admin/metadata/txn-1');
+    expect(back.body.metadata.price_per_10k_class_d).toBe(0.012);
+  });
+
+  it('stores an explicit zero rather than coercing it to null', async () => {
+    const r = await ap('put', '/api/admin/metadata/txn-zero', {
+      price_per_10k_class_a: 0,
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.metadata.price_per_10k_class_a).toBe(0);
+  });
+
+  it('clears a rate when the field is sent empty', async () => {
+    await ap('put', '/api/admin/metadata/txn-2', { price_per_10k_class_a: 0.004 });
+    const r = await ap('put', '/api/admin/metadata/txn-2', { price_per_10k_class_a: '' });
+    expect(r.status).toBe(200);
+    expect(r.body.metadata.price_per_10k_class_a).toBeNull();
+  });
+
+  it('rejects a negative rate', async () => {
+    const r = await ap('put', '/api/admin/metadata/txn-3', { price_per_10k_class_b: -1 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/price_per_10k_class_b/);
+  });
+
+  it('rejects a non-numeric rate instead of storing NaN', async () => {
+    const r = await ap('put', '/api/admin/metadata/txn-4', { price_per_gb_storage: 'free' });
+    expect(r.status).toBe(400);
+    const back = await ag('/api/admin/metadata/txn-4');
+    expect(back.body.metadata).toBeNull();
+  });
+});

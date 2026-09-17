@@ -14,10 +14,14 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { attachSession } from './middleware/requireAuth.js';
 import authRouter from './routes/auth.js';
+import ssoRouter from './routes/sso.js';
+import ssoAdminRouter from './routes/ssoAdmin.js';
 import adminRouter from './routes/admin.js';
+import rolesRouter from './routes/roles.js';
 import credentialsRouter from './routes/credentials.js';
 import metadataRouter from './routes/customerMetadata.js';
 import resellerPlansRouter from './routes/resellerPlans.js';
+import groupCostsRouter from './routes/groupCosts.js';
 import b2partnerRouter from './routes/b2partner.js';
 import customerB2Router from './routes/customerB2.js';
 import masterB2Router from './routes/masterB2.js';
@@ -58,17 +62,23 @@ app.use((req, res, next) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// Specific path first — the auth router has no /sso routes, but keep the
+// ordering explicit.
+app.use('/api/auth/sso', ssoRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/admin/roles', rolesRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/credentials', credentialsRouter);
 app.use('/api/admin/metadata', metadataRouter);
 app.use('/api/admin/reseller-plans', resellerPlansRouter);
+app.use('/api/admin/group-costs', groupCostsRouter);
 app.use('/api/b2-partner', b2partnerRouter);
 app.use('/api/customer-b2', customerB2Router);
 app.use('/api/master-b2', masterB2Router);
 app.use('/api/customer-admin', customerAdminRouter);
 app.use('/api/impersonate', impersonateRouter);
 app.use('/api/admin/mcp', mcpAdminRouter);
+app.use('/api/admin/sso', ssoAdminRouter);
 app.use('/api/mcp/chat', mcpChatRouter);
 app.use('/api/mcp', mcpRouter);
 

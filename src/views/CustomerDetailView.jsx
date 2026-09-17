@@ -11,7 +11,7 @@ import {
   PageHeader, Card, CardHeader, MetricCard, SourceBadge, Tag, HealthPill, Tabs,
   Table, THead, TBody, TR, TH, TD, LoadingState, EmptyState, ErrorState,
 } from '../components/ui.jsx';
-import { TrendAreaChart, StackedBarChart } from '../components/charts.jsx';
+import { TrendAreaChart, StackedBarChart, useChartColors } from '../components/charts.jsx';
 import { CreateBucketDialog, EditCustomerDialog, TerminateMemberDialog } from '../components/dialogs.jsx';
 import { REGIONS } from '../data/regions.js';
 import * as partner from '../api/partnerApi.js';
@@ -190,7 +190,7 @@ export default function CustomerDetailView({ customerId }) {
         title={customer.name}
         subtitle={isEjected
           ? `Account ${customer.accountId} · ejected ${customer.ejectedAt ? shortDate(customer.ejectedAt) : ''}${region?.code ? ` · last region ${region.flag} ${region.code}` : ''}`
-          : `Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region?.flag} ${region?.code}`}
+          : `Account ${customer.accountId} · onboarded ${shortDate(customer.onboarded)} · region ${region ? `${region.flag} ${region.code}` : '—'}`}
         actions={
           <div className="flex items-center gap-2">
             {isEjected
@@ -311,6 +311,7 @@ export default function CustomerDetailView({ customerId }) {
 // Tab content
 // ============================================================================
 function OverviewTab({ customer, buckets, keys }) {
+  const chartColors = useChartColors();
   // Build a synthetic 30-day series proportional to this customer's totals
   const days = 30;
   const data = Array.from({ length: days }, (_, i) => {
@@ -334,8 +335,8 @@ function OverviewTab({ customer, buckets, keys }) {
         <TrendAreaChart
           data={data}
           series={[
-            { key: 'storageBytes', name: 'Storage', color: '#E61F18', format: bytes },
-            { key: 'egressBytes', name: 'Egress', color: '#3DD9D6', format: bytes },
+            { key: 'storageBytes', name: 'Storage', color: chartColors.red, format: bytes },
+            { key: 'egressBytes', name: 'Egress', color: chartColors.teal, format: bytes },
           ]}
           yFormatter={bytes}
         />
@@ -347,7 +348,7 @@ function OverviewTab({ customer, buckets, keys }) {
           <dl className="space-y-1.5 text-xs">
             <KV icon={<Mail size={12} />} label="Contact" value={customer.contactEmail} />
             <KV icon={<Hash size={12} />} label="Account ID" value={customer.accountId} mono />
-            <KV icon={<Globe size={12} />} label="Region" value={`${customer.region}`} mono />
+            <KV icon={<Globe size={12} />} label="Region" value={customer.region || '—'} mono />
             <KV label="Plan" value={customer.plan || <span className="text-ink-500 italic">not set</span>} />
             {customer.price_per_gb_storage != null && (
               <KV label="Billed storage" value={`$${customer.price_per_gb_storage}/GB/mo`} mono accent="text-accent-teal" />
@@ -440,7 +441,7 @@ function BucketDetailCard({ bucket, accountId, customerName, customerRegion }) {
         <Pill icon={<Lock size={11} />} label="Encryption" value={bucket.encryption} />
         <Pill icon={<ShieldCheck size={11} />} label="Object Lock" value={bucket.fileLock === 'none' ? 'disabled' : `${bucket.fileLock}`} />
         <Pill label="Versioning" value={bucket.versioning} />
-        <Pill icon={<Globe size={11} />} label="Region" value={`${region?.flag} ${region?.code}`} />
+        <Pill icon={<Globe size={11} />} label="Region" value={region ? `${region.flag} ${region.code}` : '—'} />
       </div>
 
       {bucket.lifecycleRules.length > 0 && (
@@ -660,6 +661,7 @@ function ActivityTab({ events }) {
 }
 
 function BillingTab({ customer, buckets }) {
+  const chartColors = useChartColors();
   const { canSeeRevenue } = useApp();
   const txnBarData = [{
     name: 'Last 30 days',
@@ -701,10 +703,10 @@ function BillingTab({ customer, buckets }) {
         <StackedBarChart
           data={txnBarData}
           series={[
-            { key: 'A', name: 'Class A (uploads, free)',       color: '#3DD9D6', format: compactNumber },
-            { key: 'B', name: 'Class B (downloads)',           color: '#9B7CFF', format: compactNumber },
-            { key: 'C', name: 'Class C (metadata)',            color: '#F5B73E', format: compactNumber },
-            { key: 'D', name: 'Class D (event notifications)', color: '#F47171', format: compactNumber },
+            { key: 'A', name: 'Class A (uploads, free)',       color: chartColors.teal, format: compactNumber },
+            { key: 'B', name: 'Class B (downloads)',           color: chartColors.violet, format: compactNumber },
+            { key: 'C', name: 'Class C (metadata)',            color: chartColors.amber, format: compactNumber },
+            { key: 'D', name: 'Class D (event notifications)', color: chartColors.red, format: compactNumber },
           ]}
           yFormatter={compactNumber}
           height={220}

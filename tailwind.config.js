@@ -3,32 +3,37 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
+      // Every colour resolves through a CSS variable defined in src/theme.css,
+      // which is what lets the whole app switch theme without a single `dark:`
+      // prefix. The `rgb(var(--x) / <alpha-value>)` form is required for
+      // opacity modifiers (bg-ink-900/60) to keep working.
       colors: {
         // Backblaze brand red
         bb: {
-          red: '#E61F18',
-          redDim: '#B81814',
+          red:    'rgb(var(--bb-red) / <alpha-value>)',
+          redDim: 'rgb(var(--bb-red-dim) / <alpha-value>)',
           redGlow: 'rgba(230, 31, 24, 0.18)',
         },
-        // Dark mode surface palette
+        // Surface palette, named by role: 950 is the page background and 100
+        // the primary text colour in both themes.
         ink: {
-          950: '#07090F',
-          900: '#0B0E16',
-          850: '#10141F',
-          800: '#161B28',
-          700: '#1F2638',
-          600: '#2A334B',
-          500: '#3A455F',
-          400: '#5C6786',
-          300: '#8A95B2',
-          200: '#B8C0D6',
-          100: '#E5E9F2',
+          950: 'rgb(var(--ink-950) / <alpha-value>)',
+          900: 'rgb(var(--ink-900) / <alpha-value>)',
+          850: 'rgb(var(--ink-850) / <alpha-value>)',
+          800: 'rgb(var(--ink-800) / <alpha-value>)',
+          700: 'rgb(var(--ink-700) / <alpha-value>)',
+          600: 'rgb(var(--ink-600) / <alpha-value>)',
+          500: 'rgb(var(--ink-500) / <alpha-value>)',
+          400: 'rgb(var(--ink-400) / <alpha-value>)',
+          300: 'rgb(var(--ink-300) / <alpha-value>)',
+          200: 'rgb(var(--ink-200) / <alpha-value>)',
+          100: 'rgb(var(--ink-100) / <alpha-value>)',
         },
         accent: {
-          teal: '#3DD9D6',
-          violet: '#9B7CFF',
-          amber: '#F5B73E',
-          green: '#2BD68A',
+          teal:   'rgb(var(--accent-teal) / <alpha-value>)',
+          violet: 'rgb(var(--accent-violet) / <alpha-value>)',
+          amber:  'rgb(var(--accent-amber) / <alpha-value>)',
+          green:  'rgb(var(--accent-green) / <alpha-value>)',
         },
       },
       spacing: {
@@ -44,8 +49,8 @@ export default {
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       boxShadow: {
-        glow: '0 0 0 1px rgba(230, 31, 24, 0.45), 0 8px 32px -8px rgba(230, 31, 24, 0.5)',
-        card: '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 8px 24px -12px rgba(0,0,0,0.6)',
+        glow: 'var(--shadow-glow)',
+        card: 'var(--shadow-card)',
       },
       animation: {
         'pulse-slow': 'pulse 4s ease-in-out infinite',
