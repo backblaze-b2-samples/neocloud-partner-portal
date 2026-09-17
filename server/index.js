@@ -12,6 +12,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import { rateLimit } from 'express-rate-limit';
 import { attachSession } from './middleware/requireAuth.js';
 import authRouter from './routes/auth.js';
 import ssoRouter from './routes/sso.js';
@@ -61,6 +62,20 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+// Coarse per-IP ceiling across the whole API. The targeted limiters in
+// rateLimit.js (login, SSO, credential reveal) are much tighter and keyed by
+// user/email; this one is a backstop for everything else. Generous enough that
+// a busy SPA session never sees it. The limit is per (IP, 15 min) so a shared
+// office NAT gets 600 requests a quarter-hour between all its users — raise
+// API_RATE_LIMIT if that ever bites.
+app.use('/api', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.API_RATE_LIMIT) || 600,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+}));
 
 // Specific path first — the auth router has no /sso routes, but keep the
 // ordering explicit.

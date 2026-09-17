@@ -36,6 +36,7 @@ import { getConfigPublic, isSsoUsable, getDecryptedClientSecret } from '../ssoSt
 import { resolveRole } from '../sso/roleResolver.js';
 import {
   buildAuthUrl, exchangeCode, verifyIdToken, extractEmail, extractGroups, hasGroupOverage,
+  stripTrailingSlashes,
 } from '../sso/oidcClient.js';
 import { findByEmail, createUser, recordLogin, setRole } from '../users.js';
 
@@ -103,7 +104,7 @@ function sameNonce(a, b) {
  * base URL anywhere else in the codebase to reuse.
  */
 function baseUrl(req) {
-  const configured = (process.env.APP_BASE_URL || '').replace(/\/+$/, '');
+  const configured = stripTrailingSlashes(process.env.APP_BASE_URL || '');
   if (configured) return configured;
   return `${req.protocol}://${req.get('host')}`;
 }
@@ -157,6 +158,10 @@ router.get('/login', async (req, res) => {
 // --- callback ----------------------------------------------------------------
 
 router.get('/callback', async (req, res) => {
+  // Same per-IP ceiling as /login and /exchange: this handler does a token
+  // exchange against the IdP and a DB write for every hit.
+  const limited = ssoLimiter(req);
+  if (!limited.ok) return fail(res, 'rate_limited');
   const { code, state, error } = req.query || {};
   if (error) return fail(res, String(error).slice(0, 64));
   if (!code || !state) return fail(res, 'missing_params');

@@ -32,6 +32,17 @@ export function clearDiscoveryCache(issuerUrl) {
   jwksCache.clear();
 }
 
+/**
+ * Drop trailing slashes. A `/\/+$/` regex is quadratic on a long run of
+ * slashes; this is the same normalisation in linear time.
+ */
+export function stripTrailingSlashes(s) {
+  const str = String(s ?? '');
+  let end = str.length;
+  while (end > 0 && str[end - 1] === '/') end--;
+  return str.slice(0, end);
+}
+
 function allowedIssuerHosts() {
   return new Set(
     (process.env.SSO_ALLOWED_ISSUER_HOSTS || '')
@@ -47,6 +58,7 @@ function isPrivateAddress(host) {
     if (a === 192 && b === 168) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 169 && b === 254) return true;   // link-local
+    if (a === 100 && b >= 64 && b <= 127) return true;  // CGNAT (100.64/10)
     if (a >= 224) return true;                 // multicast / reserved
     return false;
   }
@@ -132,7 +144,7 @@ async function fetchJson(url, init) {
 }
 
 export async function getDiscovery(issuerUrl) {
-  const issuer = String(issuerUrl || '').replace(/\/+$/, '');
+  const issuer = stripTrailingSlashes(issuerUrl);
   validateIssuerUrl(issuer);
 
   const cached = discoveryCache.get(issuer);
@@ -191,7 +203,7 @@ export async function verifyIdToken({ idToken, issuerUrl, clientId }) {
     const { payload } = await jwtVerify(idToken, keySet, {
       algorithms: ['RS256', 'ES256'],
       audience:   clientId,
-      issuer:     doc.issuer || issuerUrl.replace(/\/+$/, ''),
+      issuer:     doc.issuer || stripTrailingSlashes(issuerUrl),
     });
     return payload;
   } catch (e) {

@@ -86,6 +86,20 @@ describe('CSRF enforcement', () => {
     expect(r.status).not.toBe(403);
   });
 
+  it('rejects a token that matches the cookie but was minted for another session', async () => {
+    // Double-submit is satisfied (cookie === header) but neither is the
+    // token bound to this sid, so the session-bound check must refuse it.
+    const other = createSession({ userId: admin.id });
+    const r = await request(app)
+      .post('/api/b2-partner/b2_list_groups')
+      .set('Cookie', `sid=${sess.sid}; csrf=${other.csrf}`)
+      .set('X-CSRF-Token', other.csrf)
+      .set(B2_HEADERS)
+      .send({});
+    expect(r.status).toBe(403);
+    expect(r.body.error).toMatch(/CSRF/i);
+  });
+
   it('still rejects endpoints outside the allowlist', async () => {
     const r = await post('/api/b2-partner/b2_delete_everything', {});
     expect(r.status).toBe(400);

@@ -83,6 +83,13 @@ export function requireCsrf(req, res, next) {
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
     return res.status(403).json({ error: 'Bad CSRF token' });
   }
+  // Double-submit alone only proves the caller can read our cookie. When a
+  // session is attached, also require the token to be the one minted for
+  // that session, so a token from another (or expired) session can't be
+  // paired with this sid.
+  if (req.session?.csrf && headerToken !== req.session.csrf) {
+    return res.status(403).json({ error: 'Bad CSRF token' });
+  }
   // Block every write while impersonating, except the routes that end the
   // impersonation (or the whole session). This is the single chokepoint that
   // makes "view as customer" guaranteed read-only — no per-route checks needed.
