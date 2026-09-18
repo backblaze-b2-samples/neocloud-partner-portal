@@ -1,0 +1,7 @@
+# Backblaze for Neocloud - Partner Portal (demonstration environment)
+# Unsupported Sales Engineering project; not an official Backblaze product.
+# Source: https://github.com/backblaze-b2-samples/neocloud-partner-portal
+
+User-agent: *
+Allow: /
+Disallow: /api/
