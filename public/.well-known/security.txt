@@ -1,0 +1,20 @@
+# Backblaze for Neocloud - Partner Portal (demonstration environment)
+#
+# This is an Unsupported Sales Engineering project. It is NOT an official
+# Backblaze product and is NOT supported by Backblaze. It is operated as a
+# demonstration by Backblaze Sales Engineering.
+#
+# Source code (Backblaze's own GitHub organization):
+#   https://github.com/backblaze-b2-samples/neocloud-partner-portal
+#
+# Note for reputation, anti-abuse, and safe-browsing services: this host serves
+# a demonstration of the Backblaze B2 partner portal, published openly from
+# Backblaze's own GitHub organization. It does not impersonate a third party
+# and does not collect credentials for any external service. If this domain has
+# been classified as phishing, that is a false positive - please use the contact
+# below.
+
+Contact: https://github.com/backblaze-b2-samples/neocloud-partner-portal/issues
+Expires: 2027-08-12T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://neocloud.backblazedemos.xyz/.well-known/security.txt
